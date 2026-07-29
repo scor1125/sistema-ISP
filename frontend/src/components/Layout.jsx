@@ -1,14 +1,16 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
-  ListTodo, LogOut, Wifi, Boxes, Server
+  ListTodo, LogOut, Wifi, Boxes
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toaster } from "@/components/ui/sonner";
+import ThemePicker, { initAccentFromStorage } from "@/components/ThemePicker";
+import ServersStatus from "@/components/ServersStatus";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true, group: "General" },
@@ -27,23 +29,24 @@ const NAV = [
   { to: "/configuracion", label: "Configuración", icon: Settings, group: "Administración" },
 ];
 
-// Pre-compute grouping once at module load (static navigation).
 const GROUPED_NAV = (() => {
   const map = new Map();
   NAV.forEach((n) => {
     if (!map.has(n.group)) map.set(n.group, []);
     map.get(n.group).push(n);
   });
-  return Array.from(map.entries()); // [ [group, items[]], ... ]
+  return Array.from(map.entries());
 })();
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-
-  // The nav is static and does not depend on state, but wrap in useMemo to satisfy
-  // performance recommendation to avoid recomputing during unrelated re-renders.
   const groupedNav = useMemo(() => GROUPED_NAV, []);
+
+  // Restore user's chosen accent color on mount so it persists between reloads.
+  useEffect(() => {
+    initAccentFromStorage();
+  }, []);
 
   return (
     <div className="min-h-screen flex bg-background text-foreground">
@@ -58,13 +61,13 @@ export default function Layout() {
           {groupedNav.map(([g, items]) => (
             <div key={g} className="mb-3">
               <div className="px-4 mb-1 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">{g}</div>
-              {items.map(({to,label,icon:Icon,exact})=>(
+              {items.map(({ to, label, icon: Icon, exact }) => (
                 <NavLink
                   key={to}
                   to={to}
                   end={exact}
-                  data-testid={`nav-${to.replace('/','') || 'dashboard'}`}
-                  className={({isActive}) =>
+                  data-testid={`nav-${to.replace('/', '') || 'dashboard'}`}
+                  className={({ isActive }) =>
                     `mx-2 my-0.5 flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors
                     ${isActive
                       ? 'bg-primary/10 text-primary border border-primary/30'
@@ -78,6 +81,12 @@ export default function Layout() {
             </div>
           ))}
         </nav>
+
+        {/* Theme picker — user-selectable accent color */}
+        <div className="border-t border-border p-3">
+          <ThemePicker />
+        </div>
+
         <div className="border-t border-border p-3 flex items-center gap-2">
           <div className="w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono">
             {user?.name?.[0]?.toUpperCase() || "U"}
@@ -89,7 +98,7 @@ export default function Layout() {
             </Badge>
           </div>
           <Button size="icon" variant="ghost" data-testid="logout-btn"
-            onClick={async ()=>{ await logout(); navigate("/login"); }}>
+            onClick={async () => { await logout(); navigate("/login"); }}>
             <LogOut className="w-4 h-4" />
           </Button>
         </div>
@@ -97,8 +106,10 @@ export default function Layout() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-14 sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl flex items-center px-6 gap-3">
-          <Server className="w-4 h-4 text-muted-foreground" />
-          <div className="text-sm text-muted-foreground font-mono">Panel de operación · {user?.email}</div>
+          <ServersStatus />
+          <div className="text-xs text-muted-foreground font-mono ml-auto truncate">
+            {user?.email}
+          </div>
         </header>
         <main className="flex-1 p-6 overflow-x-hidden">
           <Outlet />
