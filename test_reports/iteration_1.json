@@ -1,0 +1,38 @@
+{
+  "summary": "First MVP smoke pass on ISP CRM (NetOps CRM). Backend and frontend validated end-to-end with admin owner credentials. All 17 requested checks passed. Backend: auth, dashboard KPIs, plans CRUD, NAP capacity guard, clients+payment_day+next_due_date logic, payment advance vs promise, leads, extras, whatsapp (outgoing+simulate-incoming), tasks (create + PATCH to done), devices (mikrotik/olt), onus derived data, disconnected list, config GET/PUT thresholds, users create technician, RBAC (technician 403 on /users, 200 on /clients), owner cannot delete own account. Frontend: login redirects to Dashboard, sidebar shows exactly 14 nav items (dashboard, clientes, planes, pagos, leads, extras, mapa, olt, mikrotik, desconectados, whatsapp, tareas, usuarios, configuracion), all routes load without page-level errors. WhatsApp, OLT and Mikrotik are correctly MOCKED per spec.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login owner returns JWT + user",
+    "GET /api/stats/dashboard returns KPIs (total_clients, active, suspended, offline, new, revenue_this_month, open_leads)",
+    "Plans CRUD: POST/GET/PATCH/DELETE all OK",
+    "POST /api/nap-boxes creates NAP with lat/lng/capacity",
+    "POST /api/clients creates client with plan_id + nap_box_id, returns next_due_date computed from payment_day",
+    "NAP capacity guard: second client to capacity=1 NAP returns 400 with 'está llena'",
+    "POST /api/payments advances next_due_date one month and sets status=active",
+    "POST /api/payments with is_promise=true does NOT advance next_due_date",
+    "POST /api/leads with type=installation OK",
+    "POST /api/extras category=iptv OK",
+    "POST /api/whatsapp/messages (outgoing) + /simulate-incoming (incoming) OK",
+    "POST /api/tasks + PATCH stage=done OK",
+    "POST /api/devices for mikrotik and olt OK",
+    "GET /api/onus returns derived data (power_dbm, rx_mbps, tx_mbps, ip_address) per client",
+    "GET /api/disconnected returns array",
+    "PUT/GET /api/config updates onu thresholds and disconnect_alert_minutes",
+    "POST /api/users as owner creates technician",
+    "RBAC: technician gets 403 on POST /api/users, gets 200 on POST /api/clients",
+    "Self-delete guard: owner DELETE /api/users/{own_id} returns 400 'No puedes eliminar tu propia cuenta'",
+    "Frontend: login flow redirects to Dashboard, KPIs render real values",
+    "Sidebar shows all 14 modules with correct data-testid nav-* attributes",
+    "Routes /clientes /planes /mapa /olt /pagos /tareas /usuarios /configuracion all load without page errors"
+  ],
+  "failed": [],
+  "notes": [
+    "Console 401s observed prior to login on /login page are expected (unauthenticated probes) and disappear after auth.",
+    "WhatsApp, OLT, Mikrotik endpoints are simulated (per MVP spec) - working as designed.",
+    "Stripe not implemented (deferred per spec)."
+  ],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

@@ -1,55 +1,62 @@
-import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import Layout from "@/components/Layout";
+import Login from "@/pages/Login";
+import Dashboard from "@/pages/Dashboard";
+import Clients from "@/pages/Clients";
+import Plans from "@/pages/Plans";
+import Payments from "@/pages/Payments";
+import Leads from "@/pages/Leads";
+import Extras from "@/pages/Extras";
+import NapMap from "@/pages/NapMap";
+import WhatsApp from "@/pages/WhatsApp";
+import OLT from "@/pages/OLT";
+import Mikrotik from "@/pages/Mikrotik";
+import Disconnected from "@/pages/Disconnected";
+import Tasks from "@/pages/Tasks";
+import Users from "@/pages/Users";
+import Settings from "@/pages/Settings";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+function Protected() {
+  const { user } = useAuth();
+  if (user === null) return <div className="min-h-screen grid place-items-center text-muted-foreground">Cargando…</div>;
+  if (user === false) return <Navigate to="/login" replace />;
+  return <Layout />;
+}
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+function PublicOnly({ children }) {
+  const { user } = useAuth();
+  if (user === null) return <div className="min-h-screen grid place-items-center text-muted-foreground">Cargando…</div>;
+  if (user && user !== false) return <Navigate to="/" replace />;
+  return children;
+}
 
 function App() {
   return (
-    <div className="App">
+    <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
+          <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+          <Route element={<Protected />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/clientes" element={<Clients />} />
+            <Route path="/planes" element={<Plans />} />
+            <Route path="/pagos" element={<Payments />} />
+            <Route path="/leads" element={<Leads />} />
+            <Route path="/extras" element={<Extras />} />
+            <Route path="/mapa" element={<NapMap />} />
+            <Route path="/olt" element={<OLT />} />
+            <Route path="/mikrotik" element={<Mikrotik />} />
+            <Route path="/desconectados" element={<Disconnected />} />
+            <Route path="/whatsapp" element={<WhatsApp />} />
+            <Route path="/tareas" element={<Tasks />} />
+            <Route path="/usuarios" element={<Users />} />
+            <Route path="/configuracion" element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>
-    </div>
+    </AuthProvider>
   );
 }
 
