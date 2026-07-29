@@ -217,6 +217,8 @@ class BusinessConfigIn(BaseModel):
     onu_power_high_threshold: float = -8.0
     onu_power_low_threshold: float = -27.0
     disconnect_alert_minutes: int = 30
+    network_cidr: str = ""
+    network_reserved: List[str] = []
 
 # ---------- Auth Endpoints ----------
 @api.post("/auth/login")
@@ -469,6 +471,34 @@ async def update_config(payload: BusinessConfigIn, _: dict = Depends(require_rol
     doc["updated_at"] = now_iso()
     await db.config.update_one({"id": "main"}, {"$set": doc}, upsert=True)
     return doc
+
+# ---------- IP Pool ----------
+import ipaddress
+
+@api.get("/ip-pool")
+async def ip_pool(_: dict = Depends(get_current_user)):
+    """Return available and used IPs derived from the network CIDR configured in settings."""
+    cfg = await db.config.find_one({"id": "main"}) or {}
+    cidr = (cfg.get("network_cidr") or "").strip()
+    reserved = set(cfg.get("network_reserved") or [])
+    used_docs = await db.clients.find({"ip_address": {"$ne": ""}}, {"_id": 0, "id": 1, "full_name": 1, "ip_address": 1}).to_list(5000)
+    used_map = {d["ip_address"]: {"client_id": d["id"], "full_name": d["full_name"]} for d in used_docs if d.get("ip_address")}
+    if not cidr:
+        return {"cidr": "", "available": [], "used": list(used_map.keys()), "used_map": used_map, "reserved": list(reserved), "total": 0}
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        raise HTTPException(400, f"CIDR inválido: {cidr}")
+    all_hosts = [str(h) for h in net.hosts()]
+    available = [ip for ip in all_hosts if ip not in used_map and ip not in reserved]
+    return {
+        "cidr": cidr,
+        "available": available,
+        "used": list(used_map.keys()),
+        "used_map": used_map,
+        "reserved": list(reserved),
+        "total": len(all_hosts),
+    }
 
 # ---------- Dashboard stats ----------
 @api.get("/stats/dashboard")

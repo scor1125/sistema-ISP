@@ -53,9 +53,19 @@ export default function Settings() {
             <div><Label>Umbral alto ONU (dBm)</Label><Input type="number" step="0.1" value={cfg.onu_power_high_threshold} onChange={(e)=>set("onu_power_high_threshold", Number(e.target.value))} /></div>
             <div><Label>Umbral bajo ONU (dBm)</Label><Input type="number" step="0.1" value={cfg.onu_power_low_threshold} onChange={(e)=>set("onu_power_low_threshold", Number(e.target.value))} /></div>
             <div className="col-span-2"><Label>Minutos para alerta de desconexión</Label><Input type="number" value={cfg.disconnect_alert_minutes} onChange={(e)=>set("disconnect_alert_minutes", Number(e.target.value))} data-testid="cfg-disconnect_alert_minutes"/></div>
+            <div className="col-span-2">
+              <Label>Red / CIDR (para lista de IPs disponibles)</Label>
+              <Input value={cfg.network_cidr||""} onChange={(e)=>set("network_cidr", e.target.value)} placeholder="192.168.1.0/24" data-testid="cfg-network_cidr" />
+            </div>
+            <div className="col-span-2">
+              <Label>IPs reservadas (separadas por coma, ej. gateway, DHCP)</Label>
+              <Input value={(cfg.network_reserved||[]).join(", ")}
+                onChange={(e)=>set("network_reserved", e.target.value.split(",").map(x=>x.trim()).filter(Boolean))}
+                placeholder="192.168.1.1, 192.168.1.2" />
+            </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Los umbrales se aplican al panel de OLT/ONUs para resaltar potencias fuera de rango.
+            Los umbrales se aplican al panel de OLT/ONUs. La red CIDR alimenta el autocompletado de IPs libres al crear o editar clientes.
           </p>
         </section>
       </div>

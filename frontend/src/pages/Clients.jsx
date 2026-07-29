@@ -20,13 +20,19 @@ export default function Clients() {
   const [clients, setClients] = useState([]);
   const [plans, setPlans] = useState([]);
   const [naps, setNaps] = useState([]);
+  const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const navigate = useNavigate();
 
   const load = async () => {
-    const [c, p, n] = await Promise.all([api.get("/clients"), api.get("/plans"), api.get("/nap-boxes")]);
-    setClients(c.data); setPlans(p.data); setNaps(n.data);
+    const [c, p, n, ip] = await Promise.all([
+      api.get("/clients"),
+      api.get("/plans"),
+      api.get("/nap-boxes"),
+      api.get("/ip-pool"),
+    ]);
+    setClients(c.data); setPlans(p.data); setNaps(n.data); setIpPool(ip.data);
   };
 
   useEffect(() => { load(); }, []);
@@ -43,7 +49,18 @@ export default function Clients() {
     { name: "nap_box_id", label: "Caja NAP", type: "select", options: naps.map(n=>({ value: n.id, label: n.name })) },
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
     { name: "onu_serial", label: "Serial ONU" },
-    { name: "ip_address", label: "IP" },
+    { name: "ip_address", label: "IP",
+      suggestions: (() => {
+        // Include currently edited client's IP so it stays selectable
+        const list = ipPool.available || [];
+        if (editing?.ip_address && !list.includes(editing.ip_address)) return [editing.ip_address, ...list];
+        return list;
+      })(),
+      hint: ipPool.cidr
+        ? `Red ${ipPool.cidr} · ${ipPool.available?.length || 0} disponibles / ${ipPool.total} totales · usadas: ${ipPool.used?.length || 0}`
+        : "Define tu red (CIDR) en Configuración para ver IPs disponibles.",
+      placeholder: ipPool.available?.[0] || "10.10.0.10",
+    },
     { name: "mikrotik_server", label: "Servidor Mikrotik" },
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v,i])=>({ value: v, label: i.label })) },
     { name: "notes", label: "Notas", type: "textarea", full: true },

@@ -42,6 +42,7 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
               const val = values[f.name] ?? "";
               const key = `field-${f.name}`;
               const wrap = f.full ? "col-span-2" : "col-span-2 sm:col-span-1";
+              const listId = f.suggestions?.length ? `${key}-list` : undefined;
               return (
                 <div key={f.name} className={wrap}>
                   <Label htmlFor={key}>{f.label}</Label>
@@ -56,12 +57,21 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Input id={key} data-testid={`input-${f.name}`}
-                      type={f.type || "text"}
-                      value={val}
-                      onChange={(e)=>handleChange(f.name, f.type==="number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
-                      placeholder={f.placeholder} required={f.required} />
+                    <>
+                      <Input id={key} data-testid={`input-${f.name}`}
+                        type={f.type || "text"}
+                        value={val}
+                        list={listId}
+                        onChange={(e)=>handleChange(f.name, f.type==="number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
+                        placeholder={f.placeholder} required={f.required} />
+                      {listId && (
+                        <datalist id={listId}>
+                          {f.suggestions.slice(0, 500).map((s)=>(<option key={s} value={s} />))}
+                        </datalist>
+                      )}
+                    </>
                   )}
+                  {f.hint && <div className="mt-1 text-[11px] text-muted-foreground font-mono">{f.hint}</div>}
                 </div>
               );
             })}
