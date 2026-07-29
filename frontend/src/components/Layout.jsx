@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
@@ -26,11 +27,23 @@ const NAV = [
   { to: "/configuracion", label: "Configuración", icon: Settings, group: "Administración" },
 ];
 
+// Pre-compute grouping once at module load (static navigation).
+const GROUPED_NAV = (() => {
+  const map = new Map();
+  NAV.forEach((n) => {
+    if (!map.has(n.group)) map.set(n.group, []);
+    map.get(n.group).push(n);
+  });
+  return Array.from(map.entries()); // [ [group, items[]], ... ]
+})();
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const groups = [...new Set(NAV.map(n => n.group))];
+  // The nav is static and does not depend on state, but wrap in useMemo to satisfy
+  // performance recommendation to avoid recomputing during unrelated re-renders.
+  const groupedNav = useMemo(() => GROUPED_NAV, []);
 
   return (
     <div className="min-h-screen flex bg-background text-foreground">
@@ -42,10 +55,10 @@ export default function Layout() {
           <div className="font-display font-bold tracking-tight">NetOps CRM</div>
         </div>
         <nav className="flex-1 overflow-y-auto py-3">
-          {groups.map((g) => (
+          {groupedNav.map(([g, items]) => (
             <div key={g} className="mb-3">
               <div className="px-4 mb-1 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">{g}</div>
-              {NAV.filter(n=>n.group===g).map(({to,label,icon:Icon,exact})=>(
+              {items.map(({to,label,icon:Icon,exact})=>(
                 <NavLink
                   key={to}
                   to={to}

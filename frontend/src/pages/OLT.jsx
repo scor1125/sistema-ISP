@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { PageHeader, EmptyRow, Kpi } from "@/components/Common";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,23 +10,35 @@ export default function OLT() {
   const [devices, setDevices] = useState([]);
   const [config, setConfig] = useState(null);
 
-  useEffect(()=>{
-    (async ()=>{
+  const load = useCallback(async () => {
+    try {
       const [o, d, c] = await Promise.all([
         api.get("/onus"),
         api.get("/devices"),
         api.get("/config"),
       ]);
-      setOnus(o.data); setDevices(d.data.filter(x=>x.kind==="olt")); setConfig(c.data);
-    })();
+      setOnus(o.data);
+      setDevices(d.data.filter(x => x.kind === "olt"));
+      setConfig(c.data);
+    } catch (e) {
+      console.error("OLT load failed", e);
+    }
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const high = config?.onu_power_high_threshold ?? -8;
   const low = config?.onu_power_low_threshold ?? -27;
 
-  const sorted = [...onus].sort((a,b)=>a.power_dbm-b.power_dbm);
-  const critical = sorted.filter(o => o.power_dbm > high || o.power_dbm < low).length;
-  const avg = onus.length ? (onus.reduce((a,b)=>a+b.power_dbm,0)/onus.length).toFixed(2) : "—";
+  const sorted = useMemo(() => [...onus].sort((a, b) => a.power_dbm - b.power_dbm), [onus]);
+  const critical = useMemo(
+    () => sorted.filter(o => o.power_dbm > high || o.power_dbm < low).length,
+    [sorted, high, low],
+  );
+  const avg = useMemo(
+    () => (onus.length ? (onus.reduce((a, b) => a + b.power_dbm, 0) / onus.length).toFixed(2) : "—"),
+    [onus],
+  );
 
   return (
     <div>
@@ -48,8 +60,8 @@ export default function OLT() {
             <TableHead>Estado</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {onus.length===0 && <EmptyRow colSpan={7} text="Sin ONUs. Crea clientes con serial ONU para verlos aquí." />}
-            {sorted.map(o=>{
+            {onus.length === 0 && <EmptyRow colSpan={7} text="Sin ONUs. Crea clientes con serial ONU para verlos aquí." />}
+            {sorted.map(o => {
               const bad = o.power_dbm > high || o.power_dbm < low;
               return (
                 <TableRow key={o.client_id}>
@@ -61,7 +73,7 @@ export default function OLT() {
                   <TableCell className="font-mono text-xs">{o.rx_mbps}↓ / {o.tx_mbps}↑</TableCell>
                   <TableCell className="font-mono text-xs">{o.ip_address}</TableCell>
                   <TableCell>{o.mikrotik_server}</TableCell>
-                  <TableCell><Badge variant="outline" className={bad?"border-red-500/30 text-red-400 bg-red-500/10":"border-emerald-500/30 text-emerald-400 bg-emerald-500/10"}>{bad?"Fuera de umbral":"OK"}</Badge></TableCell>
+                  <TableCell><Badge variant="outline" className={bad ? "border-red-500/30 text-red-400 bg-red-500/10" : "border-emerald-500/30 text-emerald-400 bg-emerald-500/10"}>{bad ? "Fuera de umbral" : "OK"}</Badge></TableCell>
                 </TableRow>
               );
             })}

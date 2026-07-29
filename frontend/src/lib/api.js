@@ -2,15 +2,11 @@ import axios from "axios";
 
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+// Auth relies on httpOnly cookies set by the backend on /auth/login.
+// We never store JWTs in localStorage (XSS attack surface).
 export const api = axios.create({
   baseURL: API,
   withCredentials: true,
-});
-
-api.interceptors.request.use((cfg) => {
-  const t = localStorage.getItem("token");
-  if (t) cfg.headers.Authorization = `Bearer ${t}`;
-  return cfg;
 });
 
 export function formatApiError(e) {

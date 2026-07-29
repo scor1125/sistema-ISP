@@ -7,14 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 /**
- * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?}]
+ * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,hint?,suggestions?}]
  * type: text | number | textarea | select
  */
-export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLabel = "Guardar", open, onOpenChange }) {
+export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLabel = "Guardar", open, onOpenChange, size = "lg" }) {
   const [values, setValues] = useState(initial || {});
   const [loading, setLoading] = useState(false);
 
-  // If controlled, sync initial when opened
   const isOpen = open !== undefined ? open : undefined;
 
   const handleChange = (name, v) => setValues((s) => ({ ...s, [name]: v }));
@@ -31,56 +30,112 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
     }
   };
 
+  const sizeCls = {
+    lg: "max-w-lg",
+    xl: "max-w-2xl",
+    "2xl": "max-w-3xl",
+    "3xl": "max-w-4xl",
+  }[size] || "max-w-lg";
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            {fields.map((f) => {
-              const val = values[f.name] ?? "";
-              const key = `field-${f.name}`;
-              const wrap = f.full ? "col-span-2" : "col-span-2 sm:col-span-1";
-              const listId = f.suggestions?.length ? `${key}-list` : undefined;
-              return (
-                <div key={f.name} className={wrap}>
-                  <Label htmlFor={key}>{f.label}</Label>
-                  {f.type === "textarea" ? (
-                    <Textarea id={key} data-testid={`input-${f.name}`} value={val}
-                      onChange={(e)=>handleChange(f.name, e.target.value)} placeholder={f.placeholder} />
-                  ) : f.type === "select" ? (
-                    <Select value={String(val)} onValueChange={(v)=>handleChange(f.name, v)}>
-                      <SelectTrigger data-testid={`input-${f.name}`}><SelectValue placeholder={f.placeholder || "Seleccionar"} /></SelectTrigger>
-                      <SelectContent>
-                        {f.options.map((o)=>(<SelectItem key={String(o.value)} value={String(o.value)}>{o.label}</SelectItem>))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <>
-                      <Input id={key} data-testid={`input-${f.name}`}
-                        type={f.type || "text"}
-                        value={val}
-                        list={listId}
-                        onChange={(e)=>handleChange(f.name, f.type==="number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
-                        placeholder={f.placeholder} required={f.required} />
-                      {listId && (
-                        <datalist id={listId}>
-                          {f.suggestions.slice(0, 500).map((s)=>(<option key={s} value={s} />))}
-                        </datalist>
-                      )}
-                    </>
-                  )}
-                  {f.hint && <div className="mt-1 text-[11px] text-muted-foreground font-mono">{f.hint}</div>}
-                </div>
-              );
-            })}
+      <DialogContent className={`${sizeCls} max-h-[90vh] flex flex-col p-0 gap-0`}>
+        <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              {fields.map((f) => (
+                <Field key={f.name} field={f} value={values[f.name] ?? ""} onChange={handleChange} />
+              ))}
+            </div>
           </div>
-          <DialogFooter>
-            <Button type="submit" disabled={loading} data-testid="form-submit">{loading ? "Guardando…" : submitLabel}</Button>
+          <DialogFooter className="px-6 py-3 border-t border-border bg-card/50">
+            <Button type="submit" disabled={loading} data-testid="form-submit">
+              {loading ? "Guardando…" : submitLabel}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function Field({ field, value, onChange }) {
+  const key = `field-${field.name}`;
+  const wrapCls = field.full ? "col-span-2" : "col-span-2 sm:col-span-1";
+
+  return (
+    <div className={wrapCls}>
+      <Label htmlFor={key}>{field.label}</Label>
+      <FieldControl field={field} value={value} onChange={onChange} inputId={key} />
+      {field.hint && (
+        <div className="mt-1 text-[11px] text-muted-foreground font-mono">{field.hint}</div>
+      )}
+    </div>
+  );
+}
+
+function FieldControl({ field, value, onChange, inputId }) {
+  const testId = `input-${field.name}`;
+
+  if (field.type === "textarea") {
+    return (
+      <Textarea
+        id={inputId}
+        data-testid={testId}
+        value={value}
+        onChange={(e) => onChange(field.name, e.target.value)}
+        placeholder={field.placeholder}
+      />
+    );
+  }
+
+  if (field.type === "select") {
+    return (
+      <Select value={String(value)} onValueChange={(v) => onChange(field.name, v)}>
+        <SelectTrigger data-testid={testId}>
+          <SelectValue placeholder={field.placeholder || "Seleccionar"} />
+        </SelectTrigger>
+        <SelectContent>
+          {field.options.map((o) => (
+            <SelectItem key={String(o.value)} value={String(o.value)}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
+
+  const hasSuggestions = field.suggestions && field.suggestions.length > 0;
+  const listId = hasSuggestions ? `${inputId}-list` : undefined;
+
+  return (
+    <>
+      <Input
+        id={inputId}
+        data-testid={testId}
+        type={field.type || "text"}
+        value={value}
+        list={listId}
+        onChange={(e) => {
+          const raw = e.target.value;
+          const next = field.type === "number" ? (raw === "" ? "" : Number(raw)) : raw;
+          onChange(field.name, next);
+        }}
+        placeholder={field.placeholder}
+        required={field.required}
+      />
+      {hasSuggestions && (
+        <datalist id={listId}>
+          {field.suggestions.slice(0, 500).map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      )}
+    </>
   );
 }

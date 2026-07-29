@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 2 refactor verification: cookie-only auth (no localStorage), SHA-256 deterministic /api/onus, and Clients form refactor (removed email/lat/lng/onu_serial; mikrotik_server as Select; dialog max-w-3xl scrollable). 8/8 backend tests pass; frontend flows verified end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["Recharts warnings about container width(-1)/height(-1) — chart containers momentarily render at 0 size (not fatal, but produces repeated console warnings)"]},
+      {"screen": "FormDialog (Clients)", "issues": ["Radix warning: Missing Description or aria-describedby for DialogContent — add <DialogDescription> or aria-describedby for a11y"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "(Optional) Add DialogDescription / aria-describedby to FormDialog to silence Radix a11y warning",
+    "(Optional) Fix Recharts container 0-size warnings on Dashboard by ensuring parent has explicit height"
+  ],
+  "critical_code_review_comments": [
+    "server.py ClientIn/ClientUpdate models still expose email/lat/lng/onu_serial; frontend hides them but backend still accepts them. Consider removing from models if truly deprecated to keep API surface consistent with UI.",
+    "Cookie is set with SameSite=None; Secure — works over HTTPS preview. Ensure production deployment is HTTPS-only (already the case).",
+    "server.py is 619 lines — still under threshold but growing; consider splitting routers by domain if it keeps growing."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created TEST_ prefixed clients (cleaned up in teardown). Ensured device 'MK-Central' (kind=mikrotik) exists for select verification.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "Backend test suite at /app/backend/tests/backend_test.py covers auth (cookie+me+logout), /api/onus determinism, minimal Client POST payload, PATCH, and Mikrotik device creation. Ran pytest -> 8/8 passed. Frontend: login works, cookie httpOnly set, session persists after reload, /clientes dialog shows only the 11 expected fields (full_name, dni, phone, address, plan_id, nap_box_id, payment_day, ip_address, mikrotik_server, status, notes) with NO email/lat/lng/onu_serial. Dialog has max-w-3xl and max-h-[90vh]. Mikrotik select lists registered mikrotiks (MK-Central, MK1). Logout via API clears access_token cookie (subsequent /api/auth/me -> 401). localStorage contains only PostHog analytics key (no JWT).",
+  "rca_of_the_issue": "N/A — no blocking issues found. All iteration-2 refactor targets verified."
+}

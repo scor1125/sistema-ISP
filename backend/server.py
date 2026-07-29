@@ -535,21 +535,27 @@ async def dashboard(_: dict = Depends(get_current_user)):
 # ---------- Mocked ONU / Mikrotik data ----------
 @api.get("/onus")
 async def list_onus(_: dict = Depends(get_current_user)):
-    """Returns mocked ONU data for each active client for the OLT panel."""
+    """Returns deterministic mock ONU data for each client for the OLT panel.
+
+    Values are derived from a SHA-256 hash of the client id so results are stable
+    per client and reproducible without using MD5 or the non-cryptographic
+    `random` module (values are display-only, not security-sensitive).
+    """
+    import hashlib
     clients_list = await db.clients.find({}, {"_id": 0, "id":1,"full_name":1,"onu_serial":1,"ip_address":1,"mikrotik_server":1,"status":1,"plan_id":1,"next_due_date":1,"last_seen":1,"onu_power_dbm":1}).to_list(2000)
-    import random, hashlib
     result = []
     for c in clients_list:
-        seed = int(hashlib.md5(c["id"].encode()).hexdigest()[:8], 16)
-        rnd = random.Random(seed)
-        power = c.get("onu_power_dbm") or round(rnd.uniform(-28.5, -12.0), 2)
-        rx_mbps = round(rnd.uniform(1, 90), 1)
-        tx_mbps = round(rnd.uniform(0.2, 12), 1)
+        h = hashlib.sha256(c["id"].encode()).digest()
+        seed = int.from_bytes(h[:4], "big")
+        # deterministic pseudo-random values in fixed ranges
+        power = c.get("onu_power_dbm") or round(-28.5 + (h[4] / 255.0) * 16.5, 2)  # -28.5..-12
+        rx_mbps = round(1 + (h[5] / 255.0) * 89, 1)
+        tx_mbps = round(0.2 + (h[6] / 255.0) * 11.8, 1)
         result.append({
             "client_id": c["id"],
             "full_name": c["full_name"],
             "onu_serial": c.get("onu_serial") or f"ONU{seed:08X}",
-            "ip_address": c.get("ip_address") or f"10.10.{(seed>>8)%255}.{seed%255}",
+            "ip_address": c.get("ip_address") or f"10.10.{h[7] % 255}.{h[8] % 255}",
             "mikrotik_server": c.get("mikrotik_server") or "srv-01",
             "status": c.get("status"),
             "power_dbm": power,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
 import { PageHeader, EmptyRow } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
@@ -20,38 +20,36 @@ export default function Clients() {
   const [clients, setClients] = useState([]);
   const [plans, setPlans] = useState([]);
   const [naps, setNaps] = useState([]);
+  const [mikrotiks, setMikrotiks] = useState([]);
   const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const navigate = useNavigate();
 
-  const load = async () => {
-    const [c, p, n, ip] = await Promise.all([
+  const load = useCallback(async () => {
+    const [c, p, n, ip, d] = await Promise.all([
       api.get("/clients"),
       api.get("/plans"),
       api.get("/nap-boxes"),
       api.get("/ip-pool"),
+      api.get("/devices"),
     ]);
     setClients(c.data); setPlans(p.data); setNaps(n.data); setIpPool(ip.data);
-  };
+    setMikrotiks(d.data.filter((x) => x.kind === "mikrotik"));
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const fields = [
     { name: "full_name", label: "Nombre completo", required: true, full: true },
     { name: "dni", label: "DNI / RFC" },
     { name: "phone", label: "Teléfono" },
-    { name: "email", label: "Email" },
     { name: "address", label: "Domicilio", required: true, full: true },
-    { name: "lat", label: "Latitud", type: "number" },
-    { name: "lng", label: "Longitud", type: "number" },
     { name: "plan_id", label: "Plan", type: "select", options: plans.map(p=>({ value: p.id, label: `${p.name} · ${p.speed_mbps}M · $${p.price}` })) },
     { name: "nap_box_id", label: "Caja NAP", type: "select", options: naps.map(n=>({ value: n.id, label: n.name })) },
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
-    { name: "onu_serial", label: "Serial ONU" },
     { name: "ip_address", label: "IP",
       suggestions: (() => {
-        // Include currently edited client's IP so it stays selectable
         const list = ipPool.available || [];
         if (editing?.ip_address && !list.includes(editing.ip_address)) return [editing.ip_address, ...list];
         return list;
@@ -61,7 +59,12 @@ export default function Clients() {
         : "Define tu red (CIDR) en Configuración para ver IPs disponibles.",
       placeholder: ipPool.available?.[0] || "10.10.0.10",
     },
-    { name: "mikrotik_server", label: "Servidor Mikrotik" },
+    { name: "mikrotik_server", label: "Servidor Mikrotik", type: "select",
+      options: mikrotiks.length
+        ? mikrotiks.map(m => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":"+m.port : ""} · ${m.connection}` }))
+        : [{ value: "", label: "Sin Mikrotiks registrados — agrégalos en Mikrotik" }],
+      hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
+    },
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v,i])=>({ value: v, label: i.label })) },
     { name: "notes", label: "Notas", type: "textarea", full: true },
   ];
@@ -159,6 +162,7 @@ export default function Clients() {
         fields={fields}
         initial={editing || { payment_day: 1, status: "new" }}
         onSubmit={save}
+        size="2xl"
       />
     </div>
   );

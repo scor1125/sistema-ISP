@@ -1,40 +1,56 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { PageHeader, Kpi } from "@/components/Common";
 import { Users, UserPlus, UserX, WifiOff, DollarSign, Sparkles, AlertTriangle } from "lucide-react";
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, BarChart, Bar } from "recharts";
 
+// Stable chart style constants — pulled out to avoid re-creating on every render.
+const CHART_MARGIN = { top: 5, right: 10, bottom: 0, left: -10 };
+const TOOLTIP_STYLE = { background: "hsl(240 10% 8%)", border: "1px solid hsl(240 10% 15%)", borderRadius: 6 };
+const GRID_STROKE = "hsl(240 10% 15%)";
+const AXIS_STROKE = "hsl(240 5% 55%)";
+const LINE_COLOR = "hsl(210 100% 55%)";
+const BAR_RADIUS = [4, 4, 0, 0];
+
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [clients, setClients] = useState([]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [s, c] = await Promise.all([api.get("/stats/dashboard"), api.get("/clients")]);
-        setStats(s.data); setClients(c.data);
-      } catch {}
-    })();
+  const load = useCallback(async () => {
+    try {
+      const [s, c] = await Promise.all([api.get("/stats/dashboard"), api.get("/clients")]);
+      setStats(s.data);
+      setClients(c.data);
+    } catch (e) {
+      console.error("Dashboard load failed", e);
+    }
   }, []);
 
-  const growthData = clients
-    .slice()
-    .sort((a,b)=>a.created_at.localeCompare(b.created_at))
-    .reduce((acc,c)=>{
-      const d = c.created_at.slice(0,10);
-      const last = acc[acc.length-1];
-      const total = (last?.total || 0) + 1;
-      acc.push({ date: d, total });
-      return acc;
-    },[])
-    .slice(-14);
+  useEffect(() => { load(); }, [load]);
 
-  const statusData = [
-    { s: "Activos", v: stats?.active || 0 },
-    { s: "Suspendidos", v: stats?.suspended || 0 },
-    { s: "Offline", v: stats?.offline || 0 },
-    { s: "Nuevos", v: stats?.new || 0 },
-  ];
+  const growthData = useMemo(() => {
+    return clients
+      .slice()
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .reduce((acc, c) => {
+        const d = c.created_at.slice(0, 10);
+        const last = acc[acc.length - 1];
+        const total = (last?.total || 0) + 1;
+        acc.push({ date: d, total });
+        return acc;
+      }, [])
+      .slice(-14);
+  }, [clients]);
+
+  const statusData = useMemo(
+    () => [
+      { s: "Activos", v: stats?.active || 0 },
+      { s: "Suspendidos", v: stats?.suspended || 0 },
+      { s: "Offline", v: stats?.offline || 0 },
+      { s: "Nuevos", v: stats?.new || 0 },
+    ],
+    [stats],
+  );
 
   return (
     <div>
@@ -64,12 +80,12 @@ export default function Dashboard() {
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={growthData} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 10% 15%)" />
-                <XAxis dataKey="date" stroke="hsl(240 5% 55%)" fontSize={11} />
-                <YAxis stroke="hsl(240 5% 55%)" fontSize={11} />
-                <Tooltip contentStyle={{ background: "hsl(240 10% 8%)", border: "1px solid hsl(240 10% 15%)", borderRadius: 6 }} />
-                <Line type="monotone" dataKey="total" stroke="hsl(210 100% 55%)" strokeWidth={2} dot={false} />
+              <LineChart data={growthData} margin={CHART_MARGIN}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+                <XAxis dataKey="date" stroke={AXIS_STROKE} fontSize={11} />
+                <YAxis stroke={AXIS_STROKE} fontSize={11} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Line type="monotone" dataKey="total" stroke={LINE_COLOR} strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -81,11 +97,11 @@ export default function Dashboard() {
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={statusData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 10% 15%)" />
-                <XAxis dataKey="s" stroke="hsl(240 5% 55%)" fontSize={11} />
-                <YAxis stroke="hsl(240 5% 55%)" fontSize={11} />
-                <Tooltip contentStyle={{ background: "hsl(240 10% 8%)", border: "1px solid hsl(240 10% 15%)", borderRadius: 6 }} />
-                <Bar dataKey="v" fill="hsl(210 100% 55%)" radius={[4,4,0,0]} />
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+                <XAxis dataKey="s" stroke={AXIS_STROKE} fontSize={11} />
+                <YAxis stroke={AXIS_STROKE} fontSize={11} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+                <Bar dataKey="v" fill={LINE_COLOR} radius={BAR_RADIUS} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, formatApiError } from "@/lib/api";
 import { PageHeader } from "@/components/Common";
@@ -19,35 +19,41 @@ export default function WhatsApp() {
   const [body, setBody] = useState("");
   const [kind, setKind] = useState("chat");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [m, c] = await Promise.all([api.get("/whatsapp/messages"), api.get("/clients")]);
     setMessages(m.data); setClients(c.data);
-  };
+  }, []);
 
-  useEffect(()=>{ load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
-  useEffect(()=>{
-    if (preselectClient && clients.length){
-      const c = clients.find(x=>x.id===preselectClient);
+  useEffect(() => {
+    if (preselectClient && clients.length) {
+      const c = clients.find(x => x.id === preselectClient);
       if (c?.phone) setActivePhone(c.phone);
     }
   }, [preselectClient, clients]);
 
-  const conversations = useMemo(()=>{
+  const conversations = useMemo(() => {
     const map = new Map();
-    messages.forEach(m=>{
+    messages.forEach(m => {
       if (!map.has(m.phone)) map.set(m.phone, []);
       map.get(m.phone).push(m);
     });
-    return Array.from(map.entries()).map(([phone, msgs])=>{
-      const client = clients.find(c=>c.phone===phone);
+    return Array.from(map.entries()).map(([phone, msgs]) => {
+      const client = clients.find(c => c.phone === phone);
       const last = msgs[0];
       return { phone, client, last, count: msgs.length };
-    }).sort((a,b)=>b.last.created_at.localeCompare(a.last.created_at));
+    }).sort((a, b) => b.last.created_at.localeCompare(a.last.created_at));
   }, [messages, clients]);
 
-  const activeMessages = messages.filter(m=>m.phone===activePhone).sort((a,b)=>a.created_at.localeCompare(b.created_at));
-  const activeClient = clients.find(c=>c.phone===activePhone);
+  const activeMessages = useMemo(
+    () => messages.filter(m => m.phone === activePhone).slice().sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    [messages, activePhone],
+  );
+  const activeClient = useMemo(
+    () => clients.find(c => c.phone === activePhone),
+    [clients, activePhone],
+  );
 
   const send = async () => {
     if (!activePhone || !body.trim()) return;
@@ -56,7 +62,7 @@ export default function WhatsApp() {
         client_id: activeClient?.id, phone: activePhone, body, direction: "outgoing", kind
       });
       setBody(""); toast.success("Mensaje encolado (simulado)"); await load();
-    } catch(e){ toast.error(formatApiError(e)); }
+    } catch (e) { toast.error(formatApiError(e)); }
   };
 
   const simulateIncoming = async () => {
@@ -83,11 +89,11 @@ export default function WhatsApp() {
             <Badge variant="outline" className="ml-auto font-mono text-xs">{conversations.length}</Badge>
           </div>
           <ScrollArea className="flex-1">
-            {conversations.length===0 && <div className="p-4 text-sm text-muted-foreground">Sin mensajes aún.</div>}
-            {conversations.map(({phone, client, last, count})=>(
-              <button key={phone} onClick={()=>setActivePhone(phone)}
+            {conversations.length === 0 && <div className="p-4 text-sm text-muted-foreground">Sin mensajes aún.</div>}
+            {conversations.map(({ phone, client, last, count }) => (
+              <button key={phone} onClick={() => setActivePhone(phone)}
                 data-testid={`conv-${phone}`}
-                className={`w-full text-left p-3 border-b border-border hover:bg-accent transition-colors ${activePhone===phone?"bg-accent":""}`}>
+                className={`w-full text-left p-3 border-b border-border hover:bg-accent transition-colors ${activePhone === phone ? "bg-accent" : ""}`}>
                 <div className="flex justify-between items-start gap-2">
                   <div>
                     <div className="font-medium text-sm">{client?.full_name || phone}</div>
@@ -108,18 +114,18 @@ export default function WhatsApp() {
             <div className="text-sm font-medium">{activeClient?.full_name || activePhone || "Selecciona una conversación"}</div>
             {activePhone && <div className="text-xs text-muted-foreground font-mono ml-2">{activePhone}</div>}
             <div className="ml-auto flex gap-2">
-              <Button size="sm" variant="outline" onClick={simulateIncoming} disabled={!activePhone} data-testid="simulate-incoming"><Bot className="w-3 h-3 mr-1"/>Simular entrante</Button>
+              <Button size="sm" variant="outline" onClick={simulateIncoming} disabled={!activePhone} data-testid="simulate-incoming"><Bot className="w-3 h-3 mr-1" />Simular entrante</Button>
             </div>
           </div>
           <ScrollArea className="flex-1 p-4">
-            {activeMessages.length===0 && <div className="text-sm text-muted-foreground">Sin mensajes en esta conversación.</div>}
+            {activeMessages.length === 0 && <div className="text-sm text-muted-foreground">Sin mensajes en esta conversación.</div>}
             <div className="space-y-2">
-              {activeMessages.map(m=>(
-                <div key={m.id} className={`max-w-[75%] rounded-md p-2.5 text-sm ${m.direction==="outgoing" ? "bg-primary/10 border border-primary/30 ml-auto" : "bg-secondary border border-border"}`}>
+              {activeMessages.map(m => (
+                <div key={m.id} className={`max-w-[75%] rounded-md p-2.5 text-sm ${m.direction === "outgoing" ? "bg-primary/10 border border-primary/30 ml-auto" : "bg-secondary border border-border"}`}>
                   <div>{m.body}</div>
                   <div className="mt-1 text-[10px] text-muted-foreground font-mono flex items-center gap-2">
                     <span>{m.kind}</span>
-                    <span>{m.created_at.slice(11,16)}</span>
+                    <span>{m.created_at.slice(11, 16)}</span>
                     <span>{m.status}</span>
                   </div>
                 </div>
@@ -128,8 +134,8 @@ export default function WhatsApp() {
           </ScrollArea>
           <div className="border-t border-border p-3 space-y-2">
             <div className="flex gap-2">
-              <Input placeholder="Teléfono (ej: +52...)" value={activePhone} onChange={(e)=>setActivePhone(e.target.value)} className="max-w-xs" data-testid="wa-phone"/>
-              <select value={kind} onChange={(e)=>setKind(e.target.value)}
+              <Input placeholder="Teléfono (ej: +52...)" value={activePhone} onChange={(e) => setActivePhone(e.target.value)} className="max-w-xs" data-testid="wa-phone" />
+              <select value={kind} onChange={(e) => setKind(e.target.value)}
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm">
                 <option value="chat">Chat</option>
                 <option value="reminder">Recordatorio</option>
@@ -138,8 +144,8 @@ export default function WhatsApp() {
               </select>
             </div>
             <div className="flex gap-2">
-              <Textarea placeholder="Escribe un mensaje..." value={body} onChange={(e)=>setBody(e.target.value)} rows={2} data-testid="wa-body" />
-              <Button onClick={send} data-testid="wa-send"><Send className="w-4 h-4"/></Button>
+              <Textarea placeholder="Escribe un mensaje..." value={body} onChange={(e) => setBody(e.target.value)} rows={2} data-testid="wa-body" />
+              <Button onClick={send} data-testid="wa-send"><Send className="w-4 h-4" /></Button>
             </div>
           </div>
         </div>
