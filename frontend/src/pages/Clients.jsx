@@ -21,21 +21,24 @@ export default function Clients() {
   const [plans, setPlans] = useState([]);
   const [naps, setNaps] = useState([]);
   const [mikrotiks, setMikrotiks] = useState([]);
+  const [users, setUsers] = useState([]);
   const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
-    const [c, p, n, ip, d] = await Promise.all([
+    const [c, p, n, ip, d, u] = await Promise.all([
       api.get("/clients"),
       api.get("/plans"),
       api.get("/nap-boxes"),
       api.get("/ip-pool"),
       api.get("/devices"),
+      api.get("/users"),
     ]);
     setClients(c.data); setPlans(p.data); setNaps(n.data); setIpPool(ip.data);
     setMikrotiks(d.data.filter((x) => x.kind === "mikrotik"));
+    setUsers(u.data);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -45,6 +48,7 @@ export default function Clients() {
     { name: "dni", label: "DNI / RFC" },
     { name: "phone", label: "Teléfono" },
     { name: "address", label: "Domicilio", required: true, full: true },
+    { name: "community", label: "Comunidad", full: true, placeholder: "Ej: Colonia Centro, Ejido Los Pinos…" },
     { name: "plan_id", label: "Plan", type: "select", options: plans.map(p=>({ value: p.id, label: `${p.name} · ${p.speed_mbps}M · $${p.price}` })) },
     { name: "nap_box_id", label: "Caja NAP", type: "select", options: naps.map(n=>({ value: n.id, label: n.name })) },
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
@@ -65,8 +69,15 @@ export default function Clients() {
         : [{ value: "", label: "Sin Mikrotiks registrados — agrégalos en Mikrotik" }],
       hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
     },
+    { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
+    { name: "wifi_password", label: "Contraseña del WiFi", placeholder: "Contraseña asignada" },
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v,i])=>({ value: v, label: i.label })) },
-    { name: "notes", label: "Notas", type: "textarea", full: true },
+    { name: "tag", label: "Etiqueta", placeholder: "Ej: VIP, Moroso, Preferente…" },
+    { name: "installer_id", label: "Técnico que instaló", type: "select",
+      options: users.length
+        ? users.map(u => ({ value: u.id, label: `${u.name}${u.role ? " · " + u.role : ""}` }))
+        : [{ value: "", label: "Sin usuarios registrados" }],
+    },
   ];
 
   const save = async (v) => {
@@ -74,6 +85,7 @@ export default function Clients() {
       const payload = { ...v };
       if (payload.plan_id === "") payload.plan_id = null;
       if (payload.nap_box_id === "") payload.nap_box_id = null;
+      if (payload.installer_id === "") payload.installer_id = null;
       if (editing) {
         await api.patch(`/clients/${editing.id}`, payload);
         toast.success("Cliente actualizado");

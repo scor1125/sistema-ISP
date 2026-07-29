@@ -124,6 +124,7 @@ class ClientIn(BaseModel):
     phone: Optional[str] = ""
     email: Optional[str] = ""
     address: str
+    community: Optional[str] = ""
     lat: Optional[float] = None
     lng: Optional[float] = None
     plan_id: Optional[str] = None
@@ -132,6 +133,10 @@ class ClientIn(BaseModel):
     onu_serial: Optional[str] = ""
     ip_address: Optional[str] = ""
     mikrotik_server: Optional[str] = ""
+    wifi_ssid: Optional[str] = ""
+    wifi_password: Optional[str] = ""
+    tag: Optional[str] = ""
+    installer_id: Optional[str] = None
     status: Literal["active","suspended","offline","new"] = "new"
     notes: Optional[str] = ""
 
@@ -141,6 +146,7 @@ class ClientUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     address: Optional[str] = None
+    community: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
     plan_id: Optional[str] = None
@@ -149,6 +155,10 @@ class ClientUpdate(BaseModel):
     onu_serial: Optional[str] = None
     ip_address: Optional[str] = None
     mikrotik_server: Optional[str] = None
+    wifi_ssid: Optional[str] = None
+    wifi_password: Optional[str] = None
+    tag: Optional[str] = None
+    installer_id: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
 
