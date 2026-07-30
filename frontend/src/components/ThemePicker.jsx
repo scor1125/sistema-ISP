@@ -134,6 +134,11 @@ export function applyTheme(theme, tintKey) {
   Object.entries(theme.vars).forEach(([k, v]) => root.style.setProperty(k, v));
   root.style.setProperty("--app-gradient", theme.gradient || "none");
   applySidebarTint(tintKey || localStorage.getItem(SIDEBAR_KEY) || "auto");
+  // Reapply wallpaper override if set (custom URL wins over preset key).
+  const customWall = localStorage.getItem(WALLPAPER_KEY + "-custom");
+  const wallKey = localStorage.getItem(WALLPAPER_KEY);
+  if (customWall) applyWallpaper(null, customWall);
+  else if (wallKey && wallKey !== "none") applyWallpaper(wallKey);
   // Reapply custom primary override if set
   const custom = localStorage.getItem(CUSTOM_KEY);
   if (custom) {
@@ -155,6 +160,50 @@ export function initThemeFromStorage() {
 }
 
 const CUSTOM_KEY = "netops-custom-primary";
+const WALLPAPER_KEY = "netops-wallpaper";
+
+/**
+ * Preset wallpapers rendered as pure CSS layered gradients (no external
+ * assets needed). Users can also upload their own image which gets stored
+ * as a base64 data URL in localStorage.
+ */
+export const WALLPAPERS = [
+  { key: "none", label: "Sin fondo", css: null },
+  {
+    key: "sky",
+    label: "Cielo",
+    css: "linear-gradient(180deg, hsl(210 80% 15% / 0.45), hsl(210 60% 5% / 0.6) 70%), radial-gradient(600px circle at 80% 25%, hsl(210 100% 80% / 0.25), transparent 65%)",
+  },
+  {
+    key: "stars",
+    label: "Estrellas",
+    css: "radial-gradient(1px 1px at 20% 30%, #fff 100%, transparent), radial-gradient(1px 1px at 60% 70%, #fff 100%, transparent), radial-gradient(1px 1px at 80% 10%, #ffe 100%, transparent), radial-gradient(1.5px 1.5px at 40% 80%, #fff 100%, transparent), radial-gradient(1px 1px at 15% 60%, #cfe 100%, transparent), radial-gradient(1px 1px at 90% 45%, #ffd 100%, transparent), linear-gradient(180deg, #050510, #0a0a1e)",
+  },
+  {
+    key: "moon",
+    label: "Luna",
+    css: "radial-gradient(220px circle at 82% 22%, hsl(45 90% 92% / 0.85) 0%, hsl(45 60% 70% / 0.4) 40%, transparent 65%), radial-gradient(500px circle at 82% 22%, hsl(45 80% 60% / 0.15), transparent 60%), linear-gradient(180deg, #060814, #0b1023)",
+  },
+  {
+    key: "aurora",
+    label: "Aurora",
+    css: "linear-gradient(120deg, hsl(160 84% 42% / 0.25), transparent 40%), linear-gradient(210deg, hsl(262 83% 62% / 0.3), transparent 45%), linear-gradient(180deg, #050510, #0a0d18)",
+  },
+];
+
+export function applyWallpaper(key, customUrl) {
+  const root = document.documentElement;
+  if (customUrl) {
+    root.style.setProperty(
+      "--app-gradient",
+      `linear-gradient(hsl(var(--background) / 0.55), hsl(var(--background) / 0.55)), url('${customUrl}') center/cover no-repeat fixed`,
+    );
+    return;
+  }
+  const w = WALLPAPERS.find((x) => x.key === key);
+  if (!w || !w.css) return; // fallback to theme gradient
+  root.style.setProperty("--app-gradient", w.css);
+}
 
 function hexToHsl(hex) {
   const m = hex.replace("#", "").match(/^([0-9a-f]{6})$/i);
@@ -190,6 +239,24 @@ export default function ThemePicker() {
   const [custom, setCustom] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(CUSTOM_KEY) || "" : ""
   );
+  const [wallpaper, setWallpaper] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem(WALLPAPER_KEY) || "none" : "none"
+  );
+  const [customWall, setCustomWall] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem(WALLPAPER_KEY + "-custom") || "" : ""
+  );
+
+  useEffect(() => {
+    if (customWall) applyWallpaper(null, customWall);
+    else if (wallpaper !== "none") applyWallpaper(wallpaper);
+    else {
+      const t = THEMES.find((x) => x.key === active) || THEMES[0];
+      document.documentElement.style.setProperty("--app-gradient", t.gradient || "none");
+    }
+    localStorage.setItem(WALLPAPER_KEY, wallpaper);
+    if (customWall) localStorage.setItem(WALLPAPER_KEY + "-custom", customWall);
+    else localStorage.removeItem(WALLPAPER_KEY + "-custom");
+  }, [wallpaper, customWall, active]);
 
   useEffect(() => {
     const theme = THEMES.find((t) => t.key === active) || THEMES[0];
@@ -241,6 +308,50 @@ export default function ThemePicker() {
       <PopoverContent side="right" align="end" className="w-96 p-3 max-h-[80vh] overflow-y-auto" data-testid="theme-picker-panel">
         <ThemeSection title="Oscuros" themes={dark} active={active} onPick={setActive} />
         <ThemeSection title="Claros" themes={light} active={active} onPick={setActive} />
+
+        <div className="mt-3 pt-3 border-t border-border">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Fondo de pantalla</div>
+          <div className="grid grid-cols-3 gap-2 mb-2">
+            {WALLPAPERS.map((w) => {
+              const isActive = w.key === wallpaper && !customWall;
+              return (
+                <button
+                  key={w.key}
+                  type="button"
+                  onClick={() => { setCustomWall(""); setWallpaper(w.key); }}
+                  data-testid={`wall-${w.key}`}
+                  className={`rounded-md border overflow-hidden text-left transition-colors ${isActive ? "border-foreground" : "border-border hover:border-foreground/60"}`}
+                >
+                  <div className="h-12" style={{ backgroundImage: w.css || undefined, background: w.css ? undefined : "hsl(240 10% 8%)" }} />
+                  <div className="text-[10px] font-mono uppercase px-2 py-1 bg-card truncate">{w.label}</div>
+                </button>
+              );
+            })}
+          </div>
+          <label className="flex items-center gap-2 text-xs cursor-pointer text-muted-foreground hover:text-foreground">
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (file.size > 3 * 1024 * 1024) { alert("Imagen mayor a 3MB"); return; }
+                const reader = new FileReader();
+                reader.onload = () => { setCustomWall(reader.result); setWallpaper("custom"); };
+                reader.readAsDataURL(file);
+              }}
+              data-testid="wall-custom-input"
+            />
+            <span className="px-2 py-1 rounded-md border border-border hover:bg-accent">Subir imagen…</span>
+            {customWall && (
+              <button type="button" onClick={() => { setCustomWall(""); setWallpaper("none"); }} className="ml-auto text-[11px] underline">
+                Quitar
+              </button>
+            )}
+          </label>
+        </div>
+
         <div className="mt-3 pt-3 border-t border-border">
           <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Color primario personalizado</div>
           <div className="flex items-center gap-2">
