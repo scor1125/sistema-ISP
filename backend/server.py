@@ -437,18 +437,117 @@ async def generate_vpn_config(vpn_id: str, _: dict = Depends(require_roles("owne
 
 @api.post("/vpn/{vpn_id}/test")
 async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
-    """Placeholder health check. Returns simulated result until real
-    connectivity from the platform is available."""
-    v = await db.vpn_connections.find_one({"id": vpn_id}, {"_id": 0})
-    if not v:
-        raise HTTPException(404, "VPN no encontrada")
-    # Simulated result — in a real deployment this would open a socket / ping.
     return {
         "reachable": True,
         "latency_ms": 42,
         "handshake": "ok",
         "message": "Simulación: el endpoint responde. La conexión real requiere despliegue en un servidor con acceso a la red del Mikrotik.",
     }
+
+@api.post("/devices/{device_id}/mikrotik-script")
+async def mikrotik_script(device_id: str, protocol: str = "wireguard", _: dict = Depends(require_roles("owner","admin"))):
+    """Generate a ready-to-paste RouterOS script (.rsc) to link this Mikrotik
+    with the CRM via VPN (WireGuard, L2TP/IPsec or OpenVPN).
+    The operator copies the script into the RouterOS terminal or drops the
+    .rsc file into Files and runs `/import`.
+    """
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+    proto = (protocol or "wireguard").lower()
+    name = d.get("name", "mikrotik").replace(" ", "-")
+    remote_host = d.get("host") or "vpn.miisp.com"
+    remote_port = d.get("port") or (51820 if proto == "wireguard" else 1701 if proto == "l2tp" else 1194)
+    iface = f"wg-{name.lower()}"[:15]
+    peer_endpoint = f"{remote_host}:{remote_port}"
+
+    if proto == "wireguard":
+        script = f"""# ============================================================
+# CRM Jupiter · Script de vinculación WireGuard
+# Router: {d.get('name')}  ({d.get('host')})
+# Pegar en /system script o ejecutar linea por linea en el terminal.
+# ============================================================
+
+# 1) Crear la interfaz WireGuard (si no existe)
+/interface wireguard
+add listen-port={remote_port} mtu=1420 name={iface} comment="CRM-Jupiter"
+
+# 2) Asignar IP de tunel al router
+/ip address
+add address=10.100.0.2/24 interface={iface} comment="CRM-Jupiter"
+
+# 3) Registrar el peer (servidor VPN del CRM)
+/interface wireguard peers
+add interface={iface} \\
+    endpoint-address={remote_host} \\
+    endpoint-port={remote_port} \\
+    allowed-address=10.100.0.0/24 \\
+    persistent-keepalive=25s \\
+    public-key="<PEGAR_PUBLIC_KEY_DEL_SERVIDOR>" \\
+    comment="CRM-Jupiter"
+
+# 4) Firewall: permitir la VPN entrante
+/ip firewall filter
+add chain=input action=accept protocol=udp dst-port={remote_port} comment="CRM-Jupiter WireGuard"
+
+# 5) NAT para que el CRM pueda ver la LAN (opcional)
+# /ip firewall nat
+# add chain=srcnat action=masquerade out-interface={iface} comment="CRM-Jupiter"
+
+# 6) Verificacion
+/interface wireguard peers print
+/ip address print where interface={iface}
+"""
+        steps = [
+            "Ingresa a tu Mikrotik por Winbox/WebFig/SSH.",
+            "Abrí el terminal (New Terminal) o subí el archivo .rsc a Files.",
+            "Pegá el script completo o ejecutá `/import file-name=<archivo>.rsc`.",
+            "Reemplazá `<PEGAR_PUBLIC_KEY_DEL_SERVIDOR>` por la Public Key que te da el CRM.",
+            "En el CRM copiá la Public Key generada por el router: `/interface wireguard print` y pégala en la sección VPN.",
+            "Verificá el handshake: `/interface wireguard peers print` — debe mostrar `last-handshake` con un valor reciente.",
+        ]
+        filename = f"crm-jupiter-{name}-wireguard.rsc"
+
+    elif proto == "l2tp":
+        script = f"""# ============================================================
+# CRM Jupiter · Script L2TP/IPsec — {d.get('name')}
+# ============================================================
+/interface l2tp-client
+add name=l2tp-crm connect-to={remote_host} user=<USUARIO> password=<PASSWORD> \\
+    use-ipsec=yes ipsec-secret=<PSK> add-default-route=no comment="CRM-Jupiter"
+
+/ip firewall filter
+add chain=input action=accept protocol=udp dst-port=500,4500,1701 comment="CRM-Jupiter L2TP"
+
+/interface l2tp-client print
+"""
+        steps = [
+            "Ingresa a Winbox/WebFig y abre el terminal.",
+            "Pega el script y reemplaza `<USUARIO>`, `<PASSWORD>` y `<PSK>` por los datos que te da el CRM.",
+            "Verifica con `/interface l2tp-client print` que aparezca `R` (running).",
+            "Si no conecta, revisa: `/log print where topics~\"l2tp\"`.",
+        ]
+        filename = f"crm-jupiter-{name}-l2tp.rsc"
+
+    else:  # openvpn
+        script = f"""# ============================================================
+# CRM Jupiter · Script OpenVPN — {d.get('name')}
+# ============================================================
+# 1) Subí el archivo .ovpn/certificados a Files y luego:
+/interface ovpn-client
+add name=ovpn-crm connect-to={remote_host} port={remote_port} user=<USUARIO> \\
+    password=<PASSWORD> certificate=none auth=sha1 cipher=aes256 comment="CRM-Jupiter"
+
+/interface ovpn-client print
+"""
+        steps = [
+            "Sube los certificados a Files (si aplica).",
+            "Pega el script en el terminal y reemplaza usuario/contraseña.",
+            "Verifica el enlace con `/interface ovpn-client print`.",
+        ]
+        filename = f"crm-jupiter-{name}-openvpn.rsc"
+
+    return {"filename": filename, "script": script, "steps": steps, "protocol": proto}
 
 # ---------- Personal pending notes (per-user) ----------
 @api.get("/my-notes")

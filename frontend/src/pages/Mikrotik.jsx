@@ -5,8 +5,10 @@ import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import VpnPanel from "@/components/VpnPanel";
-import { Plus, Router, Trash2 } from "lucide-react";
+import { Plus, Router, Trash2, Terminal, Download, Copy, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { differenceInDays, parseISO } from "date-fns";
 
@@ -15,6 +17,9 @@ export default function Mikrotik() {
   const [plans, setPlans] = useState([]);
   const [devices, setDevices] = useState([]);
   const [open, setOpen] = useState(false);
+  const [scriptFor, setScriptFor] = useState(null); // { device, protocol, script, steps, filename }
+  const [scriptProto, setScriptProto] = useState("wireguard");
+  const [scriptLoading, setScriptLoading] = useState(false);
 
   const load = async () => {
     const [o, p, d] = await Promise.all([api.get("/onus"), api.get("/plans"), api.get("/devices")]);
@@ -43,6 +48,32 @@ export default function Mikrotik() {
   };
   const del = async (id) => { if(window.confirm("¿Eliminar?")){ await api.delete(`/devices/${id}`); load(); } };
 
+  const genScript = async (device, protocol = scriptProto) => {
+    setScriptLoading(true);
+    try {
+      const { data } = await api.post(`/devices/${device.id}/mikrotik-script`, null, { params: { protocol } });
+      setScriptFor({ device, ...data });
+      setScriptProto(protocol);
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setScriptLoading(false); }
+  };
+
+  const copyScript = async () => {
+    if (!scriptFor) return;
+    await navigator.clipboard.writeText(scriptFor.script);
+    toast.success("Script copiado al portapapeles");
+  };
+
+  const downloadScript = () => {
+    if (!scriptFor) return;
+    const blob = new Blob([scriptFor.script], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = scriptFor.filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   return (
     <div>
       <PageHeader title="Mikrotik"
@@ -62,7 +93,15 @@ export default function Mikrotik() {
               </div>
               <div className="text-xs text-muted-foreground font-mono mt-2">{d.host}{d.port ? `:${d.port}` : ""}</div>
               <div className="text-xs text-muted-foreground mt-1">{d.location}</div>
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex justify-end gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => genScript(d, "wireguard")}
+                  data-testid={`mk-script-${d.id}`}
+                >
+                  <Terminal className="w-3.5 h-3.5 mr-1" /> Script vinculación
+                </Button>
                 <Button size="icon" variant="ghost" onClick={()=>del(d.id)}><Trash2 className="w-4 h-4 text-destructive"/></Button>
               </div>
             </div>
@@ -109,6 +148,66 @@ export default function Mikrotik() {
         fields={fields} initial={{connection:"public_ip"}} onSubmit={save} />
 
       <VpnPanel mikrotiks={devices} />
+
+      {/* Dialog Script Mikrotik */}
+      <Dialog open={!!scriptFor} onOpenChange={(o) => !o && setScriptFor(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Terminal className="w-5 h-5 text-primary" />
+              Script de vinculación · {scriptFor?.device?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {scriptFor && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Protocolo</div>
+                <Select
+                  value={scriptProto}
+                  onValueChange={(v) => { setScriptProto(v); genScript(scriptFor.device, v); }}
+                >
+                  <SelectTrigger className="w-48" data-testid="script-proto"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="wireguard">WireGuard (recomendado)</SelectItem>
+                    <SelectItem value="l2tp">L2TP / IPsec</SelectItem>
+                    <SelectItem value="openvpn">OpenVPN</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Badge variant="outline" className="ml-auto font-mono text-[10px]">{scriptFor.filename}</Badge>
+              </div>
+
+              <div className="rounded-md border border-border bg-muted/30 p-4">
+                <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Pasos para vincular</div>
+                <ol className="space-y-1.5 text-sm">
+                  {scriptFor.steps.map((s, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs grid place-items-center flex-shrink-0 font-mono mt-0.5">{i + 1}</span>
+                      <span>{s}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="rounded-md border border-border overflow-hidden">
+                <div className="flex items-center px-3 py-2 border-b border-border bg-muted/20">
+                  <span className="text-xs uppercase tracking-widest text-muted-foreground font-mono flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Script RouterOS listo para pegar
+                  </span>
+                  <div className="ml-auto flex gap-2">
+                    <Button size="sm" variant="outline" onClick={copyScript} data-testid="copy-script-btn">
+                      <Copy className="w-3.5 h-3.5 mr-1" /> Copiar
+                    </Button>
+                    <Button size="sm" onClick={downloadScript} data-testid="download-script-btn">
+                      <Download className="w-3.5 h-3.5 mr-1" /> Descargar .rsc
+                    </Button>
+                  </div>
+                </div>
+                <pre className="text-xs p-3 overflow-x-auto max-h-96 font-mono whitespace-pre">{scriptLoading ? "Generando…" : scriptFor.script}</pre>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
