@@ -233,6 +233,15 @@ class DeviceIn(BaseModel):
     connection: Literal["public_ip","vpn"] = "public_ip"
     location: Optional[str] = ""
     notes: Optional[str] = ""
+    # --- Mikrotik wizard extras ---
+    vpn_protocol: Optional[Literal["wireguard","l2tp"]] = None
+    vpn_user: Optional[str] = ""
+    vpn_password: Optional[str] = ""
+    vpn_public_key: Optional[str] = ""  # router pubkey when WG
+    api_enabled: Optional[bool] = False
+    api_user: Optional[str] = ""
+    api_password: Optional[str] = ""
+    management_modes: Optional[List[Literal["ppp","queues"]]] = []
 
 class VpnConnectionIn(BaseModel):
     name: str
