@@ -169,7 +169,7 @@ export default function Clients() {
         fields={fields}
         initial={editing || { payment_day: 1, status: "new" }}
         onSubmit={save}
-        size="2xl"
+        size="full"
       />
     </div>
   );

@@ -35,7 +35,14 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
     xl: "max-w-2xl",
     "2xl": "max-w-3xl",
     "3xl": "max-w-4xl",
+    "4xl": "max-w-5xl",
+    "5xl": "max-w-6xl",
+    full: "max-w-[95vw] w-[95vw]",
   }[size] || "max-w-lg";
+
+  const gridCls = size === "full"
+    ? "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
+    : "grid grid-cols-2 gap-4";
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -46,7 +53,7 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
         </DialogHeader>
         <form onSubmit={submit} className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-6 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className={gridCls}>
               {fields.map((f) => (
                 <Field key={f.name} field={f} value={values[f.name] ?? ""} onChange={handleChange} />
               ))}
@@ -65,7 +72,9 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
 
 function Field({ field, value, onChange }) {
   const key = `field-${field.name}`;
-  const wrapCls = field.full ? "col-span-2" : "col-span-2 sm:col-span-1";
+  // In full-width dialogs, the parent grid supplies the column count;
+  // full-span fields still span all columns via `full: true`.
+  const wrapCls = field.full ? "col-span-full" : "";
 
   return (
     <div className={wrapCls}>
