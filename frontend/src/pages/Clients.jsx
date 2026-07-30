@@ -45,9 +45,7 @@ export default function Clients() {
 
   const fields = [
     { name: "full_name", label: "Nombre completo", required: true, full: true },
-    { name: "dni", label: "DNI / RFC" },
     { name: "phone", label: "Teléfono" },
-    { name: "address", label: "Domicilio", required: true, full: true },
     { name: "community", label: "Comunidad", full: true, placeholder: "Ej: Colonia Centro, Ejido Los Pinos…" },
     { name: "plan_id", label: "Plan", type: "select", options: plans.map(p=>({ value: p.id, label: `${p.name} · ${p.speed_mbps}M · $${p.price}` })) },
     { name: "nap_box_id", label: "Caja NAP", type: "select", options: naps.map(n=>({ value: n.id, label: n.name })) },
@@ -64,9 +62,7 @@ export default function Clients() {
       placeholder: ipPool.available?.[0] || "10.10.0.10",
     },
     { name: "mikrotik_server", label: "Servidor Mikrotik", type: "select",
-      options: mikrotiks.length
-        ? mikrotiks.map(m => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":"+m.port : ""} · ${m.connection}` }))
-        : [{ value: "", label: "Sin Mikrotiks registrados — agrégalos en Mikrotik" }],
+      options: mikrotiks.map(m => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":"+m.port : ""} · ${m.connection}` })),
       hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
     },
     { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
@@ -74,9 +70,8 @@ export default function Clients() {
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v,i])=>({ value: v, label: i.label })) },
     { name: "tag", label: "Etiqueta", placeholder: "Ej: VIP, Moroso, Preferente…" },
     { name: "installer_id", label: "Técnico que instaló", type: "select",
-      options: users.length
-        ? users.map(u => ({ value: u.id, label: `${u.name}${u.role ? " · " + u.role : ""}` }))
-        : [{ value: "", label: "Sin usuarios registrados" }],
+      options: users.map(u => ({ value: u.id, label: `${u.name}${u.role ? " · " + u.role : ""}` })),
+      hint: users.length ? undefined : "Sin usuarios registrados — crea usuarios en el panel de Usuarios.",
     },
   ];
 
@@ -138,11 +133,11 @@ export default function Clients() {
                 <TableRow key={c.id} data-testid={`client-row-${c.id}`}>
                   <TableCell>
                     <div className="font-medium">{c.full_name}</div>
-                    <div className="text-xs text-muted-foreground">{c.address}</div>
+                    <div className="text-xs text-muted-foreground">{c.community || c.address || ""}</div>
                   </TableCell>
                   <TableCell>
                     <div className="text-sm">{c.phone || "—"}</div>
-                    <div className="text-xs text-muted-foreground">{c.email || ""}</div>
+                    <div className="text-xs text-muted-foreground">{c.tag || ""}</div>
                   </TableCell>
                   <TableCell>{plan ? `${plan.name} · ${plan.speed_mbps}M` : "—"}</TableCell>
                   <TableCell>{nap?.name || "—"}</TableCell>

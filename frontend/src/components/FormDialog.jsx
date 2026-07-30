@@ -94,17 +94,24 @@ function FieldControl({ field, value, onChange, inputId }) {
   }
 
   if (field.type === "select") {
+    // Radix requires non-empty string values; guard defensively.
+    const safeOptions = (field.options || []).filter((o) => String(o.value ?? "") !== "");
+    const selectValue = value === "" || value == null ? undefined : String(value);
     return (
-      <Select value={String(value)} onValueChange={(v) => onChange(field.name, v)}>
+      <Select value={selectValue} onValueChange={(v) => onChange(field.name, v)}>
         <SelectTrigger data-testid={testId}>
           <SelectValue placeholder={field.placeholder || "Seleccionar"} />
         </SelectTrigger>
         <SelectContent>
-          {field.options.map((o) => (
-            <SelectItem key={String(o.value)} value={String(o.value)}>
-              {o.label}
-            </SelectItem>
-          ))}
+          {safeOptions.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground">Sin opciones disponibles</div>
+          ) : (
+            safeOptions.map((o) => (
+              <SelectItem key={String(o.value)} value={String(o.value)}>
+                {o.label}
+              </SelectItem>
+            ))
+          )}
         </SelectContent>
       </Select>
     );

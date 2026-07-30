@@ -123,7 +123,7 @@ class ClientIn(BaseModel):
     dni: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
-    address: str
+    address: Optional[str] = ""
     community: Optional[str] = ""
     lat: Optional[float] = None
     lng: Optional[float] = None
