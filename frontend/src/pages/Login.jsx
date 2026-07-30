@@ -22,11 +22,16 @@ export default function Login() {
     <div className="min-h-screen grid lg:grid-cols-2 bg-background text-foreground">
       {/* Left visual panel */}
       <div className="hidden lg:flex flex-col justify-between p-12 bg-grid relative overflow-hidden border-r border-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-md bg-primary/15 border border-primary/30 grid place-items-center">
-            <Wifi className="w-5 h-5 text-primary" />
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-400 via-orange-500 to-rose-600 border border-amber-300/40 grid place-items-center shadow-[0_0_28px_rgba(251,146,60,0.55)]">
+            <Wifi className="w-6 h-6 text-white drop-shadow" />
           </div>
-          <div className="font-display font-bold text-xl tracking-tight">NetOps CRM</div>
+          <div
+            data-testid="brand-title"
+            className="font-display font-black text-4xl xl:text-5xl tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-amber-300 via-orange-500 to-rose-600 drop-shadow-[0_2px_18px_rgba(251,146,60,0.35)]"
+          >
+            CRM Jupiter
+          </div>
         </div>
         <div>
           <h1 className="font-display text-4xl xl:text-5xl font-bold tracking-tight leading-tight">
