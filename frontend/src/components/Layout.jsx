@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import ThemePicker, { initThemeFromStorage } from "@/components/ThemePicker";
 import ServersStatus from "@/components/ServersStatus";
 import PendingBadges from "@/components/PendingBadges";
+import InboxWidget from "@/components/InboxWidget";
 
 const NAV = [
   { to: "/clientes", label: "Clientes", icon: Users, group: "Menú" },
@@ -47,10 +48,13 @@ const COLLAPSE_KEY = "netops-sidebar-collapsed";
 export default function Layout() {
   const { user, logout, refresh } = useAuth();
   const navigate = useNavigate();
-  const { config } = useBusinessConfig();
+  const { config, refresh: refreshConfig, setConfig } = useBusinessConfig();
   const groupedNav = useMemo(() => GROUPED_NAV, []);
   const avatarFileRef = useRef(null);
+  const logoFileRef = useRef(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const canEditLogo = ["owner", "admin"].includes(user?.role);
 
   const uploadAvatar = async (file) => {
     if (!file) return;
@@ -64,6 +68,22 @@ export default function Layout() {
       toast.success("Foto actualizada");
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setUploadingAvatar(false); if (avatarFileRef.current) avatarFileRef.current.value = ""; }
+  };
+
+  const uploadLogo = async (file) => {
+    if (!file) return;
+    if (!canEditLogo) { toast.error("Solo el dueño o administrador puede cambiar el logo."); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error("El logo excede 2MB."); return; }
+    const form = new FormData();
+    form.append("file", file);
+    setUploadingLogo(true);
+    try {
+      const { data } = await api.post("/config/logo", form, { headers: { "Content-Type": "multipart/form-data" } });
+      setConfig((prev) => ({ ...(prev || {}), logo_url: data.logo_url }));
+      await refreshConfig();
+      toast.success("Logo actualizado");
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setUploadingLogo(false); if (logoFileRef.current) logoFileRef.current.value = ""; }
   };
 
   const [collapsed, setCollapsed] = useState(() => {
@@ -111,18 +131,43 @@ export default function Layout() {
         data-collapsed={collapsed ? "true" : "false"}
       >
         <div className={`h-14 flex items-center border-b border-border ${collapsed ? "justify-center px-2" : "px-4 gap-2"}`}>
-          {logoUrl ? (
-            <img
-              src={logoUrl}
-              alt={businessName}
-              className="w-8 h-8 rounded-md object-contain bg-secondary border border-border shrink-0"
-              data-testid="brand-logo"
-            />
-          ) : (
-            <div className="w-8 h-8 rounded-md bg-primary/15 border border-primary/30 grid place-items-center shrink-0">
-              <Wifi className="w-4 h-4 text-primary" />
-            </div>
-          )}
+          <input
+            ref={logoFileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            className="hidden"
+            onChange={(e) => uploadLogo(e.target.files?.[0])}
+            data-testid="logo-file-input"
+          />
+          <button
+            type="button"
+            onClick={() => canEditLogo && logoFileRef.current?.click()}
+            disabled={!canEditLogo}
+            title={canEditLogo ? "Cambiar logo (recomendado 64 × 64 px)" : "Solo dueño/administrador puede cambiar el logo"}
+            className={`relative w-10 h-10 rounded-md overflow-hidden shrink-0 group ${canEditLogo ? "hover:ring-2 hover:ring-primary/50 cursor-pointer" : "cursor-default"}`}
+            data-testid="brand-logo-btn"
+          >
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={businessName}
+                className="w-10 h-10 object-contain bg-secondary border border-border rounded-md"
+                data-testid="brand-logo"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-md bg-primary/15 border border-primary/30 grid place-items-center">
+                <Wifi className="w-5 h-5 text-primary" />
+              </div>
+            )}
+            {canEditLogo && (
+              <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 grid place-items-center transition-opacity">
+                <Camera className="w-4 h-4 text-white" />
+              </span>
+            )}
+            {uploadingLogo && (
+              <span className="absolute inset-0 bg-black/60 grid place-items-center text-[9px] text-white">…</span>
+            )}
+          </button>
           {!collapsed && (
             <div className="font-display font-bold tracking-tight truncate flex-1" data-testid="brand-name">
               {businessName}
@@ -260,12 +305,27 @@ export default function Layout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 relative z-10">
-        <header className="h-14 sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl flex items-center px-6 gap-3">
-          <ServersStatus />
-          <PendingBadges />
-          <div className="text-xs text-muted-foreground font-mono ml-auto truncate">
-            {user?.email}
-          </div>
+        <header
+          className={`sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl flex items-center px-3 gap-3 transition-[height] duration-200 ${headerCollapsed ? "h-7" : "h-14"}`}
+          data-testid="app-header"
+          data-collapsed={headerCollapsed ? "true" : "false"}
+        >
+          {!headerCollapsed && (
+            <>
+              <ServersStatus />
+              <PendingBadges />
+              <InboxWidget />
+            </>
+          )}
+          <button
+            type="button"
+            onClick={toggleHeader}
+            className="ml-auto p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            title={headerCollapsed ? "Expandir barra" : "Comprimir barra"}
+            data-testid="header-toggle"
+          >
+            {headerCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
         </header>
         <main className="flex-1 p-6 overflow-x-hidden">
           <Outlet />

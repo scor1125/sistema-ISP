@@ -200,6 +200,7 @@ class WhatsAppMessageIn(BaseModel):
     body: str
     direction: Literal["outgoing","incoming"] = "outgoing"
     kind: Literal["reminder","maintenance","chat","other"] = "chat"
+    channel: Literal["whatsapp","telegram"] = "whatsapp"
 
 class TaskIn(BaseModel):
     title: str
@@ -545,6 +546,14 @@ async def simulate_incoming(payload: WhatsAppMessageIn, _: dict = Depends(get_cu
     await db.whatsapp.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+@api.get("/inbox")
+async def inbox(_: dict = Depends(get_current_user)):
+    """Unified inbox: latest incoming messages across WhatsApp + Telegram."""
+    items = await db.whatsapp.find(
+        {"direction": "incoming"}, {"_id": 0}
+    ).sort("created_at", -1).limit(50).to_list(50)
+    return items
 
 # ---------- Business config ----------
 import base64

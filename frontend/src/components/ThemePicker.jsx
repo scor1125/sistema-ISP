@@ -8,165 +8,79 @@ import { Paintbrush, Check } from "lucide-react";
  * The gradient is always low-opacity + fixed, so it never hurts legibility.
  */
 export const THEMES = [
+  // Oscuros
   {
-    key: "midnight",
-    label: "Medianoche",
-    vars: {
-      "--background": "240 10% 4%",
-      "--card": "240 10% 6%",
-      "--popover": "240 10% 8%",
-      "--muted": "240 6% 12%",
-      "--accent": "240 6% 14%",
-      "--border": "240 10% 15%",
-      "--input": "240 10% 15%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "240 5% 65%",
-      "--primary": "210 100% 55%",
-      "--ring": "210 100% 55%",
-    },
-    gradient:
-      "radial-gradient(1100px circle at 15% -10%, hsl(210 100% 55% / 0.09), transparent 60%), radial-gradient(900px circle at 85% 110%, hsl(210 100% 55% / 0.06), transparent 60%)",
+    key: "midnight", label: "Medianoche", kind: "dark",
+    vars: { "--background": "240 10% 4%", "--card": "240 10% 6%", "--popover": "240 10% 8%", "--muted": "240 6% 12%", "--accent": "240 6% 14%", "--border": "240 10% 15%", "--input": "240 10% 15%", "--foreground": "0 0% 98%", "--muted-foreground": "240 5% 65%", "--primary": "210 100% 55%", "--ring": "210 100% 55%" },
+    gradient: "radial-gradient(1100px circle at 15% -10%, hsl(210 100% 55% / 0.09), transparent 60%), radial-gradient(900px circle at 85% 110%, hsl(210 100% 55% / 0.06), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(210 100% 55%), hsl(240 10% 6%))",
   },
   {
-    key: "ocean",
-    label: "Océano",
-    vars: {
-      "--background": "205 40% 5%",
-      "--card": "205 30% 8%",
-      "--popover": "205 30% 10%",
-      "--muted": "205 25% 12%",
-      "--accent": "205 25% 14%",
-      "--border": "205 25% 18%",
-      "--input": "205 25% 18%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "205 15% 70%",
-      "--primary": "190 90% 55%",
-      "--ring": "190 90% 55%",
-    },
-    gradient:
-      "radial-gradient(1100px circle at 20% -10%, hsl(190 90% 55% / 0.12), transparent 60%), radial-gradient(900px circle at 90% 100%, hsl(215 80% 50% / 0.10), transparent 60%)",
+    key: "ocean", label: "Océano", kind: "dark",
+    vars: { "--background": "205 40% 5%", "--card": "205 30% 8%", "--popover": "205 30% 10%", "--muted": "205 25% 12%", "--accent": "205 25% 14%", "--border": "205 25% 18%", "--input": "205 25% 18%", "--foreground": "0 0% 98%", "--muted-foreground": "205 15% 70%", "--primary": "190 90% 55%", "--ring": "190 90% 55%" },
+    gradient: "radial-gradient(1100px circle at 20% -10%, hsl(190 90% 55% / 0.12), transparent 60%), radial-gradient(900px circle at 90% 100%, hsl(215 80% 50% / 0.10), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(190 90% 55%), hsl(215 80% 30%))",
   },
   {
-    key: "forest",
-    label: "Bosque",
-    vars: {
-      "--background": "155 25% 5%",
-      "--card": "155 20% 8%",
-      "--popover": "155 20% 10%",
-      "--muted": "155 15% 13%",
-      "--accent": "155 15% 15%",
-      "--border": "155 15% 18%",
-      "--input": "155 15% 18%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "155 10% 70%",
-      "--primary": "160 84% 42%",
-      "--ring": "160 84% 42%",
-    },
-    gradient:
-      "radial-gradient(1000px circle at 10% -5%, hsl(160 84% 42% / 0.10), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(150 60% 40% / 0.08), transparent 60%)",
+    key: "forest", label: "Bosque", kind: "dark",
+    vars: { "--background": "155 25% 5%", "--card": "155 20% 8%", "--popover": "155 20% 10%", "--muted": "155 15% 13%", "--accent": "155 15% 15%", "--border": "155 15% 18%", "--input": "155 15% 18%", "--foreground": "0 0% 98%", "--muted-foreground": "155 10% 70%", "--primary": "160 84% 42%", "--ring": "160 84% 42%" },
+    gradient: "radial-gradient(1000px circle at 10% -5%, hsl(160 84% 42% / 0.10), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(150 60% 40% / 0.08), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(160 84% 42%), hsl(155 40% 12%))",
   },
   {
-    key: "sunset",
-    label: "Amanecer",
-    vars: {
-      "--background": "20 25% 5%",
-      "--card": "20 20% 8%",
-      "--popover": "20 20% 10%",
-      "--muted": "20 15% 13%",
-      "--accent": "20 15% 15%",
-      "--border": "20 15% 18%",
-      "--input": "20 15% 18%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "20 15% 72%",
-      "--primary": "24 95% 55%",
-      "--ring": "24 95% 55%",
-    },
-    gradient:
-      "radial-gradient(1100px circle at 15% -10%, hsl(24 95% 55% / 0.12), transparent 60%), radial-gradient(900px circle at 90% 100%, hsl(346 84% 55% / 0.09), transparent 60%)",
+    key: "sunset", label: "Amanecer", kind: "dark",
+    vars: { "--background": "20 25% 5%", "--card": "20 20% 8%", "--popover": "20 20% 10%", "--muted": "20 15% 13%", "--accent": "20 15% 15%", "--border": "20 15% 18%", "--input": "20 15% 18%", "--foreground": "0 0% 98%", "--muted-foreground": "20 15% 72%", "--primary": "24 95% 55%", "--ring": "24 95% 55%" },
+    gradient: "radial-gradient(1100px circle at 15% -10%, hsl(24 95% 55% / 0.12), transparent 60%), radial-gradient(900px circle at 90% 100%, hsl(346 84% 55% / 0.09), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(24 95% 55%), hsl(346 84% 45%))",
   },
   {
-    key: "violet",
-    label: "Violeta",
-    vars: {
-      "--background": "265 30% 5%",
-      "--card": "265 25% 8%",
-      "--popover": "265 25% 10%",
-      "--muted": "265 20% 13%",
-      "--accent": "265 20% 15%",
-      "--border": "265 20% 18%",
-      "--input": "265 20% 18%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "265 15% 70%",
-      "--primary": "262 83% 62%",
-      "--ring": "262 83% 62%",
-    },
-    gradient:
-      "radial-gradient(1100px circle at 20% -10%, hsl(262 83% 62% / 0.14), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(220 80% 60% / 0.10), transparent 60%)",
+    key: "violet", label: "Violeta", kind: "dark",
+    vars: { "--background": "265 30% 5%", "--card": "265 25% 8%", "--popover": "265 25% 10%", "--muted": "265 20% 13%", "--accent": "265 20% 15%", "--border": "265 20% 18%", "--input": "265 20% 18%", "--foreground": "0 0% 98%", "--muted-foreground": "265 15% 70%", "--primary": "262 83% 62%", "--ring": "262 83% 62%" },
+    gradient: "radial-gradient(1100px circle at 20% -10%, hsl(262 83% 62% / 0.14), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(220 80% 60% / 0.10), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(262 83% 62%), hsl(240 80% 30%))",
   },
   {
-    key: "graphite",
-    label: "Grafito",
-    vars: {
-      "--background": "220 10% 7%",
-      "--card": "220 8% 10%",
-      "--popover": "220 8% 12%",
-      "--muted": "220 6% 15%",
-      "--accent": "220 6% 17%",
-      "--border": "220 6% 20%",
-      "--input": "220 6% 20%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "220 6% 70%",
-      "--primary": "38 92% 55%",
-      "--ring": "38 92% 55%",
-    },
-    gradient:
-      "radial-gradient(1200px circle at 50% -20%, hsl(38 92% 55% / 0.06), transparent 60%)",
+    key: "graphite", label: "Grafito", kind: "dark",
+    vars: { "--background": "220 10% 7%", "--card": "220 8% 10%", "--popover": "220 8% 12%", "--muted": "220 6% 15%", "--accent": "220 6% 17%", "--border": "220 6% 20%", "--input": "220 6% 20%", "--foreground": "0 0% 98%", "--muted-foreground": "220 6% 70%", "--primary": "38 92% 55%", "--ring": "38 92% 55%" },
+    gradient: "radial-gradient(1200px circle at 50% -20%, hsl(38 92% 55% / 0.06), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(38 92% 55%), hsl(220 8% 15%))",
   },
   {
-    key: "rose",
-    label: "Terracota",
-    vars: {
-      "--background": "10 25% 6%",
-      "--card": "10 20% 9%",
-      "--popover": "10 20% 11%",
-      "--muted": "10 15% 14%",
-      "--accent": "10 15% 16%",
-      "--border": "10 15% 19%",
-      "--input": "10 15% 19%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "10 15% 72%",
-      "--primary": "346 84% 60%",
-      "--ring": "346 84% 60%",
-    },
-    gradient:
-      "radial-gradient(1100px circle at 20% -10%, hsl(346 84% 60% / 0.12), transparent 60%), radial-gradient(900px circle at 100% 110%, hsl(24 95% 55% / 0.08), transparent 60%)",
+    key: "rose", label: "Terracota", kind: "dark",
+    vars: { "--background": "10 25% 6%", "--card": "10 20% 9%", "--popover": "10 20% 11%", "--muted": "10 15% 14%", "--accent": "10 15% 16%", "--border": "10 15% 19%", "--input": "10 15% 19%", "--foreground": "0 0% 98%", "--muted-foreground": "10 15% 72%", "--primary": "346 84% 60%", "--ring": "346 84% 60%" },
+    gradient: "radial-gradient(1100px circle at 20% -10%, hsl(346 84% 60% / 0.12), transparent 60%), radial-gradient(900px circle at 100% 110%, hsl(24 95% 55% / 0.08), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(346 84% 60%), hsl(24 60% 25%))",
   },
   {
-    key: "neon",
-    label: "Neón",
-    vars: {
-      "--background": "240 15% 4%",
-      "--card": "240 12% 7%",
-      "--popover": "240 12% 9%",
-      "--muted": "240 10% 12%",
-      "--accent": "240 10% 14%",
-      "--border": "240 10% 17%",
-      "--input": "240 10% 17%",
-      "--foreground": "0 0% 98%",
-      "--muted-foreground": "240 8% 72%",
-      "--primary": "84 72% 48%",
-      "--ring": "84 72% 48%",
-    },
-    gradient:
-      "radial-gradient(1100px circle at 15% -10%, hsl(84 72% 48% / 0.10), transparent 60%), radial-gradient(900px circle at 90% 100%, hsl(190 90% 55% / 0.10), transparent 60%)",
+    key: "neon", label: "Neón", kind: "dark",
+    vars: { "--background": "240 15% 4%", "--card": "240 12% 7%", "--popover": "240 12% 9%", "--muted": "240 10% 12%", "--accent": "240 10% 14%", "--border": "240 10% 17%", "--input": "240 10% 17%", "--foreground": "0 0% 98%", "--muted-foreground": "240 8% 72%", "--primary": "84 72% 48%", "--ring": "84 72% 48%" },
+    gradient: "radial-gradient(1100px circle at 15% -10%, hsl(84 72% 48% / 0.10), transparent 60%), radial-gradient(900px circle at 90% 100%, hsl(190 90% 55% / 0.10), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(84 72% 48%), hsl(190 90% 45%))",
+  },
+  // Claros
+  {
+    key: "paper", label: "Papel", kind: "light",
+    vars: { "--background": "0 0% 98%", "--card": "0 0% 100%", "--popover": "0 0% 100%", "--muted": "220 14% 94%", "--accent": "220 14% 92%", "--border": "220 13% 88%", "--input": "220 13% 88%", "--foreground": "222 47% 11%", "--muted-foreground": "215 16% 42%", "--primary": "222 89% 55%", "--ring": "222 89% 55%" },
+    gradient: "radial-gradient(1200px circle at 10% -10%, hsl(222 89% 55% / 0.10), transparent 60%), radial-gradient(1000px circle at 100% 110%, hsl(200 80% 60% / 0.08), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(222 89% 55%), hsl(0 0% 96%))",
+  },
+  {
+    key: "arctic", label: "Ártico", kind: "light",
+    vars: { "--background": "210 40% 96%", "--card": "0 0% 100%", "--popover": "0 0% 100%", "--muted": "210 30% 92%", "--accent": "210 30% 90%", "--border": "210 25% 85%", "--input": "210 25% 85%", "--foreground": "215 40% 15%", "--muted-foreground": "215 20% 40%", "--primary": "195 92% 42%", "--ring": "195 92% 42%" },
+    gradient: "radial-gradient(1100px circle at 20% -10%, hsl(195 92% 55% / 0.14), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(220 80% 60% / 0.10), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(195 92% 42%), hsl(210 40% 92%))",
+  },
+  {
+    key: "sand", label: "Arena", kind: "light",
+    vars: { "--background": "40 40% 96%", "--card": "40 30% 99%", "--popover": "40 30% 99%", "--muted": "40 25% 92%", "--accent": "40 25% 90%", "--border": "40 20% 85%", "--input": "40 20% 85%", "--foreground": "30 30% 15%", "--muted-foreground": "30 15% 40%", "--primary": "24 90% 48%", "--ring": "24 90% 48%" },
+    gradient: "radial-gradient(1100px circle at 20% -10%, hsl(24 90% 55% / 0.14), transparent 60%), radial-gradient(900px circle at 100% 110%, hsl(346 80% 60% / 0.09), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(24 90% 48%), hsl(40 40% 92%))",
+  },
+  {
+    key: "mint", label: "Menta", kind: "light",
+    vars: { "--background": "150 30% 96%", "--card": "0 0% 100%", "--popover": "0 0% 100%", "--muted": "150 20% 92%", "--accent": "150 20% 90%", "--border": "150 15% 85%", "--input": "150 15% 85%", "--foreground": "160 35% 14%", "--muted-foreground": "160 15% 38%", "--primary": "160 76% 36%", "--ring": "160 76% 36%" },
+    gradient: "radial-gradient(1100px circle at 10% -5%, hsl(160 84% 42% / 0.13), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(190 80% 50% / 0.09), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(160 76% 36%), hsl(150 30% 92%))",
   },
 ];
 
@@ -220,6 +134,12 @@ export function applyTheme(theme, tintKey) {
   Object.entries(theme.vars).forEach(([k, v]) => root.style.setProperty(k, v));
   root.style.setProperty("--app-gradient", theme.gradient || "none");
   applySidebarTint(tintKey || localStorage.getItem(SIDEBAR_KEY) || "auto");
+  // Reapply custom primary override if set
+  const custom = localStorage.getItem(CUSTOM_KEY);
+  if (custom) {
+    root.style.setProperty("--primary", custom);
+    root.style.setProperty("--ring", custom);
+  }
 }
 
 export function initThemeFromStorage() {
@@ -234,6 +154,28 @@ export function initThemeFromStorage() {
   return theme.key;
 }
 
+const CUSTOM_KEY = "netops-custom-primary";
+
+function hexToHsl(hex) {
+  const m = hex.replace("#", "").match(/^([0-9a-f]{6})$/i);
+  if (!m) return null;
+  const int = parseInt(m[1], 16);
+  const r = ((int >> 16) & 255) / 255, g = ((int >> 8) & 255) / 255, b = (int & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h *= 60;
+  }
+  return `${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
+}
+
 export default function ThemePicker() {
   const [active, setActive] = useState(() => {
     if (typeof window === "undefined") return "midnight";
@@ -245,20 +187,39 @@ export default function ThemePicker() {
     const saved = localStorage.getItem(SIDEBAR_KEY);
     return SIDEBAR_TINTS.find((t) => t.key === saved) ? saved : "auto";
   });
+  const [custom, setCustom] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem(CUSTOM_KEY) || "" : ""
+  );
 
   useEffect(() => {
     const theme = THEMES.find((t) => t.key === active) || THEMES[0];
     applyTheme(theme, sidebar);
     localStorage.setItem(STORAGE_KEY, theme.key);
-  }, [active, sidebar]);
+    if (custom) {
+      document.documentElement.style.setProperty("--primary", custom);
+      document.documentElement.style.setProperty("--ring", custom);
+    }
+  }, [active, sidebar, custom]);
 
   useEffect(() => {
-    // Re-apply tint when it changes so lightness follows the current theme.
     applySidebarTint(sidebar);
     localStorage.setItem(SIDEBAR_KEY, sidebar);
   }, [sidebar]);
 
   const current = THEMES.find((t) => t.key === active) || THEMES[0];
+  const dark = THEMES.filter((t) => t.kind !== "light");
+  const light = THEMES.filter((t) => t.kind === "light");
+
+  const setColor = (hex) => {
+    const hsl = hexToHsl(hex);
+    if (hsl) { setCustom(hsl); localStorage.setItem(CUSTOM_KEY, hsl); }
+  };
+  const clearCustom = () => {
+    localStorage.removeItem(CUSTOM_KEY);
+    setCustom("");
+    const t = THEMES.find((x) => x.key === active);
+    if (t) applyTheme(t, sidebar);
+  };
 
   return (
     <Popover>
@@ -277,44 +238,69 @@ export default function ThemePicker() {
           />
         </button>
       </PopoverTrigger>
-      <PopoverContent side="right" align="end" className="w-80 p-3" data-testid="theme-picker-panel">
-        <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">
-          Tema completo
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {THEMES.map((t) => {
-            const isActive = t.key === active;
-            return (
+      <PopoverContent side="right" align="end" className="w-96 p-3 max-h-[80vh] overflow-y-auto" data-testid="theme-picker-panel">
+        <ThemeSection title="Oscuros" themes={dark} active={active} onPick={setActive} />
+        <ThemeSection title="Claros" themes={light} active={active} onPick={setActive} />
+        <div className="mt-3 pt-3 border-t border-border">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Color primario personalizado</div>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              onChange={(e) => setColor(e.target.value)}
+              className="w-10 h-10 rounded-md border border-border bg-transparent cursor-pointer"
+              data-testid="custom-color"
+            />
+            <div className="flex-1 text-[11px] text-muted-foreground font-mono">
+              {custom ? `HSL personalizado activo` : "Sobrescribe el color primario del tema"}
+            </div>
+            {custom && (
               <button
-                key={t.key}
                 type="button"
-                data-testid={`theme-${t.key}`}
-                onClick={() => setActive(t.key)}
-                className={`relative rounded-md border overflow-hidden text-left transition-colors ${isActive ? "border-foreground" : "border-border hover:border-foreground/60"}`}
+                onClick={clearCustom}
+                className="text-[11px] text-muted-foreground hover:text-foreground underline"
               >
-                <div
-                  className="h-14"
-                  style={{
-                    background: `hsl(${t.vars["--background"]})`,
-                    backgroundImage: t.gradient,
-                  }}
-                />
-                <div className="px-2 py-1.5 flex items-center gap-2 bg-card">
-                  <span
-                    className="w-3.5 h-3.5 rounded-full border border-border"
-                    style={{ background: t.swatch }}
-                  />
-                  <span className="text-xs font-medium truncate">{t.label}</span>
-                  {isActive && <Check className="w-3.5 h-3.5 ml-auto text-primary" />}
-                </div>
+                Restaurar
               </button>
-            );
-          })}
+            )}
+          </div>
         </div>
         <div className="mt-3 text-[11px] text-muted-foreground">
-          Cambia fondo, tarjetas, bordes y color primario. El gradiente se mantiene sutil para no afectar la lectura.
+          Elige claro u oscuro. Los gradientes se mantienen sutiles para no afectar la lectura.
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function ThemeSection({ title, themes, active, onPick }) {
+  if (!themes.length) return null;
+  return (
+    <div className="mb-3">
+      <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">{title}</div>
+      <div className="grid grid-cols-2 gap-2">
+        {themes.map((t) => {
+          const isActive = t.key === active;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              data-testid={`theme-${t.key}`}
+              onClick={() => onPick(t.key)}
+              className={`relative rounded-md border overflow-hidden text-left transition-colors ${isActive ? "border-foreground" : "border-border hover:border-foreground/60"}`}
+            >
+              <div
+                className="h-14"
+                style={{ background: `hsl(${t.vars["--background"]})`, backgroundImage: t.gradient }}
+              />
+              <div className="px-2 py-1.5 flex items-center gap-2 bg-card">
+                <span className="w-3.5 h-3.5 rounded-full border border-border" style={{ background: t.swatch }} />
+                <span className="text-xs font-medium truncate">{t.label}</span>
+                {isActive && <Check className="w-3.5 h-3.5 ml-auto text-primary" />}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
