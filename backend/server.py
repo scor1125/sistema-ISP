@@ -476,6 +476,119 @@ async def update_vpn_server_info(payload: dict, _: dict = Depends(require_roles(
     await db.config.update_one({"key": "server_vpn"}, {"$set": {"value": payload, "updated_at": now_iso()}}, upsert=True)
     return {"ok": True, "value": payload}
 
+@api.post("/devices/{device_id}/mikrotik-test")
+async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
+    """Diagnóstico completo de un Mikrotik registrado:
+    - valida datos faltantes,
+    - hace prueba TCP real contra el endpoint del CRM (donde el router debe
+      llegar),
+    - devuelve una serie de tráfico (RX/TX) simulada para que el operador vea
+      la conexión con un gráfico.
+    """
+    import asyncio, socket, time, random
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+
+    cfg_doc = await db.config.find_one({"key": "server_vpn"}, {"_id": 0}) or {}
+    cfg = cfg_doc.get("value", {}) if isinstance(cfg_doc, dict) else {}
+    host = d.get("host") or cfg.get("public_ip") or ""
+    proto = (d.get("vpn_protocol") or "wireguard").lower()
+    port = int(d.get("port") or (cfg.get("wireguard_port") or 51820 if proto == "wireguard"
+                                 else cfg.get("l2tp_port") or 1701))
+
+    checks = []
+    def add(name, ok, message="", fix=""):
+        checks.append({"name": name, "ok": ok, "message": message, "fix": fix})
+
+    add("Nombre del router", bool(d.get("name")), d.get("name") or "sin definir",
+        fix="Edita el Mikrotik y ponle un nombre." if not d.get("name") else "")
+    add("Protocolo VPN definido", bool(d.get("vpn_protocol")), (d.get("vpn_protocol") or "").upper() or "no seleccionado",
+        fix="Reconfigura y elegí WireGuard o L2TP." if not d.get("vpn_protocol") else "")
+    if proto == "l2tp":
+        add("Credenciales L2TP", bool(d.get("vpn_user") and d.get("vpn_password")),
+            "usuario/contraseña completos" if d.get("vpn_user") and d.get("vpn_password") else "faltan credenciales",
+            fix="Reconfigura y presiona 'Autogenerar' en Usuario VPN." if not (d.get("vpn_user") and d.get("vpn_password")) else "")
+    else:
+        add("Public Key del servidor", bool(cfg.get("server_public_key")),
+            "configurada" if cfg.get("server_public_key") else "sin configurar",
+            fix="En Datos del servidor, edita 'Public Key del servidor'." if not cfg.get("server_public_key") else "")
+    add("IP pública del CRM", bool(cfg.get("public_ip")), cfg.get("public_ip") or "sin definir",
+        fix="Edita 'Datos del servidor' y completá la IP pública." if not cfg.get("public_ip") else "")
+    if d.get("api_enabled"):
+        add("Usuario API", bool(d.get("api_user") and d.get("api_password")),
+            (d.get("api_user") or "") + (" · pass ok" if d.get("api_password") else " · pass vacío"),
+            fix="Reconfigura y presiona 'Generar credenciales API'." if not (d.get("api_user") and d.get("api_password")) else "")
+    else:
+        add("API deshabilitada", True, "gestión de sesión sólo por túnel", fix="")
+    add("Modo de gestión", bool(d.get("management_modes")),
+        ", ".join(d.get("management_modes") or []) or "ninguno",
+        fix="Reconfigura y marca PPP y/o Queues." if not d.get("management_modes") else "")
+
+    # --- TCP reachability check ---
+    def _resolve():
+        try: return socket.gethostbyname(host)
+        except Exception: return None
+    resolved = await asyncio.get_event_loop().run_in_executor(None, _resolve) if host else None
+    add("Host resuelve DNS", bool(resolved), resolved or "no se resolvió", fix="Prueba con la IP directa." if not resolved and host else "")
+
+    tcp_ok = False; latency_ms = None; tcp_err = None
+    if resolved:
+        t0 = time.perf_counter()
+        try:
+            fut = asyncio.open_connection(resolved, port)
+            reader, writer = await asyncio.wait_for(fut, timeout=3.0)
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            tcp_ok = True
+            writer.close()
+            try: await writer.wait_closed()
+            except Exception: pass
+        except asyncio.TimeoutError:
+            tcp_err = f"Timeout: {host}:{port} no respondió en 3s."
+        except ConnectionRefusedError:
+            tcp_err = f"Conexión rechazada por {host}:{port}."
+        except Exception as e:
+            tcp_err = f"{type(e).__name__}: {e}"
+    add(f"Endpoint {host}:{port} alcanzable", tcp_ok,
+        (f"{latency_ms} ms" if tcp_ok else (tcp_err or "no evaluado")),
+        fix="Abre el puerto UDP en firewall y NAT del proveedor." if not tcp_ok else "")
+
+    critical_ok = all(c["ok"] for c in checks if c["name"] not in ("API deshabilitada",))
+    reachable = tcp_ok
+
+    # --- Simulated traffic series (last 30 samples, 3s apart) ---
+    now = time.time()
+    seed = (d.get("id") or "seed") + str(int(now // 3))
+    random.seed(seed)
+    samples = []
+    for i in range(30):
+        ts = int(now - (29 - i) * 3)
+        base_rx = 350 + 200 * (0.6 + random.random() * 0.8)
+        base_tx = 120 + 90 * (0.6 + random.random() * 0.8)
+        # spike each ~10 samples
+        if i % 10 == 0: base_rx *= 1.6
+        samples.append({
+            "t": ts,
+            "label": time.strftime("%H:%M:%S", time.localtime(ts)),
+            "rx_kbps": int(base_rx if reachable else 0),
+            "tx_kbps": int(base_tx if reachable else 0),
+        })
+
+    return {
+        "device_id": device_id,
+        "endpoint": f"{host}:{port}",
+        "protocol": proto,
+        "resolved": resolved,
+        "latency_ms": latency_ms,
+        "reachable": reachable,
+        "all_ok": critical_ok and reachable,
+        "checks": checks,
+        "traffic": samples,
+        "checked_at": now_iso(),
+        "message": ("Conectado correctamente." if reachable and critical_ok
+                    else "Faltan datos o el endpoint no responde. Revisa los ítems marcados en rojo."),
+    }
+
 @api.post("/vpn/{vpn_id}/test")
 async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
     """Real TCP reachability check against the VPN endpoint. Reports latency,

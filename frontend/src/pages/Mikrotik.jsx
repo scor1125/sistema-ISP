@@ -13,9 +13,10 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
-  Plus, Router as RouterIcon, ShieldCheck, Terminal, Copy, Download, Shuffle, ChevronDown, Trash2, Pencil,
+  Plus, Router as RouterIcon, ShieldCheck, Terminal, Copy, Download, Shuffle, ChevronDown, Trash2, Pencil, Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import MikrotikTestDialog from "@/components/MikrotikTestDialog";
 
 const rand = (n = 10) => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -320,6 +321,7 @@ export default function Mikrotik() {
   const [server, setServer] = useState(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [testing, setTesting] = useState(null);
   const [q, setQ] = useState("");
 
   const load = async () => {
@@ -406,6 +408,9 @@ export default function Mikrotik() {
                 </TableCell>
                 <TableCell className="text-xs font-mono">{(d.created_at || "").slice(0, 10)}</TableCell>
                 <TableCell className="text-right">
+                  <Button size="sm" variant="outline" onClick={() => setTesting(d)} data-testid={`mk-test-${d.id}`} className="mr-1">
+                    <Zap className="w-3.5 h-3.5 mr-1" /> Probar
+                  </Button>
                   <Button size="icon" variant="ghost" onClick={() => startEdit(d)} data-testid={`mk-edit-${d.id}`}>
                     <Pencil className="w-4 h-4" />
                   </Button>
@@ -425,6 +430,12 @@ export default function Mikrotik() {
         server={server}
         onSaved={load}
         initial={editing}
+      />
+
+      <MikrotikTestDialog
+        device={testing}
+        open={!!testing}
+        onOpenChange={(o) => { if (!o) setTesting(null); }}
       />
     </div>
   );
