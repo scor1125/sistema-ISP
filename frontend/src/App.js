@@ -22,6 +22,7 @@ import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
 import MyPendings from "@/pages/MyPendings";
 import ControlPanel from "@/pages/ControlPanel";
+import Arqueos from "@/pages/Arqueos";
 import "@/App.css";
 
 function Protected() {
@@ -57,6 +58,7 @@ function App() {
             <Route path="/planes" element={<Plans />} />
             <Route path="/pagos" element={<Payments />} />
             <Route path="/promesas" element={<PromisesPage />} />
+            <Route path="/arqueos" element={<Arqueos />} />
             <Route path="/leads" element={<Leads />} />
             <Route path="/extras" element={<Extras />} />
             <Route path="/mapa" element={<NapMap />} />

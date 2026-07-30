@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
   ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight, StickyNote,
-  ChevronUp, ChevronDown, Camera, HandCoins
+  ChevronUp, ChevronDown, Camera, HandCoins, Calculator
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ const NAV = [
   { to: "/clientes", label: "Clientes", icon: Users, group: "Menú" },
   { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú" },
   { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Menú" },
+  { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Menú" },
   { to: "/desconectados", label: "Desconectados", icon: ZapOff, group: "Menú" },
   { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Menú" },
   { to: "/planes", label: "Planes", icon: PackagePlus, group: "Menú" },

@@ -246,6 +246,16 @@ class VpnConnectionIn(BaseModel):
     dns: Optional[str] = "1.1.1.1"
     active: bool = True
 
+class ArqueoIn(BaseModel):
+    date_from: str  # ISO date YYYY-MM-DD
+    date_to: str    # ISO date YYYY-MM-DD (inclusive)
+    payment_ids: List[str]
+    total_amount: float
+    methods: Optional[List[str]] = []
+    user_filter_id: Optional[str] = None
+    user_filter_name: Optional[str] = ""
+    notes: Optional[str] = ""
+
 class BusinessConfigIn(BaseModel):
     business_name: Optional[str] = ""
     legal_name: Optional[str] = ""
@@ -577,6 +587,28 @@ async def bulk_delete_payments(payload: BulkDeleteIn, _: dict = Depends(require_
 @api.delete("/payments/{pid}")
 async def delete_payment(pid: str, _: dict = Depends(require_roles("owner","admin"))):
     await db.payments.delete_one({"id": pid})
+    return {"ok": True}
+
+# ---------- Arqueos de caja ----------
+@api.get("/arqueos")
+async def list_arqueos(_: dict = Depends(get_current_user)):
+    items = await db.arqueos.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return items
+
+@api.post("/arqueos")
+async def create_arqueo(payload: ArqueoIn, user: dict = Depends(get_current_user)):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    doc["created_by"] = user.get("id")
+    doc["created_by_name"] = user.get("name")
+    await db.arqueos.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.delete("/arqueos/{aid}")
+async def delete_arqueo(aid: str, _: dict = Depends(require_roles("owner","admin"))):
+    await db.arqueos.delete_one({"id": aid})
     return {"ok": True}
 
 # ---------- WhatsApp ----------
