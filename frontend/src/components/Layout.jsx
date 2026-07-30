@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Toaster } from "@/components/ui/sonner";
 import ThemePicker, { initAccentFromStorage } from "@/components/ThemePicker";
 import ServersStatus from "@/components/ServersStatus";
+import PendingBadges from "@/components/PendingBadges";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true, group: "General" },
@@ -123,6 +124,7 @@ export default function Layout() {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-14 sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl flex items-center px-6 gap-3">
           <ServersStatus />
+          <PendingBadges />
           <div className="text-xs text-muted-foreground font-mono ml-auto truncate">
             {user?.email}
           </div>
