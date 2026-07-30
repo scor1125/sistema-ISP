@@ -19,6 +19,7 @@ import Disconnected from "@/pages/Disconnected";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
+import MyPendings from "@/pages/MyPendings";
 import "@/App.css";
 
 function Protected() {
@@ -60,6 +61,7 @@ function App() {
             <Route path="/desconectados" element={<Disconnected />} />
             <Route path="/whatsapp" element={<WhatsApp />} />
             <Route path="/tareas" element={<Tasks />} />
+            <Route path="/mis-pendientes" element={<MyPendings />} />
             <Route path="/usuarios" element={<Users />} />
             <Route path="/configuracion" element={<Settings />} />
           </Route>

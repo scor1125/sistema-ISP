@@ -170,7 +170,11 @@ class PaymentIn(BaseModel):
     notes: Optional[str] = ""
     is_promise: bool = False
     promise_date: Optional[str] = None
+    extension_days: Optional[int] = None
     invoice_number: Optional[str] = None
+
+class BulkDeleteIn(BaseModel):
+    ids: List[str]
 
 class LeadIn(BaseModel):
     full_name: str
@@ -204,6 +208,20 @@ class TaskIn(BaseModel):
     assigned_to: Optional[str] = None
     client_id: Optional[str] = None
     due_date: Optional[str] = None
+
+class PersonalNoteIn(BaseModel):
+    title: str
+    body: Optional[str] = ""
+    color: Optional[str] = "default"
+    pinned: bool = False
+    done: bool = False
+
+class PersonalNoteUpdate(BaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    color: Optional[str] = None
+    pinned: Optional[bool] = None
+    done: Optional[bool] = None
 
 class DeviceIn(BaseModel):
     name: str
@@ -337,6 +355,42 @@ api.include_router(crud_router("/leads", LeadIn, "leads"))
 api.include_router(crud_router("/tasks", TaskIn, "tasks"))
 api.include_router(crud_router("/devices", DeviceIn, "devices"))
 
+# ---------- Personal pending notes (per-user) ----------
+@api.get("/my-notes")
+async def my_notes(user: dict = Depends(get_current_user)):
+    items = await db.personal_notes.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+@api.post("/my-notes")
+async def create_my_note(payload: PersonalNoteIn, user: dict = Depends(get_current_user)):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["user_id"] = user["id"]
+    doc["user_name"] = user.get("name")
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    await db.personal_notes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.patch("/my-notes/{note_id}")
+async def update_my_note(note_id: str, payload: PersonalNoteUpdate, user: dict = Depends(get_current_user)):
+    updates = payload.dict(exclude_none=True)
+    updates["updated_at"] = now_iso()
+    res = await db.personal_notes.update_one(
+        {"id": note_id, "user_id": user["id"]}, {"$set": updates}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Nota no encontrada")
+    return await db.personal_notes.find_one({"id": note_id}, {"_id": 0})
+
+@api.delete("/my-notes/{note_id}")
+async def delete_my_note(note_id: str, user: dict = Depends(get_current_user)):
+    res = await db.personal_notes.delete_one({"id": note_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Nota no encontrada")
+    return {"ok": True}
+
 # ---------- Clients (custom with derived fields) ----------
 def _next_due_date(payment_day: int, from_iso: Optional[str] = None) -> str:
     base = datetime.fromisoformat(from_iso) if from_iso else datetime.now(timezone.utc)
@@ -407,7 +461,7 @@ async def list_payments(client_id: Optional[str] = None, _: dict = Depends(get_c
     return items
 
 @api.post("/payments")
-async def create_payment(payload: PaymentIn, _: dict = Depends(get_current_user)):
+async def create_payment(payload: PaymentIn, user: dict = Depends(get_current_user)):
     client = await db.clients.find_one({"id": payload.client_id})
     if not client:
         raise HTTPException(404, "Cliente no encontrado")
@@ -415,8 +469,9 @@ async def create_payment(payload: PaymentIn, _: dict = Depends(get_current_user)
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
     doc["updated_at"] = now_iso()
+    doc["created_by"] = user.get("id")
+    doc["created_by_name"] = user.get("name")
     await db.payments.insert_one(doc)
-    # advance due date + reactivate if this is a real payment (not a promise)
     if not payload.is_promise:
         current_due = client.get("next_due_date") or now_iso()
         new_due = _next_due_date(client.get("payment_day", 1), current_due)
@@ -426,6 +481,13 @@ async def create_payment(payload: PaymentIn, _: dict = Depends(get_current_user)
         )
     doc.pop("_id", None)
     return doc
+
+@api.post("/payments/bulk-delete")
+async def bulk_delete_payments(payload: BulkDeleteIn, _: dict = Depends(require_roles("owner","admin"))):
+    if not payload.ids:
+        return {"deleted": 0}
+    res = await db.payments.delete_many({"id": {"$in": payload.ids}})
+    return {"deleted": res.deleted_count}
 
 @api.delete("/payments/{pid}")
 async def delete_payment(pid: str, _: dict = Depends(require_roles("owner","admin"))):

@@ -171,23 +171,66 @@ export const THEMES = [
 ];
 
 const STORAGE_KEY = "netops-theme";
+const SIDEBAR_KEY = "netops-sidebar-tint";
 const LEGACY_ACCENT_KEY = "netops-accent"; // backwards-compat with earlier accent-only picker
 
-export function applyTheme(theme) {
+/**
+ * Extra tints for the sidebar background — always slightly lighter than the
+ * base card colour, so users can distinguish the menu from the main canvas.
+ * Values are HSL strings applied to the --sidebar-bg CSS variable.
+ * The special key "auto" falls back to the current theme's --card value.
+ */
+export const SIDEBAR_TINTS = [
+  { key: "auto",    label: "Automático (según tema)" },
+  { key: "lighter", label: "Un poco más claro",  delta: 4 },
+  { key: "soft",    label: "Suave elevado",      delta: 8 },
+  { key: "bright",  label: "Bien iluminado",     delta: 12 },
+  { key: "primary", label: "Con tinte primario",  usePrimary: true, delta: 6 },
+  { key: "warm",    label: "Cálido",             overrideHue: 24, sat: 20, delta: 8 },
+  { key: "cool",    label: "Fresco",             overrideHue: 210, sat: 25, delta: 8 },
+];
+
+function computeSidebarHsl(tintKey) {
+  const root = document.documentElement;
+  const card = getComputedStyle(root).getPropertyValue("--card").trim(); // "H S% L%"
+  const primary = getComputedStyle(root).getPropertyValue("--primary").trim();
+  if (!card) return "";
+  const [h, s, l] = card.split(/\s+/).map((v) => parseFloat(v));
+  const tint = SIDEBAR_TINTS.find((t) => t.key === tintKey);
+  if (!tint || tint.key === "auto") return `${h} ${s}% ${l}%`;
+  let hue = h, sat = s, light = l + (tint.delta || 0);
+  if (tint.usePrimary && primary) {
+    const [ph, ps] = primary.split(/\s+/).map((v) => parseFloat(v));
+    if (!Number.isNaN(ph)) hue = ph;
+    if (!Number.isNaN(ps)) sat = Math.min(ps, 40);
+  }
+  if (tint.overrideHue != null) hue = tint.overrideHue;
+  if (tint.sat != null) sat = tint.sat;
+  light = Math.max(4, Math.min(30, light));
+  return `${hue} ${sat}% ${light}%`;
+}
+
+export function applySidebarTint(tintKey) {
+  const hsl = computeSidebarHsl(tintKey);
+  document.documentElement.style.setProperty("--sidebar-bg", hsl);
+}
+
+export function applyTheme(theme, tintKey) {
   const root = document.documentElement;
   Object.entries(theme.vars).forEach(([k, v]) => root.style.setProperty(k, v));
   root.style.setProperty("--app-gradient", theme.gradient || "none");
+  applySidebarTint(tintKey || localStorage.getItem(SIDEBAR_KEY) || "auto");
 }
 
 export function initThemeFromStorage() {
   let saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) {
-    // If the user had picked an accent under the old key, keep midnight but honor the accent.
     const legacy = localStorage.getItem(LEGACY_ACCENT_KEY);
     if (legacy) saved = "midnight";
   }
   const theme = THEMES.find((t) => t.key === saved) || THEMES[0];
-  applyTheme(theme);
+  const tint = localStorage.getItem(SIDEBAR_KEY) || "auto";
+  applyTheme(theme, tint);
   return theme.key;
 }
 
@@ -197,12 +240,23 @@ export default function ThemePicker() {
     const saved = localStorage.getItem(STORAGE_KEY);
     return THEMES.find((t) => t.key === saved) ? saved : "midnight";
   });
+  const [sidebar, setSidebar] = useState(() => {
+    if (typeof window === "undefined") return "auto";
+    const saved = localStorage.getItem(SIDEBAR_KEY);
+    return SIDEBAR_TINTS.find((t) => t.key === saved) ? saved : "auto";
+  });
 
   useEffect(() => {
     const theme = THEMES.find((t) => t.key === active) || THEMES[0];
-    applyTheme(theme);
+    applyTheme(theme, sidebar);
     localStorage.setItem(STORAGE_KEY, theme.key);
-  }, [active]);
+  }, [active, sidebar]);
+
+  useEffect(() => {
+    // Re-apply tint when it changes so lightness follows the current theme.
+    applySidebarTint(sidebar);
+    localStorage.setItem(SIDEBAR_KEY, sidebar);
+  }, [sidebar]);
 
   const current = THEMES.find((t) => t.key === active) || THEMES[0];
 

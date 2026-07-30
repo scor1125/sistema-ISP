@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil, MessageCircle, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity } from "lucide-react";
+import { Plus, Trash2, Pencil, MessageCircle, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
@@ -112,7 +112,19 @@ export default function Clients() {
     const stored = loadColsFromStorage();
     return stored || new Set(COLUMNS.filter((c) => c.default).map((c) => c.key));
   });
+  const [showFilters, setShowFilters] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("netops-client-filters-open") === "1";
+  });
   const navigate = useNavigate();
+
+  const toggleFilters = () => {
+    setShowFilters((v) => {
+      const next = !v;
+      localStorage.setItem("netops-client-filters-open", next ? "1" : "0");
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     const [c, p, n, ip, d, u, o] = await Promise.all([
@@ -284,14 +296,26 @@ export default function Clients() {
         }
       />
 
-      <div className="rounded-md border border-border bg-card p-4 mb-4 space-y-3" data-testid="clients-toolbar">
-        <div className="flex flex-wrap gap-3">
+      <div className="rounded-md border border-border bg-card p-3 mb-4" data-testid="clients-toolbar">
+        <div className="flex flex-wrap gap-2 items-center">
           <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input className="pl-9" placeholder="Buscar por nombre, comunidad, teléfono, IP, etiqueta…"
               value={filters.q} onChange={(e) => setF("q", e.target.value)} data-testid="filter-q" />
           </div>
-          <div className="min-w-[220px]">
+
+          <Button variant="outline" onClick={toggleFilters} data-testid="filters-toggle">
+            <Filter className="w-4 h-4 mr-1" />
+            Filtros
+            {activeFilterCount > 0 && (
+              <Badge variant="outline" className="ml-2 h-4 text-[10px] font-mono border-primary/40 text-primary bg-primary/10">
+                {activeFilterCount}
+              </Badge>
+            )}
+            {showFilters ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
+          </Button>
+
+          <div className="min-w-[200px]">
             <Select value={filters.sort} onValueChange={(v) => setF("sort", v)}>
               <SelectTrigger data-testid="filter-sort">
                 <div className="flex items-center gap-2"><ArrowUpDown className="w-3.5 h-3.5" /><SelectValue /></div>
@@ -302,7 +326,6 @@ export default function Clients() {
             </Select>
           </div>
 
-          {/* Columns picker */}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" data-testid="cols-trigger">
@@ -317,12 +340,8 @@ export default function Clients() {
                   const disabled = c.always;
                   return (
                     <label key={c.key} className={`flex items-center gap-2 text-sm px-2 py-1 rounded-md ${disabled ? "opacity-60" : "hover:bg-accent cursor-pointer"}`}>
-                      <Checkbox
-                        checked={showCol(c.key)}
-                        disabled={disabled}
-                        onCheckedChange={() => !disabled && toggleCol(c.key)}
-                        data-testid={`col-${c.key}`}
-                      />
+                      <Checkbox checked={showCol(c.key)} disabled={disabled}
+                        onCheckedChange={() => !disabled && toggleCol(c.key)} data-testid={`col-${c.key}`} />
                       <span>{c.label}</span>
                       {disabled && <span className="ml-auto text-[10px] text-muted-foreground uppercase font-mono">fijo</span>}
                     </label>
@@ -337,69 +356,66 @@ export default function Clients() {
 
           <Button variant="outline" onClick={resetFilters} data-testid="filter-reset" disabled={activeFilterCount === 0}>
             <X className="w-4 h-4 mr-1" /> Limpiar
-            {activeFilterCount > 0 && (
-              <Badge variant="outline" className="ml-2 h-4 text-[10px] font-mono border-primary/40 text-primary bg-primary/10">
-                {activeFilterCount}
-              </Badge>
-            )}
           </Button>
-        </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-2 border-t border-border">
-          <div>
-            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Estado</Label>
-            <Select value={filters.status} onValueChange={(v) => setF("status", v)}>
-              <SelectTrigger data-testid="filter-status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                {Object.entries(statusMap).map(([v, i]) => (<SelectItem key={v} value={v}>{i.label}</SelectItem>))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Comunidad</Label>
-            <Select value={filters.community} onValueChange={(v) => setF("community", v)}>
-              <SelectTrigger data-testid="filter-community"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
-                {communities.map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
-                {communities.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">Sin comunidades registradas</div>}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Día de pago</Label>
-            <Select value={filters.payment_day} onValueChange={(v) => setF("payment_day", v)}>
-              <SelectTrigger data-testid="filter-payment-day"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                {paymentDays.map((d) => (<SelectItem key={d} value={String(d)}>Día {d}</SelectItem>))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">IP</Label>
-            <Select value={filters.ip} onValueChange={(v) => setF("ip", v)}>
-              <SelectTrigger data-testid="filter-ip"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {IP_FILTERS.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Creado desde</Label>
-            <Input type="date" value={filters.from} onChange={(e) => setF("from", e.target.value)} data-testid="filter-from" />
-          </div>
-          <div>
-            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Creado hasta</Label>
-            <Input type="date" value={filters.to} onChange={(e) => setF("to", e.target.value)} data-testid="filter-to" />
+          <div className="ml-auto text-xs text-muted-foreground font-mono flex items-center gap-1">
+            <Filter className="w-3 h-3" />
+            {filteredClients.length} / {clients.length}
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
-          <Filter className="w-3 h-3" />
-          Mostrando {filteredClients.length} de {clients.length} clientes · haz click en una fila para ver el tráfico en vivo
-        </div>
+        {showFilters && (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-3 mt-3 border-t border-border" data-testid="filters-panel">
+            <div>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Estado</Label>
+              <Select value={filters.status} onValueChange={(v) => setF("status", v)}>
+                <SelectTrigger data-testid="filter-status"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {Object.entries(statusMap).map(([v, i]) => (<SelectItem key={v} value={v}>{i.label}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Comunidad</Label>
+              <Select value={filters.community} onValueChange={(v) => setF("community", v)}>
+                <SelectTrigger data-testid="filter-community"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  {communities.map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
+                  {communities.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">Sin comunidades registradas</div>}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Día de pago</Label>
+              <Select value={filters.payment_day} onValueChange={(v) => setF("payment_day", v)}>
+                <SelectTrigger data-testid="filter-payment-day"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  {paymentDays.map((d) => (<SelectItem key={d} value={String(d)}>Día {d}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">IP</Label>
+              <Select value={filters.ip} onValueChange={(v) => setF("ip", v)}>
+                <SelectTrigger data-testid="filter-ip"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {IP_FILTERS.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Creado desde</Label>
+              <Input type="date" value={filters.from} onChange={(e) => setF("from", e.target.value)} data-testid="filter-from" />
+            </div>
+            <div>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Creado hasta</Label>
+              <Input type="date" value={filters.to} onChange={(e) => setF("to", e.target.value)} data-testid="filter-to" />
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-md border border-border bg-card overflow-hidden">

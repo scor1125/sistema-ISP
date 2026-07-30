@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import PromisesPanel from "@/components/PromisesPanel";
 
 const methodLabel = {
   cash: "Efectivo", transfer: "Transferencia", stripe: "Stripe", other: "Otro"
@@ -113,7 +114,7 @@ export default function Payments() {
         <TabsContent value="all" className="mt-4">{renderTable(filter("all"))}</TabsContent>
         <TabsContent value="cash" className="mt-4">{renderTable(filter("cash"))}</TabsContent>
         <TabsContent value="transfer" className="mt-4">{renderTable(filter("transfer"))}</TabsContent>
-        <TabsContent value="promises" className="mt-4">{renderTable(filter("promises"))}</TabsContent>
+        <TabsContent value="promises" className="mt-4"><PromisesPanel /></TabsContent>
       </Tabs>
 
       <FormDialog open={open} onOpenChange={setOpen} title="Registrar pago"

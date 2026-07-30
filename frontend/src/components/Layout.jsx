@@ -5,7 +5,8 @@ import { useBusinessConfig } from "@/context/BusinessConfigContext";
 import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
-  ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight
+  ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight, StickyNote,
+  ChevronUp, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ const NAV = [
   { to: "/planes", label: "Planes", icon: PackagePlus, group: "Operación" },
   { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Operación",
     children: [{ to: "/pagos?tab=promises", label: "Promesas de pagos", match: "promises" }] },
+  { to: "/mis-pendientes", label: "Mis pendientes", icon: StickyNote, group: "Operación" },
   { to: "/leads", label: "Leads", icon: ClipboardList, group: "Operación" },
   { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Operación" },
   { to: "/mapa", label: "Mapa NAP", icon: MapIcon, group: "Red" },
@@ -53,11 +55,23 @@ export default function Layout() {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(COLLAPSE_KEY) === "1";
   });
+  const [headerCollapsed, setHeaderCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("netops-header-collapsed") === "1";
+  });
 
   const toggle = () => {
     setCollapsed((v) => {
       const next = !v;
       localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
+
+  const toggleHeader = () => {
+    setHeaderCollapsed((v) => {
+      const next = !v;
+      localStorage.setItem("netops-header-collapsed", next ? "1" : "0");
       return next;
     });
   };
