@@ -234,6 +234,18 @@ class DeviceIn(BaseModel):
     location: Optional[str] = ""
     notes: Optional[str] = ""
 
+class VpnConnectionIn(BaseModel):
+    name: str
+    protocol: Literal["wireguard","openvpn","l2tp","ipsec"] = "wireguard"
+    mikrotik_id: Optional[str] = None
+    remote_host: str
+    remote_port: int = 51820
+    username: Optional[str] = ""
+    preshared_key: Optional[str] = ""
+    allowed_ips: Optional[str] = "0.0.0.0/0"
+    dns: Optional[str] = "1.1.1.1"
+    active: bool = True
+
 class BusinessConfigIn(BaseModel):
     business_name: Optional[str] = ""
     legal_name: Optional[str] = ""
@@ -376,6 +388,57 @@ api.include_router(crud_router("/extras", ExtraServiceIn, "extras"))
 api.include_router(crud_router("/leads", LeadIn, "leads"))
 api.include_router(crud_router("/tasks", TaskIn, "tasks"))
 api.include_router(crud_router("/devices", DeviceIn, "devices"))
+api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections"))
+
+# ---------- VPN helpers ----------
+@api.post("/vpn/{vpn_id}/generate-config")
+async def generate_vpn_config(vpn_id: str, _: dict = Depends(require_roles("owner","admin"))):
+    """Generate a downloadable connection profile for the configured VPN.
+    Returns a WireGuard-style .conf or OpenVPN inline config that the operator
+    can drop into their Mikrotik / desktop client."""
+    v = await db.vpn_connections.find_one({"id": vpn_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "VPN no encontrada")
+    proto = v.get("protocol", "wireguard")
+    if proto == "wireguard":
+        text = (
+            "[Interface]\n"
+            f"# Perfil generado por NetOps CRM para {v['name']}\n"
+            "PrivateKey = <RELLENAR_EN_EL_ROUTER>\n"
+            f"Address = 10.100.0.2/24\n"
+            f"DNS = {v.get('dns','1.1.1.1')}\n\n"
+            "[Peer]\n"
+            f"PublicKey = {v.get('preshared_key') or '<PUBLIC_KEY_DEL_MIKROTIK>'}\n"
+            f"Endpoint = {v['remote_host']}:{v.get('remote_port', 51820)}\n"
+            f"AllowedIPs = {v.get('allowed_ips','0.0.0.0/0')}\n"
+            "PersistentKeepalive = 25\n"
+        )
+        filename = f"{v['name'].replace(' ', '_')}.conf"
+    else:
+        text = (
+            f"# Perfil {proto.upper()} para {v['name']}\n"
+            f"remote {v['remote_host']} {v.get('remote_port', 1194)}\n"
+            f"auth-user-pass\n"
+            f"# Usuario: {v.get('username','')}\n"
+            "cipher AES-256-CBC\nproto udp\n"
+        )
+        filename = f"{v['name'].replace(' ', '_')}.ovpn"
+    return {"filename": filename, "config": text}
+
+@api.post("/vpn/{vpn_id}/test")
+async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
+    """Placeholder health check. Returns simulated result until real
+    connectivity from the platform is available."""
+    v = await db.vpn_connections.find_one({"id": vpn_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "VPN no encontrada")
+    # Simulated result — in a real deployment this would open a socket / ping.
+    return {
+        "reachable": True,
+        "latency_ms": 42,
+        "handshake": "ok",
+        "message": "Simulación: el endpoint responde. La conexión real requiere despliegue en un servidor con acceso a la red del Mikrotik.",
+    }
 
 # ---------- Personal pending notes (per-user) ----------
 @api.get("/my-notes")

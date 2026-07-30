@@ -5,6 +5,7 @@ import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import VpnPanel from "@/components/VpnPanel";
 import { Plus, Router, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { differenceInDays, parseISO } from "date-fns";
@@ -106,6 +107,8 @@ export default function Mikrotik() {
 
       <FormDialog open={open} onOpenChange={setOpen} title="Registrar Mikrotik"
         fields={fields} initial={{connection:"public_ip"}} onSubmit={save} />
+
+      <VpnPanel mikrotiks={devices} />
     </div>
   );
 }
