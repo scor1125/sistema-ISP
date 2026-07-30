@@ -16,22 +16,19 @@ import ServersStatus from "@/components/ServersStatus";
 import PendingBadges from "@/components/PendingBadges";
 
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true, group: "General" },
-  { to: "/clientes", label: "Clientes", icon: Users, group: "Operación" },
-  { to: "/planes", label: "Planes", icon: PackagePlus, group: "Operación" },
-  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Operación",
+  { to: "/clientes", label: "Clientes", icon: Users, group: "Menú" },
+  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú",
     children: [{ to: "/pagos?tab=promises", label: "Promesas de pagos", match: "promises" }] },
-  { to: "/mis-pendientes", label: "Mis pendientes", icon: StickyNote, group: "Operación" },
-  { to: "/leads", label: "Leads", icon: ClipboardList, group: "Operación" },
-  { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Operación" },
-  { to: "/mapa", label: "Mapa NAP", icon: MapIcon, group: "Red" },
-  { to: "/olt", label: "OLT / ONUs", icon: Radio, group: "Red" },
-  { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Red" },
-  { to: "/desconectados", label: "Desconectados", icon: ZapOff, group: "Red" },
-  { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Comunicación" },
-  { to: "/tareas", label: "Tareas / Embudos", icon: ListTodo, group: "Comunicación" },
-  { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Administración" },
-  { to: "/configuracion", label: "Configuración", icon: Settings, group: "Administración" },
+  { to: "/desconectados", label: "Desconectados", icon: ZapOff, group: "Menú" },
+  { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Menú" },
+  { to: "/planes", label: "Planes", icon: PackagePlus, group: "Menú" },
+  { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Menú" },
+  { to: "/mapa", label: "Mapa de servicio", icon: MapIcon, group: "Menú" },
+  { to: "/olt", label: "OLT / ONUs", icon: Radio, group: "Menú" },
+  { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Menú" },
+  { to: "/tareas", label: "Tareas", icon: ListTodo, group: "Menú" },
+  { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Menú" },
+  { to: "/configuracion", label: "Configuración", icon: Settings, group: "Menú" },
 ];
 
 const GROUPED_NAV = (() => {
@@ -141,7 +138,7 @@ export default function Layout() {
         <nav className="flex-1 overflow-y-auto py-3">
           {groupedNav.map(([g, items]) => (
             <div key={g} className="mb-3">
-              {!collapsed && (
+              {!collapsed && groupedNav.length > 1 && (
                 <div className="px-4 mb-1 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">{g}</div>
               )}
               {items.map(({ to, label, icon: Icon, exact, children }) => (

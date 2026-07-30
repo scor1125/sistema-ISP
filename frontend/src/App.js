@@ -49,7 +49,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
           <Route element={<Protected />}>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Navigate to="/clientes" replace />} />
             <Route path="/clientes" element={<Clients />} />
             <Route path="/planes" element={<Plans />} />
             <Route path="/pagos" element={<Payments />} />
