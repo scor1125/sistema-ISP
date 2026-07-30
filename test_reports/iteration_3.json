@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 3 — Frontend-only verification of z-index bug fix for Radix Dialogs vs Leaflet map on /mapa. Logged in as owner benjahr1993@gmail.com, opened 'Nueva NAP' dialog on /mapa, verified z-index and interactivity, submitted POST /api/nap-boxes (200 OK), and validated 8 other dialogs still render correctly on top of their pages with the same z-index. All targeted flows pass. Two non-blocking observations logged (unrelated to the fix).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/mapa (map tiles)", "issues": ["Stadia Maps tiles return HTTP 401 'Invalid Authentication' — tiles render as broken 401 placeholders behind the modal. Unrelated to the z-index fix, but the map background is currently unusable. Check STADIA/tile provider API key."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Non-blocking) Fix Stadia Maps tile provider 401 auth on /mapa — tiles show '401 Error / Invalid Authentication'.",
+    "(Non-blocking a11y) Add DialogDescription or aria-describedby to DialogContent to silence Radix warning 'Missing Description or aria-describedby' emitted on every dialog open."
+  ],
+  "critical_code_review_comments": [
+    "Dialog z-index fix in /app/frontend/src/components/ui/dialog.jsx (z-[1100]/[1101]) plus the .leaflet-pane/.leaflet-top/.leaflet-bottom/.leaflet-control z-index:40 !important override in index.css is a targeted and correct fix. Confirmed no regressions in the other 8 dialogs tested."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not retested)", "frontend": "100%"},
+  "seed_data_creation": "Created one NAP via UI: TEST_NAP_Z (lat -34.6, lng -58.4, capacity 8, addr 'TEST addr'). POST /api/nap-boxes returned 200. Main agent may want to clean this up.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "z-index fix verified. Measurements: DialogContent computed zIndex=1101, DialogOverlay=1100, .leaflet-pane=40, .leaflet-top=40. 'Nueva NAP' dialog fully visible above map, all 6 inputs typeable, Guardar submits (POST 200), dialog closes, map remains present. Regression check on 8 other 'Nuevo/Registrar' dialogs (/clientes, /planes, /pagos, /leads, /extras, /mikrotik, /tareas, /usuarios) — all opened with z=1101 and non-zero dimensions. Leftover: TEST_NAP_Z seed NAP created; Stadia tile 401 pre-existing unrelated issue.",
+  "rca_of_the_issue": "Original bug: Radix DialogOverlay/DialogContent used Tailwind z-50 while Leaflet uses z-index up to 1000 on .leaflet-top/.leaflet-control and 400-700 on panes; because dialog was portaled to body (a sibling of the map container), the ancestor stacking contexts placed the map above the dialog for controls/tiles. Fix bumps dialog layers to 1100/1101 and forces leaflet panes/controls to z-40, guaranteeing the modal sits above the map. Verified via computed styles and by successfully interacting with inputs that previously received no clicks."
+}

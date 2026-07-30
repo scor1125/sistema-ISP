@@ -72,6 +72,16 @@ h1, h2, h3, h4, .font-display {
   border-radius: 8px;
 }
 
+/* Keep the leaflet map firmly below any Radix Dialog/Popover portals.
+   Leaflet's default panes and controls range from 200 to 1000, which
+   used to overlap our modal when opening 'Nueva NAP' from the map view. */
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom,
+.leaflet-control {
+  z-index: 40 !important;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: hsl(240 10% 6%); }
