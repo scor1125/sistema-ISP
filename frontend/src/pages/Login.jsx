@@ -76,8 +76,8 @@ export default function Login() {
           <Button data-testid="login-submit" disabled={loading} type="submit" className="w-full">
             {loading ? "Entrando…" : "Ingresar"}
           </Button>
-          <div className="text-xs text-muted-foreground font-mono">
-            Admin inicial: benjahr1993@gmail.com
+          <div className="text-xs text-muted-foreground font-mono text-center pt-2">
+            Creado por <span className="text-primary font-semibold">EnlaceHR</span>
           </div>
         </form>
       </div>
