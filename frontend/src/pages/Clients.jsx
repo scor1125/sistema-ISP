@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil, MessageCircle, DollarSign, Search, X, ArrowUpDown, Filter } from "lucide-react";
+import { Plus, Trash2, Pencil, MessageCircle, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import ClientDetail from "@/components/ClientDetail";
 
 const statusMap = {
   active: { label: "Activo", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
@@ -18,6 +21,25 @@ const statusMap = {
   offline: { label: "Offline", cls: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
   new: { label: "Nuevo", cls: "bg-sky-500/10 text-sky-400 border-sky-500/30" },
 };
+
+// Column catalog. `default` = shown out of the box; users can toggle any of them.
+const COLUMNS = [
+  { key: "client", label: "Cliente", default: true, always: true },
+  { key: "contact", label: "Contacto", default: true },
+  { key: "plan", label: "Plan", default: true },
+  { key: "nap", label: "NAP", default: true },
+  { key: "ip", label: "IP", default: true },
+  { key: "power", label: "Potencia ONU", default: true },
+  { key: "payment", label: "Pago", default: true },
+  { key: "created", label: "Creado", default: true },
+  { key: "status", label: "Estado", default: true },
+  { key: "wifi", label: "WiFi", default: false },
+  { key: "server", label: "Servidor Mikrotik", default: false },
+  { key: "tag", label: "Etiqueta", default: false },
+  { key: "actions", label: "Acciones", default: true, always: true },
+];
+
+const COLS_STORAGE_KEY = "netops-client-cols";
 
 const SORT_OPTIONS = [
   { value: "name_asc", label: "Nombre (A → Z)" },
@@ -39,17 +61,10 @@ const IP_FILTERS = [
 ];
 
 const DEFAULT_FILTERS = {
-  q: "",
-  status: "all",
-  community: "all",
-  payment_day: "all",
-  ip: "all",
-  from: "",
-  to: "",
-  sort: "created_desc",
+  q: "", status: "all", community: "all", payment_day: "all", ip: "all",
+  from: "", to: "", sort: "created_desc",
 };
 
-// Convert IPv4 to a comparable integer; unknown/empty sorts last.
 function ipToInt(ip) {
   if (!ip) return Number.POSITIVE_INFINITY;
   const parts = ip.split(".").map((n) => parseInt(n, 10));
@@ -61,10 +76,24 @@ function formatDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function powerCls(p, high = -8, low = -27) {
+  if (p == null) return "text-muted-foreground";
+  if (p > high || p < low) return "text-red-400";
+  if (p > high + 4 || p < low - -2) return "text-amber-400";
+  return "text-emerald-400";
+}
+
+function loadColsFromStorage() {
+  try {
+    const raw = localStorage.getItem(COLS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return new Set(parsed);
+  } catch {}
+  return null;
 }
 
 export default function Clients() {
@@ -73,32 +102,65 @@ export default function Clients() {
   const [naps, setNaps] = useState([]);
   const [mikrotiks, setMikrotiks] = useState([]);
   const [users, setUsers] = useState([]);
+  const [onus, setOnus] = useState([]);
   const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [detail, setDetail] = useState(null); // client whose real-time drawer is open
+  const [visibleCols, setVisibleCols] = useState(() => {
+    const stored = loadColsFromStorage();
+    return stored || new Set(COLUMNS.filter((c) => c.default).map((c) => c.key));
+  });
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
-    const [c, p, n, ip, d, u] = await Promise.all([
+    const [c, p, n, ip, d, u, o] = await Promise.all([
       api.get("/clients"),
       api.get("/plans"),
       api.get("/nap-boxes"),
       api.get("/ip-pool"),
       api.get("/devices"),
       api.get("/users"),
+      api.get("/onus"),
     ]);
     setClients(c.data); setPlans(p.data); setNaps(n.data); setIpPool(ip.data);
     setMikrotiks(d.data.filter((x) => x.kind === "mikrotik"));
     setUsers(u.data);
+    setOnus(o.data);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  // Index ONUs by client_id for O(1) power lookup while rendering rows.
+  const onusById = useMemo(() => {
+    const m = new Map();
+    onus.forEach((o) => m.set(o.client_id, o));
+    return m;
+  }, [onus]);
+
   const setF = (k, v) => setFilters((s) => ({ ...s, [k]: v }));
   const resetFilters = () => setFilters(DEFAULT_FILTERS);
 
-  // Unique communities & payment days from data — power the dropdowns.
+  const toggleCol = (key) => {
+    setVisibleCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      // Always keep required columns
+      COLUMNS.filter((c) => c.always).forEach((c) => next.add(c.key));
+      localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(Array.from(next)));
+      return next;
+    });
+  };
+
+  const resetCols = () => {
+    const def = new Set(COLUMNS.filter((c) => c.default).map((c) => c.key));
+    localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify(Array.from(def)));
+    setVisibleCols(def);
+  };
+
+  const showCol = (key) => visibleCols.has(key);
+
   const communities = useMemo(() => {
     const s = new Set(clients.map((c) => (c.community || "").trim()).filter(Boolean));
     return Array.from(s).sort((a, b) => a.localeCompare(b, "es"));
@@ -117,16 +179,11 @@ export default function Clients() {
       if (filters.payment_day !== "all" && String(c.payment_day) !== filters.payment_day) return false;
       if (filters.ip === "with" && !c.ip_address) return false;
       if (filters.ip === "without" && c.ip_address) return false;
-      if (filters.from) {
-        if (!c.created_at || c.created_at.slice(0, 10) < filters.from) return false;
-      }
-      if (filters.to) {
-        if (!c.created_at || c.created_at.slice(0, 10) > filters.to) return false;
-      }
+      if (filters.from && (!c.created_at || c.created_at.slice(0, 10) < filters.from)) return false;
+      if (filters.to && (!c.created_at || c.created_at.slice(0, 10) > filters.to)) return false;
       if (q) {
-        const hay = [
-          c.full_name, c.phone, c.community, c.address, c.ip_address, c.tag, c.wifi_ssid, c.mikrotik_server,
-        ].filter(Boolean).join(" ").toLowerCase();
+        const hay = [c.full_name, c.phone, c.community, c.address, c.ip_address, c.tag, c.wifi_ssid, c.mikrotik_server]
+          .filter(Boolean).join(" ").toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -213,6 +270,8 @@ export default function Clients() {
     catch (e) { toast.error(formatApiError(e)); }
   };
 
+  const visibleCount = COLUMNS.filter((c) => showCol(c.key)).length;
+
   return (
     <div>
       <PageHeader
@@ -225,34 +284,57 @@ export default function Clients() {
         }
       />
 
-      {/* Toolbar: sort + filters */}
       <div className="rounded-md border border-border bg-card p-4 mb-4 space-y-3" data-testid="clients-toolbar">
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Buscar por nombre, comunidad, teléfono, IP, etiqueta…"
-              value={filters.q}
-              onChange={(e) => setF("q", e.target.value)}
-              data-testid="filter-q"
-            />
+            <Input className="pl-9" placeholder="Buscar por nombre, comunidad, teléfono, IP, etiqueta…"
+              value={filters.q} onChange={(e) => setF("q", e.target.value)} data-testid="filter-q" />
           </div>
           <div className="min-w-[220px]">
             <Select value={filters.sort} onValueChange={(v) => setF("sort", v)}>
               <SelectTrigger data-testid="filter-sort">
-                <div className="flex items-center gap-2">
-                  <ArrowUpDown className="w-3.5 h-3.5" />
-                  <SelectValue />
-                </div>
+                <div className="flex items-center gap-2"><ArrowUpDown className="w-3.5 h-3.5" /><SelectValue /></div>
               </SelectTrigger>
               <SelectContent>
-                {SORT_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
+                {SORT_OPTIONS.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
               </SelectContent>
             </Select>
           </div>
+
+          {/* Columns picker */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" data-testid="cols-trigger">
+                <Columns3 className="w-4 h-4 mr-1" /> Columnas
+                <Badge variant="outline" className="ml-2 h-4 text-[10px] font-mono">{visibleCount}/{COLUMNS.length}</Badge>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 p-3" data-testid="cols-panel">
+              <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Columnas visibles</div>
+              <div className="space-y-1.5">
+                {COLUMNS.map((c) => {
+                  const disabled = c.always;
+                  return (
+                    <label key={c.key} className={`flex items-center gap-2 text-sm px-2 py-1 rounded-md ${disabled ? "opacity-60" : "hover:bg-accent cursor-pointer"}`}>
+                      <Checkbox
+                        checked={showCol(c.key)}
+                        disabled={disabled}
+                        onCheckedChange={() => !disabled && toggleCol(c.key)}
+                        data-testid={`col-${c.key}`}
+                      />
+                      <span>{c.label}</span>
+                      {disabled && <span className="ml-auto text-[10px] text-muted-foreground uppercase font-mono">fijo</span>}
+                    </label>
+                  );
+                })}
+              </div>
+              <Button variant="ghost" size="sm" className="w-full mt-2" onClick={resetCols} data-testid="cols-reset">
+                Restaurar por defecto
+              </Button>
+            </PopoverContent>
+          </Popover>
+
           <Button variant="outline" onClick={resetFilters} data-testid="filter-reset" disabled={activeFilterCount === 0}>
             <X className="w-4 h-4 mr-1" /> Limpiar
             {activeFilterCount > 0 && (
@@ -270,9 +352,7 @@ export default function Clients() {
               <SelectTrigger data-testid="filter-status"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
-                {Object.entries(statusMap).map(([v, i]) => (
-                  <SelectItem key={v} value={v}>{i.label}</SelectItem>
-                ))}
+                {Object.entries(statusMap).map(([v, i]) => (<SelectItem key={v} value={v}>{i.label}</SelectItem>))}
               </SelectContent>
             </Select>
           </div>
@@ -318,7 +398,7 @@ export default function Clients() {
 
         <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
           <Filter className="w-3 h-3" />
-          Mostrando {filteredClients.length} de {clients.length} clientes
+          Mostrando {filteredClients.length} de {clients.length} clientes · haz click en una fila para ver el tráfico en vivo
         </div>
       </div>
 
@@ -326,52 +406,84 @@ export default function Clients() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Cliente</TableHead>
-              <TableHead>Contacto</TableHead>
-              <TableHead>Plan</TableHead>
-              <TableHead>NAP</TableHead>
-              <TableHead className="font-mono">IP</TableHead>
-              <TableHead>Pago</TableHead>
-              <TableHead>Creado</TableHead>
-              <TableHead>Estado</TableHead>
-              <TableHead className="text-right">Acciones</TableHead>
+              {showCol("client") && <TableHead>Cliente</TableHead>}
+              {showCol("contact") && <TableHead>Contacto</TableHead>}
+              {showCol("plan") && <TableHead>Plan</TableHead>}
+              {showCol("nap") && <TableHead>NAP</TableHead>}
+              {showCol("ip") && <TableHead className="font-mono">IP</TableHead>}
+              {showCol("power") && <TableHead>Potencia ONU</TableHead>}
+              {showCol("payment") && <TableHead>Pago</TableHead>}
+              {showCol("created") && <TableHead>Creado</TableHead>}
+              {showCol("status") && <TableHead>Estado</TableHead>}
+              {showCol("wifi") && <TableHead>WiFi</TableHead>}
+              {showCol("server") && <TableHead>Servidor</TableHead>}
+              {showCol("tag") && <TableHead>Etiqueta</TableHead>}
+              {showCol("actions") && <TableHead className="text-right">Acciones</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredClients.length === 0 && (
-              <EmptyRow colSpan={9} text={clients.length === 0 ? "Aún no hay clientes. Crea el primero." : "Ningún cliente coincide con los filtros."} />
+              <EmptyRow colSpan={visibleCount} text={clients.length === 0 ? "Aún no hay clientes. Crea el primero." : "Ningún cliente coincide con los filtros."} />
             )}
             {filteredClients.map((c) => {
               const plan = plans.find((p) => p.id === c.plan_id);
               const nap = naps.find((n) => n.id === c.nap_box_id);
               const s = statusMap[c.status] || statusMap.new;
+              const onu = onusById.get(c.id);
               return (
-                <TableRow key={c.id} data-testid={`client-row-${c.id}`}>
-                  <TableCell>
-                    <div className="font-medium">{c.full_name}</div>
-                    <div className="text-xs text-muted-foreground">{c.community || c.address || ""}</div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-sm">{c.phone || "—"}</div>
-                    <div className="text-xs text-muted-foreground">{c.tag || ""}</div>
-                  </TableCell>
-                  <TableCell>{plan ? `${plan.name} · ${plan.speed_mbps}M` : "—"}</TableCell>
-                  <TableCell>{nap?.name || "—"}</TableCell>
-                  <TableCell className="font-mono text-xs">{c.ip_address || "—"}</TableCell>
-                  <TableCell>
-                    <div className="text-sm">Día {c.payment_day}</div>
-                    <div className="text-xs text-muted-foreground font-mono">{c.next_due_date?.slice(0, 10)}</div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs" data-testid={`created-${c.id}`}>{formatDate(c.created_at)}</TableCell>
-                  <TableCell><Badge variant="outline" className={s.cls}>{s.label}</Badge></TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button size="icon" variant="ghost" title="Registrar pago" onClick={() => navigate(`/pagos?client=${c.id}`)}><DollarSign className="w-4 h-4" /></Button>
-                      <Button size="icon" variant="ghost" title="WhatsApp" onClick={() => navigate(`/whatsapp?client=${c.id}`)}><MessageCircle className="w-4 h-4" /></Button>
-                      <Button size="icon" variant="ghost" onClick={() => { setEditing(c); setOpen(true); }} data-testid={`edit-${c.id}`}><Pencil className="w-4 h-4" /></Button>
-                      <Button size="icon" variant="ghost" onClick={() => remove(c.id)} data-testid={`delete-${c.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
-                    </div>
-                  </TableCell>
+                <TableRow
+                  key={c.id}
+                  data-testid={`client-row-${c.id}`}
+                  className="cursor-pointer hover:bg-accent/40"
+                  onClick={() => setDetail(c)}
+                >
+                  {showCol("client") && (
+                    <TableCell>
+                      <div className="font-medium">{c.full_name}</div>
+                      <div className="text-xs text-muted-foreground">{c.community || c.address || ""}</div>
+                    </TableCell>
+                  )}
+                  {showCol("contact") && (
+                    <TableCell>
+                      <div className="text-sm">{c.phone || "—"}</div>
+                      <div className="text-xs text-muted-foreground">{c.tag || ""}</div>
+                    </TableCell>
+                  )}
+                  {showCol("plan") && <TableCell>{plan ? `${plan.name} · ${plan.speed_mbps}M` : "—"}</TableCell>}
+                  {showCol("nap") && <TableCell>{nap?.name || "—"}</TableCell>}
+                  {showCol("ip") && <TableCell className="font-mono text-xs">{c.ip_address || "—"}</TableCell>}
+                  {showCol("power") && (
+                    <TableCell className={`font-mono text-xs ${powerCls(onu?.power_dbm)}`} data-testid={`power-${c.id}`}>
+                      {onu?.power_dbm != null ? `${onu.power_dbm} dBm` : "—"}
+                    </TableCell>
+                  )}
+                  {showCol("payment") && (
+                    <TableCell>
+                      <div className="text-sm">Día {c.payment_day}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{c.next_due_date?.slice(0, 10)}</div>
+                    </TableCell>
+                  )}
+                  {showCol("created") && <TableCell className="font-mono text-xs" data-testid={`created-${c.id}`}>{formatDate(c.created_at)}</TableCell>}
+                  {showCol("status") && <TableCell><Badge variant="outline" className={s.cls}>{s.label}</Badge></TableCell>}
+                  {showCol("wifi") && (
+                    <TableCell className="font-mono text-xs">
+                      <div>{c.wifi_ssid || "—"}</div>
+                      <div className="text-muted-foreground">{c.wifi_password || ""}</div>
+                    </TableCell>
+                  )}
+                  {showCol("server") && <TableCell className="font-mono text-xs">{c.mikrotik_server || "—"}</TableCell>}
+                  {showCol("tag") && <TableCell>{c.tag ? <Badge variant="outline">{c.tag}</Badge> : <span className="text-muted-foreground">—</span>}</TableCell>}
+                  {showCol("actions") && (
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-1">
+                        <Button size="icon" variant="ghost" title="Tráfico en vivo" onClick={() => setDetail(c)} data-testid={`traffic-${c.id}`}><Activity className="w-4 h-4" /></Button>
+                        <Button size="icon" variant="ghost" title="Registrar pago" onClick={() => navigate(`/pagos?client=${c.id}`)}><DollarSign className="w-4 h-4" /></Button>
+                        <Button size="icon" variant="ghost" title="WhatsApp" onClick={() => navigate(`/whatsapp?client=${c.id}`)}><MessageCircle className="w-4 h-4" /></Button>
+                        <Button size="icon" variant="ghost" onClick={() => { setEditing(c); setOpen(true); }} data-testid={`edit-${c.id}`}><Pencil className="w-4 h-4" /></Button>
+                        <Button size="icon" variant="ghost" onClick={() => remove(c.id)} data-testid={`delete-${c.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               );
             })}
@@ -387,6 +499,12 @@ export default function Clients() {
         initial={editing || { payment_day: 1, status: "new" }}
         onSubmit={save}
         size="full"
+      />
+
+      <ClientDetail
+        client={detail}
+        open={!!detail}
+        onOpenChange={(v) => { if (!v) setDetail(null); }}
       />
     </div>
   );
