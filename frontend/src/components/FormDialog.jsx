@@ -37,8 +37,10 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
     "3xl": "max-w-4xl",
     "4xl": "max-w-5xl",
     "5xl": "max-w-6xl",
-    full: "max-w-[95vw] w-[95vw]",
+    full: "max-w-[95vw] w-[95vw] h-[92vh] max-h-[92vh]",
   }[size] || "max-w-lg";
+
+  const heightCls = size === "full" ? "" : "max-h-[90vh]";
 
   const gridCls = size === "full"
     ? "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
@@ -47,7 +49,7 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent className={`${sizeCls} max-h-[90vh] flex flex-col p-0 gap-0`}>
+      <DialogContent className={`${sizeCls} ${heightCls} flex flex-col p-0 gap-0`}>
         <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
