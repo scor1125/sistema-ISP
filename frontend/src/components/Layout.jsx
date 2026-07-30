@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toaster } from "@/components/ui/sonner";
-import ThemePicker, { initAccentFromStorage } from "@/components/ThemePicker";
+import ThemePicker, { initThemeFromStorage } from "@/components/ThemePicker";
 import ServersStatus from "@/components/ServersStatus";
 import PendingBadges from "@/components/PendingBadges";
 
@@ -49,14 +49,21 @@ export default function Layout() {
   const logoUrl = config?.logo_url;
   const businessName = config?.business_name || "NetOps CRM";
 
-  // Restore user's chosen accent color on mount so it persists between reloads.
+  // Restore user's chosen theme on mount so it persists between reloads.
   useEffect(() => {
-    initAccentFromStorage();
+    initThemeFromStorage();
   }, []);
 
   return (
-    <div className="min-h-screen flex bg-background text-foreground">
-      <aside className="w-64 shrink-0 border-r border-border bg-card flex flex-col" data-testid="sidebar">
+    <div className="min-h-screen flex bg-background text-foreground relative">
+      {/* Ambient gradient painted behind the whole app — driven by the selected theme.
+          Pointer events disabled so it never intercepts clicks. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 -z-0"
+        style={{ backgroundImage: "var(--app-gradient, none)" }}
+      />
+      <aside className="w-64 shrink-0 border-r border-border bg-card/80 backdrop-blur-md relative z-10 flex flex-col" data-testid="sidebar">
         <div className="h-14 px-4 flex items-center gap-2 border-b border-border">
           {logoUrl ? (
             <img
@@ -121,7 +128,7 @@ export default function Layout() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative z-10">
         <header className="h-14 sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl flex items-center px-6 gap-3">
           <ServersStatus />
           <PendingBadges />

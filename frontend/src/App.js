@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect } from "react";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { BusinessConfigProvider } from "@/context/BusinessConfigContext";
+import { initThemeFromStorage } from "@/components/ThemePicker";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -38,6 +40,8 @@ function PublicOnly({ children }) {
 }
 
 function App() {
+  // Apply the saved theme as early as possible so the login page also gets it.
+  useEffect(() => { initThemeFromStorage(); }, []);
   return (
     <AuthProvider>
       <BrowserRouter>
