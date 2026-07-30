@@ -82,6 +82,55 @@ export const THEMES = [
     gradient: "radial-gradient(1100px circle at 10% -5%, hsl(160 84% 42% / 0.13), transparent 60%), radial-gradient(900px circle at 100% 100%, hsl(190 80% 50% / 0.09), transparent 60%)",
     swatch: "linear-gradient(135deg, hsl(160 76% 36%), hsl(150 30% 92%))",
   },
+  // Combos: fondos coloridos + texto legible con alto contraste
+  {
+    key: "combo-blue-white", label: "Azul · Blanco", kind: "combo",
+    vars: { "--background": "215 55% 18%", "--card": "215 45% 22%", "--popover": "215 45% 24%", "--muted": "215 35% 28%", "--accent": "215 35% 30%", "--border": "215 30% 34%", "--input": "215 30% 34%", "--foreground": "0 0% 98%", "--muted-foreground": "215 20% 82%", "--primary": "200 100% 70%", "--ring": "200 100% 70%" },
+    gradient: "radial-gradient(1100px circle at 10% 0%, hsl(200 100% 60% / 0.12), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(215 65% 40%), hsl(0 0% 98%))",
+  },
+  {
+    key: "combo-green-white", label: "Verde · Blanco", kind: "combo",
+    vars: { "--background": "150 40% 15%", "--card": "150 32% 19%", "--popover": "150 32% 21%", "--muted": "150 25% 25%", "--accent": "150 25% 27%", "--border": "150 22% 32%", "--input": "150 22% 32%", "--foreground": "0 0% 98%", "--muted-foreground": "150 12% 82%", "--primary": "150 80% 65%", "--ring": "150 80% 65%" },
+    gradient: "radial-gradient(1000px circle at 15% -5%, hsl(150 70% 45% / 0.14), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(150 60% 32%), hsl(0 0% 98%))",
+  },
+  {
+    key: "combo-pink-dark", label: "Rosa · Texto oscuro", kind: "combo",
+    vars: { "--background": "340 65% 92%", "--card": "340 55% 96%", "--popover": "340 55% 97%", "--muted": "340 40% 88%", "--accent": "340 40% 86%", "--border": "340 30% 78%", "--input": "340 30% 78%", "--foreground": "340 40% 12%", "--muted-foreground": "340 25% 32%", "--primary": "340 82% 45%", "--ring": "340 82% 45%" },
+    gradient: "radial-gradient(1100px circle at 20% 0%, hsl(340 85% 65% / 0.18), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(340 82% 60%), hsl(340 60% 92%))",
+  },
+  {
+    key: "combo-violet-white", label: "Morado · Blanco", kind: "combo",
+    vars: { "--background": "270 45% 20%", "--card": "270 35% 25%", "--popover": "270 35% 27%", "--muted": "270 28% 30%", "--accent": "270 28% 32%", "--border": "270 25% 36%", "--input": "270 25% 36%", "--foreground": "0 0% 98%", "--muted-foreground": "270 20% 82%", "--primary": "280 90% 72%", "--ring": "280 90% 72%" },
+    gradient: "radial-gradient(1100px circle at 15% -10%, hsl(280 90% 65% / 0.18), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(275 65% 45%), hsl(0 0% 98%))",
+  },
+  {
+    key: "combo-gray-white", label: "Gris · Blanco", kind: "combo",
+    vars: { "--background": "220 8% 20%", "--card": "220 6% 24%", "--popover": "220 6% 26%", "--muted": "220 5% 28%", "--accent": "220 5% 30%", "--border": "220 5% 34%", "--input": "220 5% 34%", "--foreground": "0 0% 98%", "--muted-foreground": "220 5% 78%", "--primary": "0 0% 90%", "--ring": "0 0% 90%" },
+    gradient: "radial-gradient(1000px circle at 50% -10%, hsl(220 20% 40% / 0.14), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(220 8% 35%), hsl(0 0% 95%))",
+  },
+  {
+    key: "combo-silver-black", label: "Plata · Negro", kind: "combo",
+    vars: { "--background": "220 12% 85%", "--card": "220 15% 92%", "--popover": "220 15% 95%", "--muted": "220 12% 80%", "--accent": "220 12% 78%", "--border": "220 10% 72%", "--input": "220 10% 72%", "--foreground": "220 30% 10%", "--muted-foreground": "220 15% 30%", "--primary": "220 70% 32%", "--ring": "220 70% 32%" },
+    gradient: "radial-gradient(1100px circle at 15% -10%, hsl(220 40% 60% / 0.14), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(220 12% 65%), hsl(220 40% 15%))",
+  },
+  {
+    key: "combo-sky-navy", label: "Cielo · Marino", kind: "combo",
+    vars: { "--background": "205 80% 88%", "--card": "205 70% 94%", "--popover": "205 70% 96%", "--muted": "205 50% 84%", "--accent": "205 50% 82%", "--border": "205 40% 74%", "--input": "205 40% 74%", "--foreground": "215 65% 15%", "--muted-foreground": "215 35% 32%", "--primary": "215 80% 35%", "--ring": "215 80% 35%" },
+    gradient: "radial-gradient(1100px circle at 20% -5%, hsl(205 90% 70% / 0.20), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(205 80% 60%), hsl(215 65% 20%))",
+  },
+  {
+    key: "combo-lime-forest", label: "Lima · Bosque", kind: "combo",
+    vars: { "--background": "80 45% 88%", "--card": "80 35% 94%", "--popover": "80 35% 96%", "--muted": "80 25% 84%", "--accent": "80 25% 82%", "--border": "80 20% 74%", "--input": "80 20% 74%", "--foreground": "150 45% 14%", "--muted-foreground": "150 20% 30%", "--primary": "150 75% 25%", "--ring": "150 75% 25%" },
+    gradient: "radial-gradient(1100px circle at 15% -5%, hsl(80 70% 60% / 0.20), transparent 60%)",
+    swatch: "linear-gradient(135deg, hsl(80 60% 55%), hsl(150 65% 22%))",
+  },
 ];
 
 const STORAGE_KEY = "netops-theme";
@@ -274,8 +323,9 @@ export default function ThemePicker() {
   }, [sidebar]);
 
   const current = THEMES.find((t) => t.key === active) || THEMES[0];
-  const dark = THEMES.filter((t) => t.kind !== "light");
+  const dark = THEMES.filter((t) => t.kind === "dark" || !t.kind);
   const light = THEMES.filter((t) => t.kind === "light");
+  const combos = THEMES.filter((t) => t.kind === "combo");
 
   const setColor = (hex) => {
     const hsl = hexToHsl(hex);
@@ -308,6 +358,7 @@ export default function ThemePicker() {
       <PopoverContent side="right" align="end" className="w-96 p-3 max-h-[80vh] overflow-y-auto" data-testid="theme-picker-panel">
         <ThemeSection title="Oscuros" themes={dark} active={active} onPick={setActive} />
         <ThemeSection title="Claros" themes={light} active={active} onPick={setActive} />
+        <ThemeSection title="Combos de color" themes={combos} active={active} onPick={setActive} />
 
         <div className="mt-3 pt-3 border-t border-border">
           <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Fondo de pantalla</div>
