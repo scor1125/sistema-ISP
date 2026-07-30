@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { BusinessConfigProvider } from "@/context/BusinessConfigContext";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -22,7 +23,11 @@ function Protected() {
   const { user } = useAuth();
   if (user === null) return <div className="min-h-screen grid place-items-center text-muted-foreground">Cargando…</div>;
   if (user === false) return <Navigate to="/login" replace />;
-  return <Layout />;
+  return (
+    <BusinessConfigProvider>
+      <Layout />
+    </BusinessConfigProvider>
+  );
 }
 
 function PublicOnly({ children }) {

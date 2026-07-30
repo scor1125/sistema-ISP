@@ -464,6 +464,12 @@ async def simulate_incoming(payload: WhatsAppMessageIn, _: dict = Depends(get_cu
     return doc
 
 # ---------- Business config ----------
+from fastapi import UploadFile, File
+import base64
+
+MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB
+ALLOWED_LOGO_MIME = {"image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/gif"}
+
 @api.get("/config")
 async def get_config(_: dict = Depends(get_current_user)):
     doc = await db.config.find_one({"id": "main"}, {"_id": 0})
@@ -481,6 +487,24 @@ async def update_config(payload: BusinessConfigIn, _: dict = Depends(require_rol
     doc["updated_at"] = now_iso()
     await db.config.update_one({"id": "main"}, {"$set": doc}, upsert=True)
     return doc
+
+@api.post("/config/logo")
+async def upload_logo(file: UploadFile = File(...), _: dict = Depends(require_roles("owner","admin"))):
+    """Upload a custom logo (PNG/JPEG/WEBP/SVG/GIF, ≤2MB). Stored as data URL in config."""
+    if file.content_type not in ALLOWED_LOGO_MIME:
+        raise HTTPException(400, f"Formato no soportado. Usa PNG, JPEG, WEBP, GIF o SVG.")
+    data = await file.read()
+    if len(data) > MAX_LOGO_BYTES:
+        raise HTTPException(400, "El logo excede 2MB. Reduce el tamaño e inténtalo de nuevo.")
+    b64 = base64.b64encode(data).decode("ascii")
+    logo_url = f"data:{file.content_type};base64,{b64}"
+    await db.config.update_one({"id": "main"}, {"$set": {"logo_url": logo_url, "updated_at": now_iso()}}, upsert=True)
+    return {"logo_url": logo_url, "size": len(data), "mime": file.content_type}
+
+@api.delete("/config/logo")
+async def delete_logo(_: dict = Depends(require_roles("owner","admin"))):
+    await db.config.update_one({"id": "main"}, {"$set": {"logo_url": "", "updated_at": now_iso()}}, upsert=True)
+    return {"ok": True}
 
 # ---------- IP Pool ----------
 import ipaddress

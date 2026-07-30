@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useEffect, useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { useBusinessConfig } from "@/context/BusinessConfigContext";
 import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
@@ -41,7 +42,11 @@ const GROUPED_NAV = (() => {
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { config } = useBusinessConfig();
   const groupedNav = useMemo(() => GROUPED_NAV, []);
+
+  const logoUrl = config?.logo_url;
+  const businessName = config?.business_name || "NetOps CRM";
 
   // Restore user's chosen accent color on mount so it persists between reloads.
   useEffect(() => {
@@ -52,10 +57,21 @@ export default function Layout() {
     <div className="min-h-screen flex bg-background text-foreground">
       <aside className="w-64 shrink-0 border-r border-border bg-card flex flex-col" data-testid="sidebar">
         <div className="h-14 px-4 flex items-center gap-2 border-b border-border">
-          <div className="w-8 h-8 rounded-md bg-primary/15 border border-primary/30 grid place-items-center">
-            <Wifi className="w-4 h-4 text-primary" />
+          {logoUrl ? (
+            <img
+              src={logoUrl}
+              alt={businessName}
+              className="w-8 h-8 rounded-md object-contain bg-secondary border border-border"
+              data-testid="brand-logo"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-md bg-primary/15 border border-primary/30 grid place-items-center">
+              <Wifi className="w-4 h-4 text-primary" />
+            </div>
+          )}
+          <div className="font-display font-bold tracking-tight truncate" data-testid="brand-name">
+            {businessName}
           </div>
-          <div className="font-display font-bold tracking-tight">NetOps CRM</div>
         </div>
         <nav className="flex-1 overflow-y-auto py-3">
           {groupedNav.map(([g, items]) => (
