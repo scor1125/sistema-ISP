@@ -435,6 +435,38 @@ async def generate_vpn_config(vpn_id: str, _: dict = Depends(require_roles("owne
         filename = f"{v['name'].replace(' ', '_')}.ovpn"
     return {"filename": filename, "config": text}
 
+@api.get("/vpn/server-info")
+async def get_vpn_server_info(request: Request, _: dict = Depends(get_current_user)):
+    """Return the connection info the operator has to paste in each Mikrotik so
+    the router can reach this CRM/VPN server. Persisted in `config.server_vpn`.
+    Defaults are inferred from the request and env when empty."""
+    doc = await db.config.find_one({"key": "server_vpn"}, {"_id": 0}) or {}
+    saved = doc.get("value", {}) if isinstance(doc, dict) else {}
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    default_host = fwd or (request.client.host if request.client else "") or os.environ.get("PUBLIC_HOST", "vpn.miisp.com")
+    base_api = str(request.base_url).rstrip("/")
+    data = {
+        "public_ip": saved.get("public_ip") or default_host,
+        "public_hostname": saved.get("public_hostname") or "",
+        "wireguard_port": saved.get("wireguard_port") or 51820,
+        "l2tp_port": saved.get("l2tp_port") or 1701,
+        "openvpn_port": saved.get("openvpn_port") or 1194,
+        "server_public_key": saved.get("server_public_key") or "",
+        "tunnel_network": saved.get("tunnel_network") or "10.100.0.0/24",
+        "server_tunnel_ip": saved.get("server_tunnel_ip") or "10.100.0.1",
+        "client_tunnel_ip": saved.get("client_tunnel_ip") or "10.100.0.2/24",
+        "dns": saved.get("dns") or "1.1.1.1",
+        "api_endpoint": saved.get("api_endpoint") or base_api,
+        "notes": saved.get("notes") or "",
+    }
+    return data
+
+@api.patch("/vpn/server-info")
+async def update_vpn_server_info(payload: dict, _: dict = Depends(require_roles("owner","admin"))):
+    payload = {k: v for k, v in payload.items() if v is not None}
+    await db.config.update_one({"key": "server_vpn"}, {"$set": {"value": payload, "updated_at": now_iso()}}, upsert=True)
+    return {"ok": True, "value": payload}
+
 @api.post("/vpn/{vpn_id}/test")
 async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
     """Real TCP reachability check against the VPN endpoint. Reports latency,

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import VpnPanel from "@/components/VpnPanel";
+import ServerInfoPanel from "@/components/ServerInfoPanel";
 import { Plus, Router, Trash2, Terminal, Download, Copy, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { differenceInDays, parseISO } from "date-fns";
@@ -91,6 +92,8 @@ export default function Mikrotik() {
       <PageHeader title="Mikrotik"
         subtitle="Panel vinculado con OLT. Muestra IP, consumo, plan y estado de pago. Registra tus routers y conecta vía VPN o IP pública."
         actions={<Button data-testid="new-mk-btn" onClick={()=>setOpen(true)}><Plus className="w-4 h-4 mr-1"/>Nuevo Mikrotik</Button>} />
+
+      <ServerInfoPanel />
 
       <div className="mb-6">
         <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Routers registrados</div>
