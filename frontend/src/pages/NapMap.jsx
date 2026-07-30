@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader } from "@/components/Common";
+import { PageHeader, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Boxes, Users } from "lucide-react";
+import { Plus, Boxes, Users, Pencil, Trash2 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Popup, CircleMarker } from "react-leaflet";
 import L from "leaflet";
 import { toast } from "sonner";
@@ -46,6 +46,8 @@ export default function NapMap() {
   const [naps, setNaps] = useState([]);
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
     const [n, c] = await Promise.all([api.get("/nap-boxes"), api.get("/clients")]);
@@ -53,6 +55,11 @@ export default function NapMap() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const filteredNaps = useMemo(() => {
+    const nq = norm(q); if (!nq) return naps;
+    return naps.filter((n) => norm(`${n.name} ${n.address} ${n.notes}`).includes(nq));
+  }, [naps, q]);
 
   const center = useMemo(() => {
     if (naps.length) return [naps[0].lat, naps[0].lng];
@@ -75,14 +82,31 @@ export default function NapMap() {
   );
 
   const save = async (v) => {
-    try { await api.post("/nap-boxes", v); toast.success("Caja NAP creada"); await load(); }
+    try {
+      if (editing) {
+        await api.patch(`/nap-boxes/${editing.id}`, v);
+        toast.success("Caja NAP actualizada");
+      } else {
+        await api.post("/nap-boxes", v);
+        toast.success("Caja NAP creada");
+      }
+      setEditing(null); await load();
+    }
     catch (e) { toast.error(formatApiError(e)); throw e; }
+  };
+
+  const removeNap = async (id) => {
+    if (!window.confirm("¿Eliminar esta caja NAP?")) return;
+    try { await api.delete(`/nap-boxes/${id}`); toast.success("Eliminada"); await load(); }
+    catch (e) { toast.error(formatApiError(e)); }
   };
 
   return (
     <div>
       <PageHeader title="Mapa NAP" subtitle="Ubicación de cajas NAP y clientes conectados. Capacidad y llenado en tiempo real."
-        actions={<Button data-testid="new-nap-btn" onClick={() => setOpen(true)}><Plus className="w-4 h-4 mr-1" />Nueva NAP</Button>} />
+        actions={<Button data-testid="new-nap-btn" onClick={() => { setEditing(null); setOpen(true); }}><Plus className="w-4 h-4 mr-1" />Nueva NAP</Button>} />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar cajas NAP por nombre, dirección o notas…"
+        hint={`${filteredNaps.length} / ${naps.length}`} testId="nap-search" />
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="lg:col-span-3 rounded-md border border-border bg-card overflow-hidden" style={{ height: 560 }}>
           <MapContainer center={center} zoom={13} style={MAP_STYLE}>
@@ -105,16 +129,16 @@ export default function NapMap() {
           </MapContainer>
         </div>
 
-        <div className="rounded-md border border-border bg-card p-4 space-y-3">
+        <div className="rounded-md border border-border bg-card p-4 space-y-3 overflow-y-auto" style={{ maxHeight: 560 }}>
           <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Cajas NAP</div>
-          {naps.length === 0 && <div className="text-sm text-muted-foreground">Aún no hay cajas NAP.</div>}
-          {naps.map((n) => {
+          {filteredNaps.length === 0 && <div className="text-sm text-muted-foreground">{naps.length === 0 ? "Aún no hay cajas NAP." : "Nada coincide con la búsqueda."}</div>}
+          {filteredNaps.map((n) => {
             const used = countByNap[n.id] || 0;
             const full = used >= n.capacity;
             return (
-              <div key={n.id} className="rounded-md border border-border p-3 hover:bg-accent transition-colors">
+              <div key={n.id} className="rounded-md border border-border p-3 hover:bg-accent transition-colors" data-testid={`nap-card-${n.id}`}>
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2"><Boxes className="w-4 h-4 text-primary" /><div className="font-medium">{n.name}</div></div>
+                  <div className="flex items-center gap-2 min-w-0"><Boxes className="w-4 h-4 text-primary shrink-0" /><div className="font-medium truncate">{n.name}</div></div>
                   {full ? <Badge className="bg-red-500/10 text-red-400 border border-red-500/30" variant="outline">Llena</Badge>
                     : <Badge variant="outline"><Users className="w-3 h-3 mr-1" />{used}/{n.capacity}</Badge>}
                 </div>
@@ -122,14 +146,23 @@ export default function NapMap() {
                 <div className="mt-2 h-1.5 rounded bg-secondary overflow-hidden">
                   <div className="h-full bg-primary" style={{ width: `${Math.min(100, (used / n.capacity) * 100)}%` }} />
                 </div>
+                <div className="mt-2 flex gap-1 justify-end">
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditing(n); setOpen(true); }} data-testid={`nap-edit-${n.id}`}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => removeNap(n.id)} data-testid={`nap-del-${n.id}`}>
+                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                  </Button>
+                </div>
               </div>
             );
           })}
         </div>
       </div>
 
-      <FormDialog open={open} onOpenChange={setOpen} title="Nueva Caja NAP"
-        fields={NAP_FIELDS} initial={INITIAL_NAP} onSubmit={save} />
+      <FormDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setEditing(null); }}
+        title={editing ? "Editar Caja NAP" : "Nueva Caja NAP"}
+        fields={NAP_FIELDS} initial={editing || INITIAL_NAP} onSubmit={save} />
     </div>
   );
 }

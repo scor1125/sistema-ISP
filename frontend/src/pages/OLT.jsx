@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import { PageHeader, EmptyRow, Kpi } from "@/components/Common";
+import { PageHeader, EmptyRow, Kpi, SearchBar, norm } from "@/components/Common";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Radio, AlertTriangle } from "lucide-react";
@@ -9,6 +9,7 @@ export default function OLT() {
   const [onus, setOnus] = useState([]);
   const [devices, setDevices] = useState([]);
   const [config, setConfig] = useState(null);
+  const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -30,7 +31,11 @@ export default function OLT() {
   const high = config?.onu_power_high_threshold ?? -8;
   const low = config?.onu_power_low_threshold ?? -27;
 
-  const sorted = useMemo(() => [...onus].sort((a, b) => a.power_dbm - b.power_dbm), [onus]);
+  const filtered = useMemo(() => {
+    const nq = norm(q); if (!nq) return onus;
+    return onus.filter((o) => norm(`${o.full_name} ${o.onu_serial} ${o.ip_address} ${o.mikrotik_server}`).includes(nq));
+  }, [onus, q]);
+  const sorted = useMemo(() => [...filtered].sort((a, b) => a.power_dbm - b.power_dbm), [filtered]);
   const critical = useMemo(
     () => sorted.filter(o => o.power_dbm > high || o.power_dbm < low).length,
     [sorted, high, low],
@@ -51,6 +56,8 @@ export default function OLT() {
         <Kpi label="OLTs conectados" value={devices.length} tone="success" trend={<span className="inline-flex gap-1"><Radio className="w-3 h-3" /> Registradas</span>} />
       </div>
 
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por cliente, serial ONU, IP o servidor…"
+        hint={`${sorted.length} / ${onus.length}`} testId="olt-search" />
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>

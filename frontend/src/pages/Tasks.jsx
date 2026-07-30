@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader } from "@/components/Common";
+import { PageHeader, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ export default function Tasks() {
   const [users, setUsers] = useState([]);
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
     const [t, u, c] = await Promise.all([api.get("/tasks"), api.get("/users"), api.get("/clients")]);
@@ -37,14 +38,22 @@ export default function Tasks() {
     { name: "due_date", label: "Fecha límite (YYYY-MM-DD)" },
   ], [users, clients]);
 
-  // Group tasks by stage once per tasks change.
+  // Group tasks by stage once per tasks change (with search filter).
   const tasksByStage = useMemo(() => {
     const acc = { backlog: [], today: [], in_progress: [], done: [] };
+    const nq = norm(q);
     tasks.forEach((t) => {
-      if (acc[t.stage]) acc[t.stage].push(t);
+      if (!acc[t.stage]) return;
+      if (nq) {
+        const u = users.find(x => x.id === t.assigned_to);
+        const c = clients.find(x => x.id === t.client_id);
+        const hay = norm(`${t.title} ${t.description} ${u?.name||""} ${c?.full_name||""} ${t.due_date||""}`);
+        if (!hay.includes(nq)) return;
+      }
+      acc[t.stage].push(t);
     });
     return acc;
-  }, [tasks]);
+  }, [tasks, users, clients, q]);
 
   const save = async (v) => {
     try { await api.post("/tasks", v); toast.success("Tarea creada"); await load(); }
@@ -62,6 +71,7 @@ export default function Tasks() {
       <PageHeader title="Tareas / Embudos"
         subtitle="Kanban simple para tareas diarias y comentarios de operación."
         actions={<Button data-testid="new-task-btn" onClick={() => setOpen(true)}><Plus className="w-4 h-4 mr-1" />Nueva tarea</Button>} />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por título, descripción, técnico o cliente…" testId="tasks-search" />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {STAGES.map((s) => {
           const list = tasksByStage[s.key] || [];

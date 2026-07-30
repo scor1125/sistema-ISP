@@ -1,3 +1,6 @@
+import { Input } from "@/components/ui/input";
+import { Search, X } from "lucide-react";
+
 export function PageHeader({ title, subtitle, actions }) {
   return (
     <div className="flex items-start justify-between gap-4 mb-6 pb-4 border-b border-border">
@@ -11,7 +14,7 @@ export function PageHeader({ title, subtitle, actions }) {
   );
 }
 
-export function Kpi({ label, value, trend, testId, tone="default" }) {
+export function Kpi({ label, value, trend, testId, tone = "default" }) {
   const tones = {
     default: "text-foreground",
     success: "text-emerald-400",
@@ -34,4 +37,30 @@ export function EmptyRow({ colSpan, text = "Sin registros." }) {
       <td colSpan={colSpan} className="text-center text-muted-foreground py-8 text-sm">{text}</td>
     </tr>
   );
+}
+
+export function SearchBar({ value, onChange, placeholder = "Buscar…", right = null, hint = null, testId = "search-input" }) {
+  return (
+    <div className="rounded-md border border-border bg-card p-3 mb-4 flex flex-wrap items-center gap-2">
+      <div className="relative flex-1 min-w-[220px]">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input className="pl-9 pr-9" placeholder={placeholder} value={value}
+          onChange={(e) => onChange(e.target.value)} data-testid={testId} />
+        {value && (
+          <button type="button" onClick={() => onChange("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-accent text-muted-foreground"
+            data-testid={`${testId}-clear`}>
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {hint && <span className="text-xs text-muted-foreground font-mono">{hint}</span>}
+      {right}
+    </div>
+  );
+}
+
+/** Utility: normalize accent + lowercase for search matching. */
+export function norm(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }

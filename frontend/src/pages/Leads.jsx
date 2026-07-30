@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,12 +21,21 @@ export default function Leads() {
   const [users, setUsers] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [q, setQ] = useState("");
 
   const load = async () => {
     const [l, u] = await Promise.all([api.get("/leads"), api.get("/users")]);
     setItems(l.data); setUsers(u.data);
   };
   useEffect(()=>{ load(); }, []);
+
+  const filtered = useMemo(() => {
+    const nq = norm(q); if (!nq) return items;
+    return items.filter((l) => {
+      const usr = users.find(x => x.id === l.assigned_to);
+      return norm(`${l.full_name} ${l.phone} ${l.address} ${TYPES[l.type]||""} ${STATUS[l.status]||""} ${usr?.name||""} ${l.notes||""}`).includes(nq);
+    });
+  }, [items, users, q]);
 
   const fields = [
     { name: "full_name", label: "Nombre", required: true, full: true },
@@ -55,6 +64,8 @@ export default function Leads() {
     <div>
       <PageHeader title="Leads" subtitle="Nuevas instalaciones y reportes: lentitud, cambio de contraseña, cambio de domicilio."
         actions={<Button data-testid="new-lead-btn" onClick={()=>{ setEditing(null); setOpen(true); }}><Plus className="w-4 h-4 mr-1"/>Nuevo lead</Button>} />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por nombre, teléfono, dirección, tipo o técnico…"
+        hint={`${filtered.length} / ${items.length}`} testId="leads-search" />
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>
@@ -63,8 +74,8 @@ export default function Leads() {
             <TableHead className="text-right">Acciones</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {items.length===0 && <EmptyRow colSpan={7} />}
-            {items.map(l=>{
+            {filtered.length===0 && <EmptyRow colSpan={7} text={items.length===0 ? "Sin leads. Crea el primero." : "Nada coincide con la búsqueda."} />}
+            {filtered.map(l=>{
               const u = users.find(x=>x.id===l.assigned_to);
               return (
                 <TableRow key={l.id}>

@@ -23,21 +23,35 @@ CRM para negocio ISP tipo Wispro: dashboard, clientes con fecha de pago flexible
 - Mongo con `id` UUID string (sin ObjectId leak).
 
 ## What's been implemented (2026-02)
-- Login + AuthContext + rutas protegidas.
-- Layout con sidebar (14 módulos) y header sticky glass.
+- Login + AuthContext + rutas protegidas. Branding **CRM Jupiter** (gradiente ámbar→rosa) en login y sidebar. Footer "Creado por EnlaceHR".
+- Layout con sidebar (15 módulos) y header sticky glass.
 - Dashboard con 8 KPIs y 2 charts (línea de crecimiento, distribución de estados).
-- CRUD: Clientes, Planes, Pagos, Leads, Extras, NAP Boxes, Tasks, Devices (OLT/Mikrotik), Users.
-- Ciclo de pago: `payment_day` configurable por cliente (no atado a día fijo); al registrar pago se avanza `next_due_date` y se reactiva al cliente.
+- **Panel de control** con KPIs financieros, 12 meses de ingresos, últimos pagos y dispositivos online.
+- **Arqueo de caja**: filtros por rango/mes/cobrador/método, selección múltiple de pagos, total en vivo, confirmación con notas y pestaña Historial (fecha, hora, responsable, detalle).
+- **Script vinculación Mikrotik**: botón por router genera .rsc listo para pegar (WireGuard/L2TP/OpenVPN) con pasos numerados, copiar y descargar.
+- **Buscador en todas las listas** (Planes, Extras, Usuarios, Pagos, Tareas, Desconectados, OLT, Mikrotik, NAPs, WhatsApp, Clientes).
+- **CRUD completo**: Users con edit + reset password, NAP boxes con edit/delete en tarjeta, Clients, Plans, Payments, Leads, Extras, Tasks, Devices, VPN.
+- Ciclo de pago: `payment_day` configurable por cliente; al registrar pago se avanza `next_due_date` y se reactiva al cliente.
 - Promesas de pago: no avanzan la fecha.
 - Validación de capacidad NAP (bloquea añadir si está llena).
 - Panel OLT/ONUs con datos derivados (potencia dBm, RX/TX, IP) por cliente + umbrales configurables.
 - Panel Mikrotik con sesiones vinculadas y días restantes de servicio.
 - Mapa NAP interactivo (leaflet dark tiles) con markers de cajas y clientes coloreados por estado.
-- WhatsApp: bandeja bidireccional simulada + endpoint `/simulate-incoming`.
+- WhatsApp: bandeja bidireccional simulada + endpoint `/simulate-incoming` + buscador de conversaciones.
 - Desconectados: lista + botón directo a chat WhatsApp del cliente.
-- Tareas: Kanban 4 stages con drag por botones.
+- Tareas: Kanban 4 stages con drag por botones + buscador.
 - Configuración del negocio: nombre, RFC, moneda, logo, umbrales ONU, minutos para alerta.
 - Seed automático del admin owner benjahr1993@gmail.com.
+- ThemePicker con wallpapers, gradientes y combos.
+- Detalle cliente en drawer con tráfico en vivo (recharts) y datos ONU.
+- VPN Panel con generador de perfiles WireGuard/OpenVPN descargables.
+
+## Backlog (P1/P2)
+- Integración real Mikrotik/OLT (SNMP/API) — P1
+- Facturación automática y suspensiones por cron — P1
+- Integración real WhatsApp/Telegram (Meta Cloud / Bot API) — P2
+- Export PDF de arqueo con firma — P2
+- Bloqueo de pagos ya incluidos en un arqueo — P2
 
 ## Backlog (P0)
 - Integración Stripe (checkout + webhook para pagos por transferencia/tarjeta que activen cliente automáticamente).

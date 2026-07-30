@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +22,7 @@ export default function Payments() {
   const [items, setItems] = useState([]);
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     const t = params.get("tab");
@@ -58,11 +59,22 @@ export default function Payments() {
 
   const remove = async (id) => { if(window.confirm("¿Eliminar pago?")){ await api.delete(`/payments/${id}`); load(); } };
 
-  const filter = (kind) => items.filter(i => {
-    if (kind==="promises") return i.is_promise;
-    if (kind==="all") return true;
-    return !i.is_promise && i.method === kind;
-  });
+  const clientsById = useMemo(() => {
+    const m = new Map(); clients.forEach((c) => m.set(c.id, c)); return m;
+  }, [clients]);
+
+  const filter = (kind) => {
+    const nq = norm(q);
+    return items.filter(i => {
+      if (kind==="promises") { if (!i.is_promise) return false; }
+      else if (kind==="all") { /* no method filter */ }
+      else if (i.is_promise || i.method !== kind) return false;
+      if (!nq) return true;
+      const client = clientsById.get(i.client_id);
+      const hay = norm(`${client?.full_name || ""} ${i.concept} ${i.notes} ${i.invoice_number} ${i.amount} ${(i.created_at||"").slice(0,10)}`);
+      return hay.includes(nq);
+    });
+  };
 
   const renderTable = (list) => (
     <div className="rounded-md border border-border bg-card overflow-hidden">
@@ -103,6 +115,7 @@ export default function Payments() {
         subtitle="Registra pagos en efectivo, transferencias, promesas y factura manual. Los pagos reactivan al cliente automáticamente."
         actions={<Button data-testid="new-payment-btn" onClick={()=>setOpen(true)}><Plus className="w-4 h-4 mr-1"/>Registrar pago</Button>}
       />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por cliente, monto, concepto, factura o fecha…" testId="payments-search" />
       <Tabs value={tab} onValueChange={(v) => { setTab(v); const next = new URLSearchParams(params); if (v !== "all") next.set("tab", v); else next.delete("tab"); setParams(next, { replace: true }); }}>
         <TabsList data-testid="pay-tabs">
           <TabsTrigger value="all">Todos</TabsTrigger>

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +14,13 @@ export default function Extras() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [q, setQ] = useState("");
   const load = async () => setItems((await api.get("/extras")).data);
   useEffect(()=>{ load(); }, []);
+  const filtered = useMemo(() => {
+    const nq = norm(q); if (!nq) return items;
+    return items.filter((x) => norm(`${x.name} ${x.description} ${CATS[x.category]||""} ${x.price}`).includes(nq));
+  }, [items, q]);
 
   const fields = [
     { name:"name", label:"Nombre", required:true, full:true },
@@ -39,6 +44,8 @@ export default function Extras() {
     <div>
       <PageHeader title="Servicios extras" subtitle="IPTV, telefonía, megas extras y equipos portátiles."
         actions={<Button data-testid="new-extra-btn" onClick={()=>{setEditing(null); setOpen(true);}}><Plus className="w-4 h-4 mr-1"/>Nuevo</Button>} />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por nombre, categoría o descripción…"
+        hint={`${filtered.length} / ${items.length}`} testId="extras-search" />
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>
@@ -46,8 +53,8 @@ export default function Extras() {
             <TableHead>Estado</TableHead><TableHead className="text-right">Acciones</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {items.length===0 && <EmptyRow colSpan={5} />}
-            {items.map(x=>(
+            {filtered.length===0 && <EmptyRow colSpan={5} text={items.length===0 ? "Sin servicios. Crea el primero." : "Nada coincide con la búsqueda."} />}
+            {filtered.map(x=>(
               <TableRow key={x.id}>
                 <TableCell><div className="font-medium">{x.name}</div><div className="text-xs text-muted-foreground">{x.description}</div></TableCell>
                 <TableCell>{CATS[x.category]}</TableCell>

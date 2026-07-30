@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,18 @@ export default function Mikrotik() {
   const [scriptFor, setScriptFor] = useState(null); // { device, protocol, script, steps, filename }
   const [scriptProto, setScriptProto] = useState("wireguard");
   const [scriptLoading, setScriptLoading] = useState(false);
+  const [qDevices, setQDevices] = useState("");
+  const [qOnus, setQOnus] = useState("");
+
+  const filteredDevices = useMemo(() => {
+    const nq = norm(qDevices); if (!nq) return devices;
+    return devices.filter((d) => norm(`${d.name} ${d.host} ${d.location} ${d.connection} ${d.notes}`).includes(nq));
+  }, [devices, qDevices]);
+
+  const filteredOnus = useMemo(() => {
+    const nq = norm(qOnus); if (!nq) return onus;
+    return onus.filter((o) => norm(`${o.full_name} ${o.ip_address} ${o.mikrotik_server} ${o.onu_serial}`).includes(nq));
+  }, [onus, qOnus]);
 
   const load = async () => {
     const [o, p, d] = await Promise.all([api.get("/onus"), api.get("/plans"), api.get("/devices")]);
@@ -82,9 +94,11 @@ export default function Mikrotik() {
 
       <div className="mb-6">
         <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Routers registrados</div>
+        <SearchBar value={qDevices} onChange={setQDevices} placeholder="Buscar router por nombre, host o ubicación…"
+          hint={`${filteredDevices.length} / ${devices.length}`} testId="mk-search" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {devices.length===0 && <div className="text-sm text-muted-foreground">Aún no registras Mikrotiks.</div>}
-          {devices.map(d=>(
+          {filteredDevices.length===0 && <div className="text-sm text-muted-foreground">{devices.length===0 ? "Aún no registras Mikrotiks." : "Nada coincide con la búsqueda."}</div>}
+          {filteredDevices.map(d=>(
             <div key={d.id} className="rounded-md border border-border bg-card p-4">
               <div className="flex items-center gap-2">
                 <Router className="w-4 h-4 text-primary" />
@@ -110,6 +124,8 @@ export default function Mikrotik() {
       </div>
 
       <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Sesiones activas (vinculadas OLT)</div>
+      <SearchBar value={qOnus} onChange={setQOnus} placeholder="Buscar cliente, IP, ONU serial o servidor…"
+        hint={`${filteredOnus.length} / ${onus.length}`} testId="mk-sessions-search" />
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>
@@ -118,8 +134,8 @@ export default function Mikrotik() {
             <TableHead>ONU dBm</TableHead><TableHead>Pago activo</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {onus.length===0 && <EmptyRow colSpan={7} />}
-            {onus.map(o=>{
+            {filteredOnus.length===0 && <EmptyRow colSpan={7} text={onus.length===0 ? "Sin sesiones. Registra clientes y ONUs." : "Nada coincide con la búsqueda."} />}
+            {filteredOnus.map(o=>{
               const c = plans.find(p=>p.id===o.plan_id);
               // days remaining until next_due_date
               const days = o.next_due_date ? differenceInDays(parseISO(o.next_due_date), new Date()) : null;

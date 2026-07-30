@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 
 export default function Disconnected() {
   const [items, setItems] = useState([]);
+  const [q, setQ] = useState("");
   const nav = useNavigate();
 
   useEffect(()=>{
@@ -18,6 +19,11 @@ export default function Disconnected() {
     })();
   }, []);
 
+  const filtered = useMemo(() => {
+    const nq = norm(q); if (!nq) return items;
+    return items.filter((c) => norm(`${c.full_name} ${c.phone} ${c.ip_address} ${c.community} ${c.address}`).includes(nq));
+  }, [items, q]);
+
   const openWhatsApp = (client) => nav(`/whatsapp?client=${client.id}`);
 
   return (
@@ -26,6 +32,8 @@ export default function Disconnected() {
         title="Desconectados"
         subtitle="Clientes offline por más de 30 min (configurable). Envía WhatsApp con un click."
       />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por nombre, teléfono, IP o comunidad…"
+        hint={`${filtered.length} / ${items.length}`} testId="disc-search" />
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>
@@ -34,8 +42,8 @@ export default function Disconnected() {
             <TableHead>Estado</TableHead><TableHead className="text-right">Acción</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {items.length===0 && <EmptyRow colSpan={6} text="Ningún cliente desconectado en este momento." />}
-            {items.map(c=>(
+            {filtered.length===0 && <EmptyRow colSpan={6} text={items.length===0 ? "Ningún cliente desconectado en este momento." : "Nada coincide con la búsqueda."} />}
+            {filtered.map(c=>(
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.full_name}</TableCell>
                 <TableCell className="font-mono text-xs">{c.phone || "—"}</TableCell>

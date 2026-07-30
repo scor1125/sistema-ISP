@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,9 +12,16 @@ export default function Plans() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [q, setQ] = useState("");
 
   const load = async () => setItems((await api.get("/plans")).data);
   useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => {
+    const nq = norm(q);
+    if (!nq) return items;
+    return items.filter((p) => norm(`${p.name} ${p.description} ${p.speed_mbps} ${p.price}`).includes(nq));
+  }, [items, q]);
 
   const fields = [
     { name: "name", label: "Nombre", required: true, full: true },
@@ -38,6 +45,8 @@ export default function Plans() {
     <div>
       <PageHeader title="Planes" subtitle="Los paquetes de internet que ofreces a tus clientes."
         actions={<Button data-testid="new-plan-btn" onClick={()=>{ setEditing(null); setOpen(true); }}><Plus className="w-4 h-4 mr-1"/>Nuevo plan</Button>} />
+      <SearchBar value={q} onChange={setQ} placeholder="Buscar por nombre, velocidad, precio o descripción…"
+        hint={`${filtered.length} / ${items.length}`} testId="plans-search" />
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>
@@ -45,8 +54,8 @@ export default function Plans() {
             <TableHead>Estado</TableHead><TableHead className="text-right">Acciones</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {items.length===0 && <EmptyRow colSpan={5} text="Sin planes. Crea el primero." />}
-            {items.map(p=>(
+            {filtered.length===0 && <EmptyRow colSpan={5} text={items.length===0 ? "Sin planes. Crea el primero." : "Nada coincide con la búsqueda."} />}
+            {filtered.map(p=>(
               <TableRow key={p.id}>
                 <TableCell><div className="font-medium">{p.name}</div><div className="text-xs text-muted-foreground">{p.description}</div></TableCell>
                 <TableCell className="font-mono">{p.speed_mbps} Mbps</TableCell>

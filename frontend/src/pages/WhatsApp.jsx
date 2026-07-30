@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader } from "@/components/Common";
+import { PageHeader, SearchBar, norm } from "@/components/Common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +18,7 @@ export default function WhatsApp() {
   const [activePhone, setActivePhone] = useState("");
   const [body, setBody] = useState("");
   const [kind, setKind] = useState("chat");
+  const [q, setQ] = useState("");
 
   const load = useCallback(async () => {
     const [m, c] = await Promise.all([api.get("/whatsapp/messages"), api.get("/clients")]);
@@ -39,12 +40,15 @@ export default function WhatsApp() {
       if (!map.has(m.phone)) map.set(m.phone, []);
       map.get(m.phone).push(m);
     });
-    return Array.from(map.entries()).map(([phone, msgs]) => {
+    let list = Array.from(map.entries()).map(([phone, msgs]) => {
       const client = clients.find(c => c.phone === phone);
       const last = msgs[0];
       return { phone, client, last, count: msgs.length };
     }).sort((a, b) => b.last.created_at.localeCompare(a.last.created_at));
-  }, [messages, clients]);
+    const nq = norm(q);
+    if (nq) list = list.filter((c) => norm(`${c.client?.full_name||""} ${c.phone} ${c.last?.body||""}`).includes(nq));
+    return list;
+  }, [messages, clients, q]);
 
   const activeMessages = useMemo(
     () => messages.filter(m => m.phone === activePhone).slice().sort((a, b) => a.created_at.localeCompare(b.created_at)),
@@ -87,6 +91,9 @@ export default function WhatsApp() {
             <Inbox className="w-4 h-4 text-muted-foreground" />
             <div className="text-sm font-medium">Conversaciones</div>
             <Badge variant="outline" className="ml-auto font-mono text-xs">{conversations.length}</Badge>
+          </div>
+          <div className="p-2 border-b border-border">
+            <Input placeholder="Buscar chat…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="wa-search" className="h-8 text-xs" />
           </div>
           <ScrollArea className="flex-1">
             {conversations.length === 0 && <div className="p-4 text-sm text-muted-foreground">Sin mensajes aún.</div>}
