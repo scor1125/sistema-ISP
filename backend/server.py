@@ -10,7 +10,7 @@ import jwt
 import bcrypt
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Any, Literal
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
@@ -274,6 +274,27 @@ async def logout(response: Response):
 async def me(user: dict = Depends(get_current_user)):
     return user
 
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
+ALLOWED_AVATAR_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
+@api.post("/auth/me/avatar")
+async def upload_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Upload a personal avatar for the current user (PNG/JPEG/WEBP/GIF, ≤2MB)."""
+    if file.content_type not in ALLOWED_AVATAR_MIME:
+        raise HTTPException(400, "Formato no soportado. Usa PNG, JPEG, WEBP o GIF.")
+    data = await file.read()
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(400, "La foto excede 2MB. Reduce el tamaño e inténtalo de nuevo.")
+    b64 = base64.b64encode(data).decode("ascii")
+    avatar_url = f"data:{file.content_type};base64,{b64}"
+    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": avatar_url, "updated_at": now_iso()}})
+    return {"avatar_url": avatar_url}
+
+@api.delete("/auth/me/avatar")
+async def delete_avatar(user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": "", "updated_at": now_iso()}})
+    return {"ok": True}
+
 # ---------- System Users ----------
 @api.get("/users")
 async def list_users(_: dict = Depends(get_current_user)):
@@ -526,7 +547,6 @@ async def simulate_incoming(payload: WhatsAppMessageIn, _: dict = Depends(get_cu
     return doc
 
 # ---------- Business config ----------
-from fastapi import UploadFile, File
 import base64
 
 MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB

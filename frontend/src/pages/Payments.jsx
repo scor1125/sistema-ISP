@@ -9,7 +9,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import PromisesPanel from "@/components/PromisesPanel";
 
 const methodLabel = {
   cash: "Efectivo", transfer: "Transferencia", stripe: "Stripe", other: "Otro"
@@ -104,17 +103,15 @@ export default function Payments() {
         subtitle="Registra pagos en efectivo, transferencias, promesas y factura manual. Los pagos reactivan al cliente automáticamente."
         actions={<Button data-testid="new-payment-btn" onClick={()=>setOpen(true)}><Plus className="w-4 h-4 mr-1"/>Registrar pago</Button>}
       />
-      <Tabs value={tab} onValueChange={(v) => { setTab(v); const next = new URLSearchParams(params); if (v === "promises") next.set("tab","promises"); else next.delete("tab"); setParams(next, { replace: true }); }}>
+      <Tabs value={tab} onValueChange={(v) => { setTab(v); const next = new URLSearchParams(params); if (v !== "all") next.set("tab", v); else next.delete("tab"); setParams(next, { replace: true }); }}>
         <TabsList data-testid="pay-tabs">
           <TabsTrigger value="all">Todos</TabsTrigger>
           <TabsTrigger value="cash">Efectivo</TabsTrigger>
           <TabsTrigger value="transfer">Transferencia</TabsTrigger>
-          <TabsTrigger value="promises" data-testid="tab-promises">Promesas</TabsTrigger>
         </TabsList>
         <TabsContent value="all" className="mt-4">{renderTable(filter("all"))}</TabsContent>
         <TabsContent value="cash" className="mt-4">{renderTable(filter("cash"))}</TabsContent>
         <TabsContent value="transfer" className="mt-4">{renderTable(filter("transfer"))}</TabsContent>
-        <TabsContent value="promises" className="mt-4"><PromisesPanel /></TabsContent>
       </Tabs>
 
       <FormDialog open={open} onOpenChange={setOpen} title="Registrar pago"

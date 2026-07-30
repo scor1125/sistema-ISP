@@ -1,24 +1,26 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useBusinessConfig } from "@/context/BusinessConfigContext";
 import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
   ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight, StickyNote,
-  ChevronUp, ChevronDown
+  ChevronUp, ChevronDown, Camera, HandCoins
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import ThemePicker, { initThemeFromStorage } from "@/components/ThemePicker";
 import ServersStatus from "@/components/ServersStatus";
 import PendingBadges from "@/components/PendingBadges";
 
 const NAV = [
   { to: "/clientes", label: "Clientes", icon: Users, group: "Menú" },
-  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú",
-    children: [{ to: "/pagos?tab=promises", label: "Promesas de pagos", match: "promises" }] },
+  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú" },
+  { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Menú" },
   { to: "/desconectados", label: "Desconectados", icon: ZapOff, group: "Menú" },
   { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Menú" },
   { to: "/planes", label: "Planes", icon: PackagePlus, group: "Menú" },
@@ -43,10 +45,26 @@ const GROUPED_NAV = (() => {
 const COLLAPSE_KEY = "netops-sidebar-collapsed";
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
   const navigate = useNavigate();
   const { config } = useBusinessConfig();
   const groupedNav = useMemo(() => GROUPED_NAV, []);
+  const avatarFileRef = useRef(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const uploadAvatar = async (file) => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast.error("La foto excede 2MB."); return; }
+    const form = new FormData();
+    form.append("file", file);
+    setUploadingAvatar(true);
+    try {
+      await api.post("/auth/me/avatar", form, { headers: { "Content-Type": "multipart/form-data" } });
+      await refresh();
+      toast.success("Foto actualizada");
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setUploadingAvatar(false); if (avatarFileRef.current) avatarFileRef.current.value = ""; }
+  };
 
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -194,18 +212,40 @@ export default function Layout() {
         )}
 
         <div className={`border-t border-border p-3 flex items-center ${collapsed ? "justify-center" : "gap-2"}`}>
+          <input
+            ref={avatarFileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            onChange={(e) => uploadAvatar(e.target.files?.[0])}
+            data-testid="avatar-file-input"
+          />
+          <button
+            type="button"
+            onClick={() => avatarFileRef.current?.click()}
+            className="relative w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0 overflow-hidden group hover:ring-2 hover:ring-primary/50 transition"
+            title="Cambiar foto de perfil"
+            data-testid="avatar-upload"
+          >
+            {user?.avatar_url ? (
+              <img src={user.avatar_url} alt={user.name} className="w-full h-full object-cover" data-testid="user-avatar" />
+            ) : (
+              <span>{user?.name?.[0]?.toUpperCase() || "U"}</span>
+            )}
+            <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 grid place-items-center transition-opacity">
+              <Camera className="w-3.5 h-3.5 text-white" />
+            </span>
+            {uploadingAvatar && (
+              <span className="absolute inset-0 bg-black/60 grid place-items-center text-[9px] text-white">…</span>
+            )}
+          </button>
           {!collapsed && (
-            <>
-              <div className="w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0">
-                {user?.name?.[0]?.toUpperCase() || "U"}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm truncate">{user?.name}</div>
-                <Badge variant="outline" className="text-[10px] py-0 h-4 font-mono uppercase">
-                  {user?.role}
-                </Badge>
-              </div>
-            </>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm truncate">{user?.name}</div>
+              <Badge variant="outline" className="text-[10px] py-0 h-4 font-mono uppercase">
+                {user?.role}
+              </Badge>
+            </div>
           )}
           <Button
             size="icon"

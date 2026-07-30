@@ -9,6 +9,7 @@ import Dashboard from "@/pages/Dashboard";
 import Clients from "@/pages/Clients";
 import Plans from "@/pages/Plans";
 import Payments from "@/pages/Payments";
+import PromisesPage from "@/pages/PromisesPage";
 import Leads from "@/pages/Leads";
 import Extras from "@/pages/Extras";
 import NapMap from "@/pages/NapMap";
@@ -53,6 +54,7 @@ function App() {
             <Route path="/clientes" element={<Clients />} />
             <Route path="/planes" element={<Plans />} />
             <Route path="/pagos" element={<Payments />} />
+            <Route path="/promesas" element={<PromisesPage />} />
             <Route path="/leads" element={<Leads />} />
             <Route path="/extras" element={<Extras />} />
             <Route path="/mapa" element={<NapMap />} />
