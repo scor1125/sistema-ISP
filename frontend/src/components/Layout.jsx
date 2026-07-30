@@ -171,8 +171,11 @@ export default function Layout() {
             )}
           </button>
           {!collapsed && (
-            <div className="font-display font-bold tracking-tight truncate flex-1" data-testid="brand-name">
-              {businessName}
+            <div
+              className="font-display font-black tracking-tight truncate flex-1 text-xl bg-clip-text text-transparent bg-gradient-to-r from-amber-300 via-orange-500 to-rose-600 drop-shadow-[0_2px_10px_rgba(251,146,60,0.3)]"
+              data-testid="brand-name"
+            >
+              CRM Jupiter
             </div>
           )}
           {!collapsed && (
