@@ -18,7 +18,8 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true, group: "General" },
   { to: "/clientes", label: "Clientes", icon: Users, group: "Operación" },
   { to: "/planes", label: "Planes", icon: PackagePlus, group: "Operación" },
-  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Operación" },
+  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Operación",
+    children: [{ to: "/pagos?tab=promises", label: "Promesas de pagos", match: "promises" }] },
   { to: "/leads", label: "Leads", icon: ClipboardList, group: "Operación" },
   { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Operación" },
   { to: "/mapa", label: "Mapa NAP", icon: MapIcon, group: "Red" },
@@ -129,24 +130,47 @@ export default function Layout() {
               {!collapsed && (
                 <div className="px-4 mb-1 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">{g}</div>
               )}
-              {items.map(({ to, label, icon: Icon, exact }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={exact}
-                  title={collapsed ? label : undefined}
-                  data-testid={`nav-${to.replace('/', '') || 'dashboard'}`}
-                  className={({ isActive }) =>
-                    `mx-2 my-0.5 flex items-center rounded-md text-sm transition-colors
-                    ${collapsed ? "justify-center px-2 py-2" : "gap-2.5 px-3 py-2"}
-                    ${isActive
-                      ? 'bg-primary/10 text-primary border border-primary/30'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent border border-transparent'}`
-                  }
-                >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  {!collapsed && <span className="truncate">{label}</span>}
-                </NavLink>
+              {items.map(({ to, label, icon: Icon, exact, children }) => (
+                <div key={to}>
+                  <NavLink
+                    to={to}
+                    end={exact}
+                    title={collapsed ? label : undefined}
+                    data-testid={`nav-${to.replace('/', '') || 'dashboard'}`}
+                    className={({ isActive }) =>
+                      `mx-2 my-0.5 flex items-center rounded-md text-sm transition-colors
+                      ${collapsed ? "justify-center px-2 py-2" : "gap-2.5 px-3 py-2"}
+                      ${isActive
+                        ? 'bg-primary/10 text-primary border border-primary/30'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent border border-transparent'}`
+                    }
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </NavLink>
+                  {!collapsed && children?.map((sub) => (
+                    <NavLink
+                      key={sub.to}
+                      to={sub.to}
+                      data-testid={`subnav-${sub.match || sub.to.replace(/[^a-z0-9]/gi, '-')}`}
+                      className={({ isActive }) => {
+                        // Radix/Router doesn't consider query strings when computing isActive,
+                        // so highlight based on the ?tab= match instead.
+                        const activeByQuery = typeof window !== "undefined" &&
+                          window.location.pathname === to &&
+                          window.location.search.includes(`tab=${sub.match}`);
+                        const active = activeByQuery || isActive;
+                        return `ml-8 mr-2 my-0.5 flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-md text-xs border-l transition-colors
+                          ${active
+                            ? 'border-primary text-primary bg-primary/5'
+                            : 'border-border text-muted-foreground hover:text-foreground hover:bg-accent'}`;
+                      }}
+                    >
+                      <span className="w-1 h-1 rounded-full bg-current opacity-70" />
+                      <span className="truncate">{sub.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
               ))}
             </div>
           ))}

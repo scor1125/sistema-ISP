@@ -15,11 +15,18 @@ const methodLabel = {
 };
 
 export default function Payments() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const preselectClient = params.get("client");
+  const initialTab = params.get("tab") === "promises" ? "promises" : "all";
+  const [tab, setTab] = useState(initialTab);
   const [items, setItems] = useState([]);
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const t = params.get("tab");
+    if (t === "promises" && tab !== "promises") setTab("promises");
+  }, [params, tab]);
 
   const load = async () => {
     const [p, c] = await Promise.all([api.get("/payments"), api.get("/clients")]);
@@ -96,12 +103,12 @@ export default function Payments() {
         subtitle="Registra pagos en efectivo, transferencias, promesas y factura manual. Los pagos reactivan al cliente automáticamente."
         actions={<Button data-testid="new-payment-btn" onClick={()=>setOpen(true)}><Plus className="w-4 h-4 mr-1"/>Registrar pago</Button>}
       />
-      <Tabs defaultValue="all">
+      <Tabs value={tab} onValueChange={(v) => { setTab(v); const next = new URLSearchParams(params); if (v === "promises") next.set("tab","promises"); else next.delete("tab"); setParams(next, { replace: true }); }}>
         <TabsList data-testid="pay-tabs">
           <TabsTrigger value="all">Todos</TabsTrigger>
           <TabsTrigger value="cash">Efectivo</TabsTrigger>
           <TabsTrigger value="transfer">Transferencia</TabsTrigger>
-          <TabsTrigger value="promises">Promesas</TabsTrigger>
+          <TabsTrigger value="promises" data-testid="tab-promises">Promesas</TabsTrigger>
         </TabsList>
         <TabsContent value="all" className="mt-4">{renderTable(filter("all"))}</TabsContent>
         <TabsContent value="cash" className="mt-4">{renderTable(filter("cash"))}</TabsContent>
