@@ -696,28 +696,55 @@ async def dashboard(_: dict = Depends(get_current_user)):
     suspended = await db.clients.count_documents({"status": "suspended"})
     offline = await db.clients.count_documents({"status": "offline"})
     new_c = await db.clients.count_documents({"status": "new"})
-    # new this month
-    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    new_month = await db.clients.count_documents({"created_at": {"$gte": month_start}})
-    # revenue this month
-    revenue_pipe = [
-        {"$match": {"created_at": {"$gte": month_start}, "is_promise": {"$ne": True}}},
-        {"$group": {"_id": None, "sum": {"$sum": "$amount"}}}
-    ]
-    rev = await db.payments.aggregate(revenue_pipe).to_list(1)
-    revenue = rev[0]["sum"] if rev else 0
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_month = (month_start - timedelta(days=1)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ms_iso = month_start.isoformat()
+    pm_iso = prev_month.isoformat()
+    new_month = await db.clients.count_documents({"created_at": {"$gte": ms_iso}})
+
+    async def _sum(range_start, range_end=None):
+        m = {"is_promise": {"$ne": True}, "created_at": {"$gte": range_start}}
+        if range_end: m["created_at"]["$lt"] = range_end
+        pipe = [{"$match": m}, {"$group": {"_id": None, "s": {"$sum": "$amount"}}}]
+        r = await db.payments.aggregate(pipe).to_list(1)
+        return r[0]["s"] if r else 0
+
+    revenue = await _sum(ms_iso)
+    prev_revenue = await _sum(pm_iso, ms_iso)
+
+    # Monthly revenue for last 12 months.
+    months = []
+    for i in range(11, -1, -1):
+        d = (month_start.replace(day=15) - timedelta(days=30*i)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        nx = (d + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        s = await _sum(d.isoformat(), nx.isoformat())
+        months.append({"month": d.strftime("%Y-%m"), "amount": s})
+
+    recent = await db.payments.find(
+        {"is_promise": {"$ne": True}}, {"_id": 0}
+    ).sort("created_at", -1).limit(20).to_list(20)
+    # Enrich with client name
+    client_ids = list({p.get("client_id") for p in recent if p.get("client_id")})
+    clients_map = {}
+    if client_ids:
+        async for c in db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "full_name": 1}):
+            clients_map[c["id"]] = c.get("full_name")
+    for p in recent:
+        p["client_name"] = clients_map.get(p.get("client_id"), "—")
+
     open_leads = await db.leads.count_documents({"status": {"$in": ["new", "in_progress"]}})
-    disconnected_recent = await db.clients.count_documents({"status": "offline"})
+    devices = await db.devices.find({}, {"_id": 0}).to_list(500)
+    mikrotiks = [d for d in devices if d.get("kind") == "mikrotik"]
+    olts = [d for d in devices if d.get("kind") == "olt"]
+
     return {
-        "total_clients": total,
-        "active": active,
-        "suspended": suspended,
-        "offline": offline,
-        "new": new_c,
-        "new_this_month": new_month,
-        "revenue_this_month": revenue,
-        "open_leads": open_leads,
-        "disconnected_recent": disconnected_recent,
+        "total_clients": total, "active": active, "suspended": suspended,
+        "offline": offline, "new": new_c, "new_this_month": new_month,
+        "revenue_this_month": revenue, "revenue_prev_month": prev_revenue,
+        "monthly_revenue": months, "recent_payments": recent,
+        "open_leads": open_leads, "disconnected_recent": offline,
+        "mikrotiks": mikrotiks, "olts": olts,
     }
 
 # ---------- Mocked ONU / Mikrotik data ----------

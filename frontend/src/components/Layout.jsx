@@ -19,6 +19,7 @@ import PendingBadges from "@/components/PendingBadges";
 import InboxWidget from "@/components/InboxWidget";
 
 const NAV = [
+  { to: "/panel", label: "Panel de control", icon: LayoutDashboard, group: "Menú" },
   { to: "/clientes", label: "Clientes", icon: Users, group: "Menú" },
   { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú" },
   { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Menú" },

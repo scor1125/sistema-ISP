@@ -21,6 +21,7 @@ import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
 import Settings from "@/pages/Settings";
 import MyPendings from "@/pages/MyPendings";
+import ControlPanel from "@/pages/ControlPanel";
 import "@/App.css";
 
 function Protected() {
@@ -50,7 +51,8 @@ function App() {
         <Routes>
           <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
           <Route element={<Protected />}>
-            <Route path="/" element={<Navigate to="/clientes" replace />} />
+            <Route path="/" element={<Navigate to="/panel" replace />} />
+            <Route path="/panel" element={<ControlPanel />} />
             <Route path="/clientes" element={<Clients />} />
             <Route path="/planes" element={<Plans />} />
             <Route path="/pagos" element={<Payments />} />
