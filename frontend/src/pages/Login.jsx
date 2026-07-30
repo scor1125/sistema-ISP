@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Router, Wifi, ShieldCheck } from "lucide-react";
+import { Wifi } from "lucide-react";
 
 export default function Login() {
   const { login, error } = useAuth();
@@ -49,9 +49,6 @@ export default function Login() {
               </div>
             ))}
           </div>
-        </div>
-        <div className="text-xs text-muted-foreground font-mono flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4" /> Sesión encriptada · JWT + Cookies httpOnly
         </div>
       </div>
 
