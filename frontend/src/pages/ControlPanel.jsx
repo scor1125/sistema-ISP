@@ -13,7 +13,12 @@ const TT = { background: "hsl(var(--card))", border: "1px solid hsl(var(--border
 
 export default function ControlPanel() {
   const [d, setD] = useState(null);
-  useEffect(() => { (async () => { try { setD((await api.get("/stats/dashboard")).data); } catch {} })(); }, []);
+  useEffect(() => {
+    (async () => {
+      try { setD((await api.get("/stats/dashboard")).data); }
+      catch (err) { console.error("[ControlPanel] load failed:", err); }
+    })();
+  }, []);
 
   const monthly = d?.monthly_revenue || [];
   const recent = d?.recent_payments || [];

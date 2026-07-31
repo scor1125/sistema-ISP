@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, formatApiError } from "@/lib/api";
 import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
@@ -29,11 +29,14 @@ export default function Payments() {
     if (t === "promises" && tab !== "promises") setTab("promises");
   }, [params, tab]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [p, c] = await Promise.all([api.get("/payments"), api.get("/clients")]);
     setItems(p.data); setClients(c.data);
-  };
-  useEffect(()=>{ load(); if (preselectClient) setOpen(true); }, [preselectClient]);
+  }, []);
+  useEffect(() => {
+    load();
+    if (preselectClient) setOpen(true);
+  }, [load, preselectClient]);
 
   const fields = [
     { name: "client_id", label: "Cliente", type: "select", required: true, full: true,

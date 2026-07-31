@@ -557,14 +557,18 @@ async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
     reachable = tcp_ok
 
     # --- Simulated traffic series (last 30 samples, 3s apart) ---
+    # --- Simulated traffic series (last 30 samples, 3s apart) ---
+    # Uses SystemRandom (cryptographically strong via os.urandom) instead of
+    # the seedable random module — safe for both display and any future
+    # sensitive use.
+    import secrets
+    rng = secrets.SystemRandom()
     now = time.time()
-    seed = (d.get("id") or "seed") + str(int(now // 3))
-    random.seed(seed)
     samples = []
     for i in range(30):
         ts = int(now - (29 - i) * 3)
-        base_rx = 350 + 200 * (0.6 + random.random() * 0.8)
-        base_tx = 120 + 90 * (0.6 + random.random() * 0.8)
+        base_rx = 350 + 200 * (0.6 + rng.random() * 0.8)
+        base_tx = 120 + 90 * (0.6 + rng.random() * 0.8)
         # spike each ~10 samples
         if i % 10 == 0: base_rx *= 1.6
         samples.append({
@@ -595,7 +599,8 @@ async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
     handshake status and, when reachable, simulated live traffic (RX/TX) so the
     operator can eyeball activity from the CRM.
     """
-    import asyncio, socket, time, random
+    import asyncio, socket, time, secrets
+    rng = secrets.SystemRandom()
     v = await db.vpn_connections.find_one({"id": vpn_id}, {"_id": 0})
     if not v:
         raise HTTPException(404, "VPN no encontrada")
@@ -626,10 +631,10 @@ async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
         try: await writer.wait_closed()
         except Exception: pass
         traffic = {
-            "rx_kbps": random.randint(120, 950),
-            "tx_kbps": random.randint(60, 480),
-            "packets_in": random.randint(200, 1400),
-            "packets_out": random.randint(200, 1400),
+            "rx_kbps": rng.randint(120, 950),
+            "tx_kbps": rng.randint(60, 480),
+            "packets_in": rng.randint(200, 1400),
+            "packets_out": rng.randint(200, 1400),
             "since": v.get("last_test_at") or now_iso(),
         }
         return {"reachable": True, "resolved": resolved, "latency_ms": latency_ms,
@@ -674,6 +679,13 @@ async def mikrotik_script(device_id: str, protocol: str = "wireguard", _: dict =
     remote_port = d.get("port") or (51820 if proto == "wireguard" else 1701 if proto == "l2tp" else 1194)
     iface = f"wg-{name.lower()}"[:15]
     peer_endpoint = f"{remote_host}:{remote_port}"
+
+    # Defaults so all code paths return a script (protects against future new
+    # branches that forget to assign these variables — silences static
+    # analyzers and prevents runtime NameError).
+    script = f"# Protocolo '{proto}' no soportado. Elegí wireguard, l2tp u openvpn."
+    steps = ["Protocolo no soportado."]
+    filename = f"crm-jupiter-{name}-unknown.rsc"
 
     if proto == "wireguard":
         script = f"""# ============================================================

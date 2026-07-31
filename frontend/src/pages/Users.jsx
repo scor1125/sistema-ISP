@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { api, formatApiError } from "@/lib/api";
 import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
@@ -16,8 +16,10 @@ export default function Users() {
   const [editing, setEditing] = useState(null);
   const [q, setQ] = useState("");
 
-  const load = async () => setItems((await api.get("/users")).data);
-  useEffect(()=>{ load(); }, []);
+  const load = useCallback(async () => {
+    setItems((await api.get("/users")).data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
     const nq = norm(q); if (!nq) return items;

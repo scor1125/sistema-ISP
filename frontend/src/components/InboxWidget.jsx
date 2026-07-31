@@ -18,7 +18,7 @@ export default function InboxWidget() {
     try {
       const { data } = await api.get("/inbox");
       setMessages(data);
-    } catch { /* silent */ }
+    } catch (err) { console.warn("[InboxWidget] load failed:", err); }
   }, []);
 
   useEffect(() => {

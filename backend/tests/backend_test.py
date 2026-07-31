@@ -172,3 +172,88 @@ class TestDevices:
                 "port": 8728, "connection": "public_ip", "location": "Central",
             })
             assert r.status_code == 200, r.text
+
+
+
+# ---------- Iteration 4: mikrotik-script / mikrotik-test / vpn-test ----------
+class TestMikrotikAndVpnEndpoints:
+    def _get_or_create_mikrotik(self, s):
+        r = s.get(f"{BASE_URL}/api/devices")
+        assert r.status_code == 200
+        mks = [d for d in r.json() if d.get("kind") == "mikrotik"]
+        if mks:
+            return mks[0]["id"]
+        r = s.post(f"{BASE_URL}/api/devices", json={
+            "name": "MK-Test-Iter4", "kind": "mikrotik", "host": "10.0.0.9",
+            "port": 8728, "connection": "public_ip", "location": "Test",
+            "vpn_protocol": "wireguard",
+        })
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    @pytest.mark.parametrize("proto", ["wireguard", "l2tp", "openvpn"])
+    def test_mikrotik_script_all_protocols(self, auth_session, proto):
+        dev_id = self._get_or_create_mikrotik(auth_session)
+        r = auth_session.post(f"{BASE_URL}/api/devices/{dev_id}/mikrotik-script",
+                              params={"protocol": proto})
+        assert r.status_code == 200, r.text
+        data = r.json()
+        for k in ("filename", "script", "steps", "protocol"):
+            assert k in data, f"missing key {k}"
+        assert data["protocol"] == proto
+        assert isinstance(data["steps"], list) and len(data["steps"]) > 0
+        assert isinstance(data["script"], str) and len(data["script"]) > 50
+        assert data["filename"].endswith(".rsc")
+        # protocol-specific content check
+        if proto == "wireguard":
+            assert "wireguard" in data["script"].lower()
+        elif proto == "l2tp":
+            assert "l2tp" in data["script"].lower()
+        else:
+            assert "ovpn" in data["script"].lower() or "openvpn" in data["script"].lower()
+
+    def test_mikrotik_test_endpoint(self, auth_session):
+        dev_id = self._get_or_create_mikrotik(auth_session)
+        r = auth_session.post(f"{BASE_URL}/api/devices/{dev_id}/mikrotik-test")
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "checks" in data and isinstance(data["checks"], list)
+        assert len(data["checks"]) >= 7, f"expected >=7 checks, got {len(data['checks'])}"
+        for c in data["checks"]:
+            assert set(c.keys()) >= {"name", "ok", "message", "fix"}
+        assert "traffic" in data and isinstance(data["traffic"], list)
+        assert len(data["traffic"]) == 30
+        for sample in data["traffic"]:
+            assert isinstance(sample["rx_kbps"], int)
+            assert isinstance(sample["tx_kbps"], int)
+        assert isinstance(data["reachable"], bool)
+        assert isinstance(data.get("message", ""), str)
+
+    def test_vpn_test_endpoint(self, auth_session):
+        # ensure at least one vpn_connection exists
+        r = auth_session.get(f"{BASE_URL}/api/vpn")
+        assert r.status_code == 200
+        vpns = r.json()
+        if not vpns:
+            r = auth_session.post(f"{BASE_URL}/api/vpn", json={
+                "name": "TEST_VPN_Iter4",
+                "protocol": "wireguard",
+                "remote_host": "127.0.0.1",
+                "remote_port": 51820,
+            })
+            assert r.status_code == 200, r.text
+            vpn_id = r.json()["id"]
+        else:
+            vpn_id = vpns[0]["id"]
+
+        r = auth_session.post(f"{BASE_URL}/api/vpn/{vpn_id}/test")
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "reachable" in data
+        assert "handshake" in data
+        assert "checked_at" in data
+        if data["reachable"] is True:
+            t = data.get("traffic")
+            assert t and isinstance(t, dict)
+            for k in ("rx_kbps", "tx_kbps", "packets_in", "packets_out"):
+                assert isinstance(t[k], int), f"{k} not int"

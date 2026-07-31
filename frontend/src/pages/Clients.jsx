@@ -92,7 +92,9 @@ function loadColsFromStorage() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) return new Set(parsed);
-  } catch {}
+  } catch (err) {
+    console.warn("[Clients] failed to parse column preferences:", err);
+  }
   return null;
 }
 

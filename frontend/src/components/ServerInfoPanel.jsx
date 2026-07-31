@@ -118,9 +118,9 @@ export default function ServerInfoPanel() {
           <ShieldCheck className="w-3.5 h-3.5" /> Pasos rápidos para sincronizar
         </div>
         <ol className="space-y-1.5 text-sm">
-          {CONN_STEPS.map((s, i) => (
-            <li key={i} className="flex gap-2">
-              <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs grid place-items-center flex-shrink-0 font-mono mt-0.5">{i + 1}</span>
+          {CONN_STEPS.map((s) => (
+            <li key={s} className="flex gap-2">
+              <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs grid place-items-center flex-shrink-0 font-mono mt-0.5">{CONN_STEPS.indexOf(s) + 1}</span>
               <span>{s}</span>
             </li>
           ))}

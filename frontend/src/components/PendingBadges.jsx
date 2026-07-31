@@ -31,8 +31,8 @@ export default function PendingBadges() {
         tasks: t.data.filter((x) => ["backlog", "today"].includes(x.stage)),
         suspended: c.data.filter((x) => x.status === "suspended"),
       });
-    } catch {
-      /* silently ignore; will retry on next tick */
+    } catch (err) {
+      console.warn("[PendingBadges] load failed, will retry:", err);
     }
   }, []);
 

@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 4 — Verification of Code Quality Report fix batch (mikrotik-script defensive init, secrets.SystemRandom in mikrotik-test / vpn/test, and multiple frontend useCallback / logging refactors). Backend: all 13 pytest tests pass (5 new tests added for mikrotik-script × 3 protocols, mikrotik-test, vpn/test). Frontend: login → /panel, /clientes, /usuarios (new-user), /mikrotik wizard + Probar diagnostic dialog all OK. Two regressions and one pre-existing gap uncovered: (1) Payments.jsx used useCallback WITHOUT importing it → PAGEERROR that broke /pagos entirely and also fired on any page that mounted the header (I applied the trivial one-line import fix and reverified); (2) ServerInfoPanel is defined and updated but NEVER imported/rendered on the Mikrotik page (grep shows zero import sites) — the review request explicitly expects copy-public_ip etc. buttons visible on /mikrotik, currently absent; (3) 'Editar usuario' dialog does not pre-fill the existing user's name/phone/role fields (dialog opens with empty inputs) — likely a FormDialog initial-state issue that is orthogonal to the useCallback refactor but still fails the review requirement 'edit dialog with pre-filled name'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Payments.jsx", "issue": "Missing `useCallback` import — page threw runtime 'useCallback is not defined' and /pagos rendered blank; also polluted /panel with the same error via header widgets. Fixed by testing agent (added useCallback to the react import).", "selector": "/pagos", "priority": "HIGH"},
+      {"component": "Mikrotik page (Mikrotik.jsx)", "issue": "ServerInfoPanel component is not imported/rendered anywhere. `grep -rn ServerInfoPanel /app/frontend/src` shows only the component definition. Consequently there are 0 [data-testid^='copy-'] buttons on /mikrotik and no 'Datos del servidor' section, contradicting review requirement 'shows the ServerInfoPanel with copy buttons (copy-public_ip etc.)'.", "selector": "/mikrotik", "priority": "HIGH"},
+      {"component": "Users.jsx (Editar usuario dialog)", "issue": "Opening edit dialog via [data-testid^='edit-user-'] shows empty Nombre / Teléfono inputs and role forced to 'Técnico' even when editing the owner 'Benja'. `initial={editing || ...}` prop is passed but FormDialog does not seem to reset its internal form state when `initial` changes across openings.", "selector": "[data-testid^='edit-user-']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Header / PendingBadges", "issues": ["Repeated React console warning 'A props object containing a key prop is being spread into JSX' emitted by PendingSection — key must be passed directly, not spread. Non-blocking but noisy."]},
+      {"screen": "/mapa", "issues": ["(Pre-existing from iteration 3) Stadia tiles 401 — unrelated to this batch."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Import and render <ServerInfoPanel /> on /app/frontend/src/pages/Mikrotik.jsx (e.g. above or below the table) so the copy-* testids exist as the review request expects.",
+    "Fix FormDialog / Users edit flow so opening the edit dialog pre-fills name, phone, role from the selected user (likely need to reset internal state when `initial`/`open` changes).",
+    "Fix PendingSection JSX to pass `key` directly instead of spreading it inside props (React 19+ warning).",
+    "Confirm the useCallback-import fix I applied to Payments.jsx is acceptable; consider a lint rule (eslint react-hooks + no-undef) to catch these missing imports going forward."
+  ],
+  "critical_code_review_comments": [
+    "The Code Quality batch added `const load = useCallback(...)` in Payments.jsx without adding useCallback to the React import — this is a hard runtime error, not a warning. A lint pass or `yarn build` would have caught it before landing.",
+    "ServerInfoPanel refactor (steps use string key) is a dead-code change until the panel is actually mounted somewhere. Verify it's wired into the Mikrotik page (or Config) before shipping.",
+    "server.py mikrotik_script defensive init of filename/script/steps is correct — all three protocols return non-empty script + steps + protocol keys (verified via parametrized pytest)."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Payments.jsx (added useCallback to React import to unblock /pagos)",
+    "/app/backend/tests/backend_test.py (added TestMikrotikAndVpnEndpoints class covering the 3 endpoints under review)"
+  ],
+  "success_rate": {"backend": "100% (13/13 pytest)", "frontend": "75% (7/10 review points; ServerInfoPanel missing, edit-user prefill broken, Payments regression required test-agent hotfix)"},
+  "seed_data_creation": "None new. Reused existing devices (jupiter2, MK-Prueba-Wizard, MK-Central, MK1) and clients. Iteration 3 TEST_NAP_Z NAP still present.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "Backend endpoints for mikrotik-script (all 3 protocols), mikrotik-test (30 samples, ≥7 checks, int rx/tx), and vpn/{id}/test are fully verified via /app/backend/tests/backend_test.py TestMikrotikAndVpnEndpoints. On the frontend, after Payments.jsx useCallback import was added, the /pagos page, tabs (3 present), payments-search filter, and ?client=<id> preselect dialog all work. Still open: (a) ServerInfoPanel not mounted on /mikrotik — copy-* testids absent, (b) Editar usuario dialog doesn't pre-fill fields, (c) PendingSection key-spread warning. Header pending-trigger and inbox-trigger popovers open cleanly. Panel de control shows Ingresos/Pagos labels and 33 SVGs (charts + icons).",
+  "rca_of_the_issue": "Payments.jsx: refactor to `const load = useCallback(async () => {...}, [])` was added but the top-level `import { useEffect, useMemo, useState } from 'react'` was not updated. As soon as Payments.jsx module executed (Payments page or any page that imports it via router/lazy) `useCallback` was undefined, producing PAGEERROR 'useCallback is not defined' and crashing the component render. Users.jsx correctly added useCallback to its import; Payments.jsx did not. One-line fix: add useCallback to the React import."
+}
