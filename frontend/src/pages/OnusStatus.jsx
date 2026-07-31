@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Wifi, WifiOff, AlertTriangle, ArrowUpAZ, ArrowDownAZ, Clock, RefreshCw, MessageCircle, ChevronsUp, Waypoints,
+  Gauge, ArrowDownToLine, ArrowUpFromLine,
 } from "lucide-react";
 
 const fmtDuration = (mins) => {
@@ -31,7 +32,11 @@ const SORT_OPTS = [
   { v: "ip_desc", label: "IP descendente" },
 ];
 
-const ipToNumber = (ip) => (ip || "").split(".").reduce((a, o) => a * 256 + Number(o || 0), 0);
+const powerTone = (dbm) => {
+  if (dbm >= -8 || dbm <= -27) return "text-red-400";
+  if (dbm > -12 || dbm < -25) return "text-amber-300";
+  return "text-emerald-300";
+};
 
 export default function OnusStatus() {
   const [data, setData] = useState({ onus: [], totals: { total: 0, online: 0, offline: 0, alarms: 0, checked_at: "" } });
@@ -134,6 +139,11 @@ export default function OnusStatus() {
                   <span className="text-red-400 font-mono">{fmtDuration(o.duration_minutes)}</span>
                   <span className="text-muted-foreground">sin conexión</span>
                 </div>
+                <div className="mt-1 text-[10px] font-mono flex gap-2 flex-wrap">
+                  <span className={powerTone(o.power_dbm)}>{o.power_dbm} dBm</span>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="text-muted-foreground">RX {o.rx_mbps} Mb · TX {o.tx_mbps} Mb</span>
+                </div>
                 <div className="mt-2 flex gap-1">
                   <Button size="sm" variant="outline" className="h-6 text-xs px-2"
                     onClick={() => nav(`/whatsapp?client=${o.client_id}`)}>
@@ -209,6 +219,26 @@ export default function OnusStatus() {
                   <span className="text-muted-foreground">
                     {o.online ? "conectada" : "sin conexión"}
                   </span>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-1 text-[11px] font-mono">
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground text-[10px] uppercase tracking-wider flex items-center gap-1">
+                      <Gauge className="w-3 h-3" /> Pot
+                    </span>
+                    <span className={powerTone(o.power_dbm)}>{o.power_dbm ?? "—"} dBm</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground text-[10px] uppercase tracking-wider flex items-center gap-1">
+                      <ArrowDownToLine className="w-3 h-3" /> RX
+                    </span>
+                    <span className={o.online ? "text-sky-300" : "text-muted-foreground"}>{o.rx_mbps ?? 0} Mb</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground text-[10px] uppercase tracking-wider flex items-center gap-1">
+                      <ArrowUpFromLine className="w-3 h-3" /> TX
+                    </span>
+                    <span className={o.online ? "text-indigo-300" : "text-muted-foreground"}>{o.tx_mbps ?? 0} Mb</span>
+                  </div>
                 </div>
                 <div className="mt-2 text-[10px] font-mono text-muted-foreground truncate">
                   Servidor: {o.mikrotik_server}

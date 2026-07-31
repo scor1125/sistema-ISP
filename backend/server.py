@@ -1200,6 +1200,14 @@ async def onus_status(_: dict = Depends(get_current_user)):
         duration_minutes = base_min + (now_ts // 60) % 240
         alarm = (not online) and duration_minutes > 60
         started = (now - timedelta(minutes=duration_minutes)).isoformat()
+        # deterministic ONU metrics (same formula as /api/onus)
+        power_dbm = round(-28.5 + (h[4] / 255.0) * 16.5, 2)  # -28.5 .. -12.0
+        rx_mbps = round(1 + (h[5] / 255.0) * 89, 1)          # 1 .. 90 Mbps (descarga)
+        tx_mbps = round(0.2 + (h[6] / 255.0) * 11.8, 1)      # 0.2 .. 12 Mbps (subida)
+        # zero out live bandwidth when offline so the card reflects reality
+        if not online:
+            rx_mbps = 0
+            tx_mbps = 0
         out.append({
             "client_id": c["id"],
             "full_name": c["full_name"],
@@ -1212,6 +1220,9 @@ async def onus_status(_: dict = Depends(get_current_user)):
             "duration_minutes": duration_minutes,
             "alarm": alarm,
             "client_status": c.get("status") or "active",
+            "power_dbm": power_dbm,
+            "rx_mbps": rx_mbps,
+            "tx_mbps": tx_mbps,
         })
         if online: online_count += 1
         else: offline_count += 1
