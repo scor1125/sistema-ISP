@@ -1,0 +1,8 @@
+crons:
+  - name: suspend-overdue
+    description: "Suspende automáticamente los clientes cuya fecha de pago (next_due_date) ya venció, todos los días a las 09:00 UTC."
+    cron: "0 9 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/suspend-overdue"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

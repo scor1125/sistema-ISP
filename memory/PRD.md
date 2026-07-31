@@ -23,35 +23,34 @@ CRM para negocio ISP tipo Wispro: dashboard, clientes con fecha de pago flexible
 - Mongo con `id` UUID string (sin ObjectId leak).
 
 ## What's been implemented (2026-02)
+- **Sidebar reagrupado** en 3 secciones: Operación (Panel de control, Clientes, Pagos, Promesas, Arqueo, WhatsApp), Red (Planes, Extras, Mapa, OLT/ONUs, ONUs Online/Offline, Mikrotik), Sistema (Tareas, Usuarios, Configuración).
+- **Auto-billing cron**: `POST /api/cron/suspend-overdue` autenticado con `WEBHOOK_CRON_SECRET`, corre cada día a las 09:00 UTC via `.emergent/crons.yml`, suspende clientes con `next_due_date` vencido, historial en `GET /api/cron/runs`.
+- **Módulo ONUs Online/Offline** (/onus): diagrama de tarjetas con potencia dBm, RX/TX Mb, tiempo de conexión, feed de alarmas > 60min, ordenamiento por estado/nombre/IP/tiempo, auto-refresh 20s.
+- **Módulo Arqueo de caja**: filtros por rango/mes/cobrador/método, selección múltiple con total en vivo, historial con detalle expandible.
+- **Módulo Mikrotik rediseñado**: dropdown "+ Nuevo Mikrotik" con opción "VPN/Túnel" → wizard con selector WireGuard/L2TP, credenciales VPN + API autogeneradas, checkboxes PPP/Queues, script RouterOS en vivo (copiar/descargar .rsc).
+- **Diagnóstico Mikrotik** ("Probar" por router): checklist 8 items con TCP real + tráfico simulado (AreaChart) y auto-refresh 4s.
+- **Datos del servidor CRM** (ServerInfoPanel): IP pública, puertos WG/L2TP/OpenVPN, Public Key, red del túnel con botones copiar + editar en `/api/vpn/server-info`.
 - Login + AuthContext + rutas protegidas. Branding **CRM Jupiter** (gradiente ámbar→rosa) en login y sidebar. Footer "Creado por EnlaceHR".
-- Layout con sidebar (15 módulos) y header sticky glass.
-- Dashboard con 8 KPIs y 2 charts (línea de crecimiento, distribución de estados).
-- **Panel de control** con KPIs financieros, 12 meses de ingresos, últimos pagos y dispositivos online.
-- **Arqueo de caja**: filtros por rango/mes/cobrador/método, selección múltiple de pagos, total en vivo, confirmación con notas y pestaña Historial (fecha, hora, responsable, detalle).
-- **Script vinculación Mikrotik**: botón por router genera .rsc listo para pegar (WireGuard/L2TP/OpenVPN) con pasos numerados, copiar y descargar.
-- **Buscador en todas las listas** (Planes, Extras, Usuarios, Pagos, Tareas, Desconectados, OLT, Mikrotik, NAPs, WhatsApp, Clientes).
-- **CRUD completo**: Users con edit + reset password, NAP boxes con edit/delete en tarjeta, Clients, Plans, Payments, Leads, Extras, Tasks, Devices, VPN.
-- Ciclo de pago: `payment_day` configurable por cliente; al registrar pago se avanza `next_due_date` y se reactiva al cliente.
-- Promesas de pago: no avanzan la fecha.
-- Validación de capacidad NAP (bloquea añadir si está llena).
-- Panel OLT/ONUs con datos derivados (potencia dBm, RX/TX, IP) por cliente + umbrales configurables.
-- Panel Mikrotik con sesiones vinculadas y días restantes de servicio.
+- Buscador universal en las 11 listas (Planes, Extras, Usuarios, Pagos, Tareas, OLT, Mikrotik, NAPs, WhatsApp, Clientes, Leads).
+- CRUD completo: Users con edit + reset password, NAP boxes con edit/delete, Payments con PATCH whitelisted, Tasks con edit + detalle, Promises con edit.
+- Panel de control con KPIs financieros, 12 meses de ingresos, últimos pagos y dispositivos online.
+- Panel OLT/ONUs con datos derivados (potencia dBm, RX/TX, IP) + umbrales configurables.
 - Mapa NAP interactivo (leaflet dark tiles) con markers de cajas y clientes coloreados por estado.
 - WhatsApp: bandeja bidireccional simulada + endpoint `/simulate-incoming` + buscador de conversaciones.
-- Desconectados: lista + botón directo a chat WhatsApp del cliente.
-- Tareas: Kanban 4 stages con drag por botones + buscador.
+- Tareas: Kanban 4 stages con drag por botones + buscador + detalle modal.
 - Configuración del negocio: nombre, RFC, moneda, logo, umbrales ONU, minutos para alerta.
 - Seed automático del admin owner benjahr1993@gmail.com.
 - ThemePicker con wallpapers, gradientes y combos.
 - Detalle cliente en drawer con tráfico en vivo (recharts) y datos ONU.
-- VPN Panel con generador de perfiles WireGuard/OpenVPN descargables.
+- VPN Panel con generador de perfiles WireGuard/OpenVPN descargables + test real TCP + reconfiguración.
 
 ## Backlog (P1/P2)
 - Integración real Mikrotik/OLT (SNMP/API) — P1
-- Facturación automática y suspensiones por cron — P1
 - Integración real WhatsApp/Telegram (Meta Cloud / Bot API) — P2
 - Export PDF de arqueo con firma — P2
 - Bloqueo de pagos ya incluidos en un arqueo — P2
+- Historic uptime graph 24h por ONU — P2
+- Sidebar labels en tooltip cuando está colapsado — P3
 
 ## Backlog (P0)
 - Integración Stripe (checkout + webhook para pagos por transferencia/tarjeta que activen cliente automáticamente).

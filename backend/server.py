@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import asyncio
 import logging
 import uuid
 import jwt
@@ -1239,6 +1240,63 @@ async def onus_status(_: dict = Depends(get_current_user)):
     }
 
 # ---------- Startup ----------
+async def _run_suspend_overdue(run_id: str):
+    """Background worker that suspends clients whose next_due_date has passed.
+
+    Idempotent: keeps a record in db.cron_runs keyed by run_id so retries of
+    the same webhook delivery don't double-suspend or double-log.
+    """
+    existing = await db.cron_runs.find_one({"run_id": run_id})
+    if existing:
+        return
+    now = datetime.now(timezone.utc)
+    cursor = db.clients.find(
+        {"status": {"$in": ["active", "new"]}, "next_due_date": {"$lt": now.isoformat(), "$ne": None}},
+        {"_id": 0, "id": 1, "full_name": 1, "next_due_date": 1},
+    )
+    to_suspend = await cursor.to_list(10000)
+    if to_suspend:
+        ids = [c["id"] for c in to_suspend]
+        await db.clients.update_many(
+            {"id": {"$in": ids}},
+            {"$set": {"status": "suspended", "updated_at": now.isoformat(),
+                      "suspended_at": now.isoformat(), "suspended_reason": "billing_overdue"}}
+        )
+    await db.cron_runs.insert_one({
+        "run_id": run_id,
+        "job": "suspend-overdue",
+        "started_at": now.isoformat(),
+        "suspended_count": len(to_suspend),
+        "sample": [c["full_name"] for c in to_suspend[:10]],
+    })
+    logger.info("[cron] suspend-overdue run_id=%s suspended=%d", run_id, len(to_suspend))
+
+@api.post("/cron/suspend-overdue")
+async def cron_suspend_overdue(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    import hmac
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:] if auth.lower().startswith("bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(401, "Unauthorized cron webhook")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    run_id = request.headers.get("x-webhook-id") or body.get("run_id") or new_id()
+    asyncio.create_task(_run_suspend_overdue(run_id))
+    return {"ok": True, "queued_run_id": run_id}
+
+@api.get("/cron/runs")
+async def list_cron_runs(_: dict = Depends(require_roles("owner","admin"))):
+    """Recent cron run history so the operator can see when auto-billing ran
+    and how many clients were suspended each time."""
+    items = await db.cron_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(50)
+    return items
+
+# ---------- Startup (seed) ----------
 async def seed():
     await db.users.create_index("email", unique=True)
     await db.clients.create_index("status")

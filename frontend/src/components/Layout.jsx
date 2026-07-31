@@ -19,21 +19,21 @@ import PendingBadges from "@/components/PendingBadges";
 import InboxWidget from "@/components/InboxWidget";
 
 const NAV = [
-  { to: "/panel", label: "Panel de control", icon: LayoutDashboard, group: "Menú" },
-  { to: "/clientes", label: "Clientes", icon: Users, group: "Menú" },
-  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú" },
-  { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Menú" },
-  { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Menú" },
-  { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Menú" },
-  { to: "/planes", label: "Planes", icon: PackagePlus, group: "Menú" },
-  { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Menú" },
-  { to: "/mapa", label: "Mapa de servicio", icon: MapIcon, group: "Menú" },
-  { to: "/olt", label: "OLT / ONUs", icon: Radio, group: "Menú" },
-  { to: "/onus", label: "ONUs Online/Offline", icon: Wifi, group: "Menú" },
-  { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Menú" },
-  { to: "/tareas", label: "Tareas", icon: ListTodo, group: "Menú" },
-  { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Menú" },
-  { to: "/configuracion", label: "Configuración", icon: Settings, group: "Menú" },
+  { to: "/panel", label: "Panel de control", icon: LayoutDashboard, group: "Operación" },
+  { to: "/clientes", label: "Clientes", icon: Users, group: "Operación" },
+  { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Operación" },
+  { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Operación" },
+  { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Operación" },
+  { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Operación" },
+  { to: "/planes", label: "Planes", icon: PackagePlus, group: "Red" },
+  { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Red" },
+  { to: "/mapa", label: "Mapa de servicio", icon: MapIcon, group: "Red" },
+  { to: "/olt", label: "OLT / ONUs", icon: Radio, group: "Red" },
+  { to: "/onus", label: "ONUs Online/Offline", icon: Wifi, group: "Red" },
+  { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Red" },
+  { to: "/tareas", label: "Tareas", icon: ListTodo, group: "Sistema" },
+  { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Sistema" },
+  { to: "/configuracion", label: "Configuración", icon: Settings, group: "Sistema" },
 ];
 
 const GROUPED_NAV = (() => {
