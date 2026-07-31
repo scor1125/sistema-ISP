@@ -909,6 +909,23 @@ async def bulk_delete_payments(payload: BulkDeleteIn, _: dict = Depends(require_
     res = await db.payments.delete_many({"id": {"$in": payload.ids}})
     return {"deleted": res.deleted_count}
 
+@api.patch("/payments/{pid}")
+async def update_payment(pid: str, payload: dict, _: dict = Depends(require_roles("owner","admin"))):
+    existing = await db.payments.find_one({"id": pid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Pago no encontrado")
+    # Only allow editing these fields; do NOT re-apply the next_due_date side
+    # effect from create — edits should not shift the client's billing cycle.
+    ALLOWED = {"amount", "method", "concept", "invoice_number", "is_promise",
+               "promise_date", "extension_days", "notes"}
+    changes = {k: v for k, v in (payload or {}).items() if k in ALLOWED}
+    if not changes:
+        return existing
+    changes["updated_at"] = now_iso()
+    await db.payments.update_one({"id": pid}, {"$set": changes})
+    updated = await db.payments.find_one({"id": pid}, {"_id": 0})
+    return updated
+
 @api.delete("/payments/{pid}")
 async def delete_payment(pid: str, _: dict = Depends(require_roles("owner","admin"))):
     await db.payments.delete_one({"id": pid})

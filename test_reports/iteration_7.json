@@ -1,0 +1,21 @@
+{
+  "summary": "Iteration 7 — PATCH /api/payments/{pid} fix VERIFIED end-to-end after backend supervisorctl restart. Backend: curl PATCH with {amount:999,concept:'Iter7 PATCH test'} returned HTTP 200 with the updated document (updated_at set, non-whitelisted fields like client_id/created_by preserved, _id excluded). Client c4532e33-94f3-47ed-a915-85e006ddc7e1 next_due_date=2026-09-01T00:00:00+00:00 both BEFORE and AFTER the PATCH — no side-effect regression. Added TestPaymentsPatch to /app/backend/tests/backend_test.py with 2 cases (whitelisted-fields update + persistence + next_due_date invariant, and 404 for unknown pid). Full pytest: 15/15 GREEN (was 13, now +2). Frontend: logged in as owner, /pagos edit-payment-<seed pid> opened prefilled dialog (amount=777 from prior curl PATCH), changed to 555, clicked form-submit → toast 'Pago actualizado' shown and row containing 555 present without reload. /promesas: 2 edit-promise buttons found, opened first (prefill amount 200), submitted change → toast 'Promesa actualizada' shown. /tareas loaded without JS pageerrors. 3 benign 401 console entries observed pre-login on /api/auth/me (normal for unauthenticated bootstrap); zero pageerrors on /pagos, /promesas, /tareas.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PATCH handler correctly whitelists fields and preserves next_due_date. Consider replacing raw `payload: dict` with a Pydantic model for validation (currently accepts any types for amount/method); low priority."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (15/15 pytest, incl. 2 new PATCH cases)", "frontend": "100% (both edit flows + regression)"},
+  "seed_data_creation": "None new. Used seed payment id=bbffc0d0-5bd0-4b57-b41d-bf18f5e76f0f (client c4532e33-94f3-47ed-a915-85e006ddc7e1). Payment amount now 555 after UI test (started 350 → 999 via curl → 777 via prior test → 555 via UI). Prefer restoring to 350 if a canonical seed value is required, but this is not a blocker.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "PATCH /api/payments/{pid} endpoint is fully working. Seed payment bbffc0d0-... amount currently mutated to 555 by UI test — if a canonical value is desired, reset via PATCH. All 15 backend tests plus both UI edit flows verified green.",
+  "rca_of_the_issue": "Iteration 6's 405 was caused by supervisor hot-reload not picking up the new PATCH route on server.py. Explicit `supervisorctl restart backend` picked up the handler at server.py:912. Verified with live curl (200 OK, correct payload, next_due_date invariant) and via UI on /pagos and /promesas."
+}

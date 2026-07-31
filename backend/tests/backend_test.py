@@ -175,6 +175,60 @@ class TestDevices:
 
 
 
+# ---------- Iteration 7: PATCH /payments/{pid} ----------
+class TestPaymentsPatch:
+    SEED_PID = "bbffc0d0-5bd0-4b57-b41d-bf18f5e76f0f"
+    SEED_CID = "c4532e33-94f3-47ed-a915-85e006ddc7e1"
+
+    def _get_client_next_due(self, s, cid):
+        r = s.get(f"{BASE_URL}/api/clients")
+        assert r.status_code == 200
+        found = [c for c in r.json() if c["id"] == cid]
+        assert found, f"client {cid} not found"
+        return found[0].get("next_due_date")
+
+    def test_patch_payment_updates_whitelisted_fields(self, auth_session):
+        # capture next_due_date before
+        before = self._get_client_next_due(auth_session, self.SEED_CID)
+
+        payload = {
+            "amount": 777,
+            "concept": "TEST_iter7_patch",
+            "method": "transfer",
+            "notes": "patched",
+            # non-whitelisted must be ignored
+            "client_id": "SHOULD_BE_IGNORED",
+            "created_by": "SHOULD_BE_IGNORED",
+        }
+        r = auth_session.patch(f"{BASE_URL}/api/payments/{self.SEED_PID}", json=payload)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["amount"] == 777
+        assert data["concept"] == "TEST_iter7_patch"
+        assert data["method"] == "transfer"
+        assert data["notes"] == "patched"
+        # non-whitelisted preserved
+        assert data["client_id"] == self.SEED_CID
+        assert "_id" not in data
+        assert "updated_at" in data
+
+        # verify persistence via GET
+        r2 = auth_session.get(f"{BASE_URL}/api/payments")
+        assert r2.status_code == 200
+        found = [p for p in r2.json() if p["id"] == self.SEED_PID]
+        assert found and found[0]["amount"] == 777
+        assert found[0]["concept"] == "TEST_iter7_patch"
+
+        # next_due_date unchanged
+        after = self._get_client_next_due(auth_session, self.SEED_CID)
+        assert after == before, f"next_due_date changed: {before} -> {after}"
+
+    def test_patch_payment_404_for_unknown(self, auth_session):
+        r = auth_session.patch(f"{BASE_URL}/api/payments/nonexistent-id-xxx",
+                               json={"amount": 1})
+        assert r.status_code == 404
+
+
 # ---------- Iteration 4: mikrotik-script / mikrotik-test / vpn-test ----------
 class TestMikrotikAndVpnEndpoints:
     def _get_or_create_mikrotik(self, s):
