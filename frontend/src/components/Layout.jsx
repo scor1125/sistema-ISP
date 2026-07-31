@@ -226,6 +226,7 @@ export default function Layout() {
                     }
                   >
                     <Icon className="w-4 h-4 shrink-0" />
+                    {!collapsed && <span className="truncate">{label}</span>}
                   </NavLink>
                   {!collapsed && children?.map((sub) => (
                     <NavLink

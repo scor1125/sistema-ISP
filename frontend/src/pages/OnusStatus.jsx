@@ -38,6 +38,8 @@ const powerTone = (dbm) => {
   return "text-emerald-300";
 };
 
+const ipToNumber = (ip) => (ip || "").split(".").reduce((a, o) => a * 256 + Number(o || 0), 0);
+
 export default function OnusStatus() {
   const [data, setData] = useState({ onus: [], totals: { total: 0, online: 0, offline: 0, alarms: 0, checked_at: "" } });
   const [q, setQ] = useState("");
