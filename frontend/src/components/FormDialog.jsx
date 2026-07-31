@@ -187,14 +187,14 @@ function SuggestionChips({ suggestions, selected, onPick, testId }) {
   const items = filter
     ? suggestions.filter((s) => String(s).toLowerCase().includes(filter.toLowerCase()))
     : suggestions;
-  const initial = 12;
+  const initial = 8;
   const visible = expanded ? items : items.slice(0, initial);
   const remaining = items.length - visible.length;
   const cleanSel = String(selected || "").trim();
 
   return (
-    <div className="mt-2 rounded-md border border-border bg-card/30 p-2 space-y-2" data-testid={`${testId}-panel`}>
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+    <div className="mt-2 rounded-md border border-border bg-card/40 overflow-hidden" data-testid={`${testId}-panel`}>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/20 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
         <span>Disponibles</span>
         <span className="font-mono text-primary">{items.length}</span>
         <span className="text-muted-foreground">/ {suggestions.length}</span>
@@ -206,47 +206,54 @@ function SuggestionChips({ suggestions, selected, onPick, testId }) {
           data-testid={`${testId}-filter`}
         />
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <ul className="max-h-64 overflow-y-auto divide-y divide-border/60" data-testid={`${testId}-list`}>
         {visible.length === 0 && (
-          <span className="text-xs text-muted-foreground italic">Sin coincidencias.</span>
+          <li className="px-3 py-2 text-xs text-muted-foreground italic">Sin coincidencias.</li>
         )}
         {visible.map((s) => {
           const isSel = String(s) === cleanSel;
           return (
-            <button
-              key={s}
-              type="button"
-              onClick={() => onPick(s)}
-              data-testid={`${testId}-${s}`}
-              className={`h-7 px-2.5 rounded-full text-xs font-mono transition-all border ${
-                isSel
-                  ? "bg-primary text-primary-foreground border-primary shadow-[0_0_12px_rgba(251,146,60,0.35)]"
-                  : "bg-secondary/40 border-border text-foreground/80 hover:bg-primary/15 hover:text-primary hover:border-primary/50 hover:-translate-y-0.5"
-              }`}
-            >
-              {s}
-            </button>
+            <li key={s}>
+              <button
+                type="button"
+                onClick={() => onPick(s)}
+                data-testid={`${testId}-${s}`}
+                className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors flex items-center gap-2 ${
+                  isSel
+                    ? "bg-primary/15 text-primary border-l-2 border-primary"
+                    : "border-l-2 border-transparent hover:bg-accent/40 hover:border-primary/40"
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-primary shadow-[0_0_6px_rgba(251,146,60,0.7)]" : "bg-emerald-400/70"}`} />
+                <span className="flex-1 truncate">{s}</span>
+                {isSel && <span className="text-[10px] uppercase tracking-widest text-primary">seleccionada</span>}
+              </button>
+            </li>
           );
         })}
-      </div>
-      {remaining > 0 && (
-        <button
-          type="button"
-          className="text-[11px] text-primary hover:underline font-mono"
-          onClick={() => setExpanded(true)}
-          data-testid={`${testId}-expand`}
-        >
-          Ver {remaining} más…
-        </button>
-      )}
-      {expanded && suggestions.length > initial && (
-        <button
-          type="button"
-          className="text-[11px] text-muted-foreground hover:underline font-mono ml-3"
-          onClick={() => setExpanded(false)}
-        >
-          Contraer
-        </button>
+      </ul>
+      {(remaining > 0 || (expanded && suggestions.length > initial)) && (
+        <div className="px-3 py-2 border-t border-border bg-muted/10 flex items-center gap-3">
+          {remaining > 0 && (
+            <button
+              type="button"
+              className="text-[11px] text-primary hover:underline font-mono"
+              onClick={() => setExpanded(true)}
+              data-testid={`${testId}-expand`}
+            >
+              Ver {remaining} más…
+            </button>
+          )}
+          {expanded && suggestions.length > initial && (
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground hover:underline font-mono"
+              onClick={() => setExpanded(false)}
+            >
+              Contraer
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
