@@ -140,6 +140,7 @@ class ClientIn(BaseModel):
     onu_serial: Optional[str] = ""
     ip_address: Optional[str] = ""
     mikrotik_server: Optional[str] = ""
+    mikrotik_interface: Optional[str] = ""
     wifi_ssid: Optional[str] = ""
     wifi_password: Optional[str] = ""
     tag: Optional[str] = ""
@@ -162,6 +163,7 @@ class ClientUpdate(BaseModel):
     onu_serial: Optional[str] = None
     ip_address: Optional[str] = None
     mikrotik_server: Optional[str] = None
+    mikrotik_interface: Optional[str] = None
     wifi_ssid: Optional[str] = None
     wifi_password: Optional[str] = None
     tag: Optional[str] = None
@@ -249,6 +251,7 @@ class DeviceIn(BaseModel):
     api_user: Optional[str] = ""
     api_password: Optional[str] = ""
     management_modes: Optional[List[Literal["ppp","queues"]]] = []
+    interfaces: Optional[List[str]] = None  # e.g., ["ether1","bridge","pppoe-out1"]
 
 class VpnConnectionIn(BaseModel):
     name: str

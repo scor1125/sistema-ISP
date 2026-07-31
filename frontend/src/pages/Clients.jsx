@@ -251,6 +251,16 @@ export default function Clients() {
       options: mikrotiks.map((m) => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":" + m.port : ""} · ${m.connection}` })),
       hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
     },
+    { name: "mikrotik_interface", label: "Interfaz", type: "select",
+      options: (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        const list = (mk?.interfaces && mk.interfaces.length > 0)
+          ? mk.interfaces
+          : ["ether1","ether2","ether3","ether4","bridge","vlan-clientes","pppoe-out1","wg-crm"];
+        return list.map((i) => ({ value: i, label: i }));
+      },
+      hint: "Interfaz del Mikrotik donde está conectado este cliente.",
+    },
     { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
     { name: "wifi_password", label: "Contraseña del WiFi", placeholder: "Contraseña asignada" },
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v, i]) => ({ value: v, label: i.label })) },

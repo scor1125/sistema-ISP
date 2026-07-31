@@ -65,7 +65,7 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <div className={gridCls}>
               {fields.map((f) => (
-                <Field key={f.name} field={f} value={values[f.name] ?? ""} onChange={handleChange} />
+                <Field key={f.name} field={f} value={values[f.name] ?? ""} onChange={handleChange} values={values} />
               ))}
             </div>
           </div>
@@ -80,7 +80,7 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
   );
 }
 
-function Field({ field, value, onChange }) {
+function Field({ field, value, onChange, values }) {
   const key = `field-${field.name}`;
   // In full-width dialogs, the parent grid supplies the column count;
   // full-span fields still span all columns via `full: true`.
@@ -89,7 +89,7 @@ function Field({ field, value, onChange }) {
   return (
     <div className={wrapCls}>
       <Label htmlFor={key}>{field.label}</Label>
-      <FieldControl field={field} value={value} onChange={onChange} inputId={key} />
+      <FieldControl field={field} value={value} onChange={onChange} inputId={key} values={values} />
       {field.hint && (
         <div className="mt-1 text-[11px] text-muted-foreground font-mono">{field.hint}</div>
       )}
@@ -97,7 +97,7 @@ function Field({ field, value, onChange }) {
   );
 }
 
-function FieldControl({ field, value, onChange, inputId }) {
+function FieldControl({ field, value, onChange, inputId, values }) {
   const testId = `input-${field.name}`;
 
   if (field.type === "textarea") {
@@ -113,11 +113,12 @@ function FieldControl({ field, value, onChange, inputId }) {
   }
 
   if (field.type === "select") {
-    // Radix requires non-empty string values; guard defensively.
-    const safeOptions = (field.options || []).filter((o) => String(o.value ?? "") !== "");
+    // Options can be a static array OR a `(values) => array` callback so a
+    // field can depend on another field (e.g. `mikrotik_interface` reads the
+    // current `mikrotik_server`).
+    const rawOpts = typeof field.options === "function" ? field.options(values) : (field.options || []);
+    const safeOptions = rawOpts.filter((o) => String(o.value ?? "") !== "");
     const selectValue = value === "" || value == null ? undefined : String(value);
-    // Auto-upgrade to searchable combobox for long lists so 200+ clients / users
-    // stay usable with a live search input on top.
     if (safeOptions.length > 8 || field.searchable) {
       return (
         <SearchableSelect
@@ -152,7 +153,6 @@ function FieldControl({ field, value, onChange, inputId }) {
   }
 
   const hasSuggestions = field.suggestions && field.suggestions.length > 0;
-  const listId = hasSuggestions ? `${inputId}-list` : undefined;
 
   return (
     <>
@@ -161,7 +161,6 @@ function FieldControl({ field, value, onChange, inputId }) {
         data-testid={testId}
         type={field.type || "text"}
         value={value}
-        list={listId}
         onChange={(e) => {
           const raw = e.target.value;
           const next = field.type === "number" ? (raw === "" ? "" : Number(raw)) : raw;
@@ -171,12 +170,84 @@ function FieldControl({ field, value, onChange, inputId }) {
         required={field.required}
       />
       {hasSuggestions && (
-        <datalist id={listId}>
-          {field.suggestions.slice(0, 500).map((s) => (
-            <option key={s} value={s} />
-          ))}
-        </datalist>
+        <SuggestionChips
+          suggestions={field.suggestions}
+          selected={value}
+          onPick={(s) => onChange(field.name, s)}
+          testId={`${testId}-chip`}
+        />
       )}
     </>
+  );
+}
+
+function SuggestionChips({ suggestions, selected, onPick, testId }) {
+  const [expanded, setExpanded] = useState(false);
+  const [filter, setFilter] = useState("");
+  const items = filter
+    ? suggestions.filter((s) => String(s).toLowerCase().includes(filter.toLowerCase()))
+    : suggestions;
+  const initial = 12;
+  const visible = expanded ? items : items.slice(0, initial);
+  const remaining = items.length - visible.length;
+  const cleanSel = String(selected || "").trim();
+
+  return (
+    <div className="mt-2 rounded-md border border-border bg-card/30 p-2 space-y-2" data-testid={`${testId}-panel`}>
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+        <span>Disponibles</span>
+        <span className="font-mono text-primary">{items.length}</span>
+        <span className="text-muted-foreground">/ {suggestions.length}</span>
+        <input
+          className="ml-auto h-6 rounded bg-transparent border border-border px-2 text-xs font-mono w-32 focus:outline-none focus:ring-1 focus:ring-ring"
+          placeholder="filtrar…"
+          value={filter}
+          onChange={(e) => { setFilter(e.target.value); setExpanded(false); }}
+          data-testid={`${testId}-filter`}
+        />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {visible.length === 0 && (
+          <span className="text-xs text-muted-foreground italic">Sin coincidencias.</span>
+        )}
+        {visible.map((s) => {
+          const isSel = String(s) === cleanSel;
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => onPick(s)}
+              data-testid={`${testId}-${s}`}
+              className={`h-7 px-2.5 rounded-full text-xs font-mono transition-all border ${
+                isSel
+                  ? "bg-primary text-primary-foreground border-primary shadow-[0_0_12px_rgba(251,146,60,0.35)]"
+                  : "bg-secondary/40 border-border text-foreground/80 hover:bg-primary/15 hover:text-primary hover:border-primary/50 hover:-translate-y-0.5"
+              }`}
+            >
+              {s}
+            </button>
+          );
+        })}
+      </div>
+      {remaining > 0 && (
+        <button
+          type="button"
+          className="text-[11px] text-primary hover:underline font-mono"
+          onClick={() => setExpanded(true)}
+          data-testid={`${testId}-expand`}
+        >
+          Ver {remaining} más…
+        </button>
+      )}
+      {expanded && suggestions.length > initial && (
+        <button
+          type="button"
+          className="text-[11px] text-muted-foreground hover:underline font-mono ml-3"
+          onClick={() => setExpanded(false)}
+        >
+          Contraer
+        </button>
+      )}
+    </div>
   );
 }
