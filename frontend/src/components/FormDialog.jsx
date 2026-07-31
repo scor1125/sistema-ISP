@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/SearchableSelect";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 /**
@@ -115,6 +116,21 @@ function FieldControl({ field, value, onChange, inputId }) {
     // Radix requires non-empty string values; guard defensively.
     const safeOptions = (field.options || []).filter((o) => String(o.value ?? "") !== "");
     const selectValue = value === "" || value == null ? undefined : String(value);
+    // Auto-upgrade to searchable combobox for long lists so 200+ clients / users
+    // stay usable with a live search input on top.
+    if (safeOptions.length > 8 || field.searchable) {
+      return (
+        <SearchableSelect
+          testId={testId}
+          value={selectValue}
+          onValueChange={(v) => onChange(field.name, v)}
+          options={safeOptions}
+          placeholder={field.placeholder || "Seleccionar"}
+          searchPlaceholder={`Buscar ${(field.label || "").toLowerCase()}…`}
+          clearable={!field.required}
+        />
+      );
+    }
     return (
       <Select value={selectValue} onValueChange={(v) => onChange(field.name, v)}>
         <SelectTrigger data-testid={testId}>

@@ -11,6 +11,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import ThemePicker, { initThemeFromStorage } from "@/components/ThemePicker";
@@ -269,7 +272,7 @@ export default function Layout() {
               <InboxWidget />
               <div className="ml-auto flex items-center gap-2">
                 <ThemePicker />
-                <div className="flex items-center gap-2 pl-2 border-l border-border h-9">
+                <div className="flex items-center pl-2 border-l border-border h-9">
                   <input
                     ref={avatarFileRef}
                     type="file"
@@ -278,40 +281,56 @@ export default function Layout() {
                     onChange={(e) => uploadAvatar(e.target.files?.[0])}
                     data-testid="avatar-file-input"
                   />
-                  <button
-                    type="button"
-                    onClick={() => avatarFileRef.current?.click()}
-                    className="relative w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0 overflow-hidden group hover:ring-2 hover:ring-primary/50 transition"
-                    title="Cambiar foto de perfil"
-                    data-testid="avatar-upload"
-                  >
-                    {user?.avatar_url ? (
-                      <img src={user.avatar_url} alt={user.name} className="w-full h-full object-cover" data-testid="user-avatar" />
-                    ) : (
-                      <span>{user?.name?.[0]?.toUpperCase() || "U"}</span>
-                    )}
-                    <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 grid place-items-center transition-opacity">
-                      <Camera className="w-3.5 h-3.5 text-white" />
-                    </span>
-                    {uploadingAvatar && (
-                      <span className="absolute inset-0 bg-black/60 grid place-items-center text-[9px] text-white">…</span>
-                    )}
-                  </button>
-                  <div className="hidden md:block min-w-0">
-                    <div className="text-xs truncate max-w-[140px] font-medium leading-tight">{user?.name}</div>
-                    <Badge variant="outline" className="text-[9px] py-0 h-4 font-mono uppercase">
-                      {user?.role}
-                    </Badge>
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    data-testid="logout-btn"
-                    title="Cerrar sesión"
-                    onClick={async () => { await logout(); navigate("/login"); }}
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex items-center gap-2 rounded-md pl-1 pr-2 h-8 hover:bg-accent transition-colors focus:outline-none focus:ring-1 focus:ring-ring"
+                        title="Cuenta"
+                        data-testid="user-menu-trigger"
+                      >
+                        <span className="relative w-7 h-7 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0 overflow-hidden">
+                          {user?.avatar_url ? (
+                            <img src={user.avatar_url} alt={user.name} className="w-full h-full object-cover" data-testid="user-avatar" />
+                          ) : (
+                            <span>{user?.name?.[0]?.toUpperCase() || "U"}</span>
+                          )}
+                          {uploadingAvatar && (
+                            <span className="absolute inset-0 bg-black/60 grid place-items-center text-[9px] text-white">…</span>
+                          )}
+                        </span>
+                        <div className="hidden md:flex flex-col items-start leading-tight">
+                          <span className="text-xs truncate max-w-[120px] font-medium">{user?.name}</span>
+                          <Badge variant="outline" className="text-[9px] py-0 h-4 font-mono uppercase">{user?.role}</Badge>
+                        </div>
+                        <ChevronDown className="w-3 h-3 opacity-60 hidden md:block" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuLabel className="flex items-center gap-2">
+                        <span className="w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0 overflow-hidden">
+                          {user?.avatar_url ? <img src={user.avatar_url} alt="" className="w-full h-full object-cover" /> : (user?.name?.[0]?.toUpperCase() || "U")}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-sm truncate">{user?.name}</div>
+                          <div className="text-[10px] text-muted-foreground truncate">{user?.email}</div>
+                        </div>
+                      </DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => avatarFileRef.current?.click()} data-testid="menu-change-avatar">
+                        <Camera className="w-4 h-4 mr-2" /> Cambiar foto
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => navigate("/configuracion")}>
+                        <Settings className="w-4 h-4 mr-2" /> Configuración
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={async () => { await logout(); navigate("/login"); }}
+                        className="text-destructive focus:text-destructive"
+                        data-testid="logout-btn">
+                        <LogOut className="w-4 h-4 mr-2" /> Cerrar sesión
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
             </>
