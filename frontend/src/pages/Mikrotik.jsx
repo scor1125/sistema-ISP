@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import MikrotikTestDialog from "@/components/MikrotikTestDialog";
+import ServerInfoPanel from "@/components/ServerInfoPanel";
 
 const rand = (n = 10) => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -376,6 +377,8 @@ export default function Mikrotik() {
 
       <SearchBar value={q} onChange={setQ} placeholder="Buscar Mikrotik por nombre, protocolo o modo…"
         hint={`${filtered.length} / ${devices.length}`} testId="mk-search" />
+
+      <ServerInfoPanel />
 
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>

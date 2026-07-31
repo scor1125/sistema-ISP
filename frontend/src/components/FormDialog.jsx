@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,13 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLabel = "Guardar", open, onOpenChange, size = "lg" }) {
   const [values, setValues] = useState(initial || {});
   const [loading, setLoading] = useState(false);
+
+  // Reset internal state whenever the dialog is (re)opened with a new
+  // `initial` object — critical for edit dialogs so the fields prefill with
+  // the record being edited instead of the previous one.
+  useEffect(() => {
+    if (open) setValues(initial || {});
+  }, [open, initial]);
 
   const isOpen = open !== undefined ? open : undefined;
 

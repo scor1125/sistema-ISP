@@ -87,9 +87,10 @@ export default function PendingBadges() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {sections.map((s) => (
-            <PendingSection key={s.key} {...s} />
-          ))}
+          {sections.map((s) => {
+            const { key, ...rest } = s;
+            return <PendingSection key={key} {...rest} />;
+          })}
           {total === 0 && (
             <div className="p-6 text-xs text-muted-foreground text-center">
               No hay pendientes. Buen trabajo.
