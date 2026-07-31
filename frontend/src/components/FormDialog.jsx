@@ -4,8 +4,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchableSelect } from "@/components/SearchableSelect";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ChevronDown } from "lucide-react";
 
 /**
  * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,hint?,suggestions?}]
@@ -154,107 +156,122 @@ function FieldControl({ field, value, onChange, inputId, values }) {
 
   const hasSuggestions = field.suggestions && field.suggestions.length > 0;
 
-  return (
-    <>
-      <Input
-        id={inputId}
-        data-testid={testId}
-        type={field.type || "text"}
+  if (hasSuggestions) {
+    return (
+      <SuggestionInputDropdown
+        inputId={inputId}
+        testId={testId}
+        field={field}
         value={value}
-        onChange={(e) => {
-          const raw = e.target.value;
-          const next = field.type === "number" ? (raw === "" ? "" : Number(raw)) : raw;
-          onChange(field.name, next);
-        }}
-        placeholder={field.placeholder}
-        required={field.required}
+        onChange={onChange}
       />
-      {hasSuggestions && (
-        <SuggestionChips
-          suggestions={field.suggestions}
-          selected={value}
-          onPick={(s) => onChange(field.name, s)}
-          testId={`${testId}-chip`}
-        />
-      )}
-    </>
+    );
+  }
+
+  return (
+    <Input
+      id={inputId}
+      data-testid={testId}
+      type={field.type || "text"}
+      value={value}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const next = field.type === "number" ? (raw === "" ? "" : Number(raw)) : raw;
+        onChange(field.name, next);
+      }}
+      placeholder={field.placeholder}
+      required={field.required}
+    />
   );
 }
 
-function SuggestionChips({ suggestions, selected, onPick, testId }) {
-  const [expanded, setExpanded] = useState(false);
+function SuggestionInputDropdown({ inputId, testId, field, value, onChange }) {
+  const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const suggestions = field.suggestions || [];
   const items = filter
     ? suggestions.filter((s) => String(s).toLowerCase().includes(filter.toLowerCase()))
     : suggestions;
-  const initial = 8;
-  const visible = expanded ? items : items.slice(0, initial);
-  const remaining = items.length - visible.length;
-  const cleanSel = String(selected || "").trim();
+  const cleanSel = String(value || "").trim();
 
   return (
-    <div className="mt-2 rounded-md border border-border bg-card/40 overflow-hidden" data-testid={`${testId}-panel`}>
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/20 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
-        <span>Disponibles</span>
-        <span className="font-mono text-primary">{items.length}</span>
-        <span className="text-muted-foreground">/ {suggestions.length}</span>
-        <input
-          className="ml-auto h-6 rounded bg-transparent border border-border px-2 text-xs font-mono w-32 focus:outline-none focus:ring-1 focus:ring-ring"
-          placeholder="filtrar…"
-          value={filter}
-          onChange={(e) => { setFilter(e.target.value); setExpanded(false); }}
-          data-testid={`${testId}-filter`}
+    <Popover open={open} onOpenChange={setOpen}>
+      <div className="relative">
+        <Input
+          id={inputId}
+          data-testid={testId}
+          type={field.type || "text"}
+          value={value}
+          onChange={(e) => onChange(field.name, e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder={field.placeholder}
+          required={field.required}
+          className="pr-9"
+          autoComplete="off"
         />
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-md hover:bg-accent text-muted-foreground"
+            title="Ver disponibles"
+            data-testid={`${testId}-toggle`}
+            onClick={() => setOpen((o) => !o)}
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`} />
+          </button>
+        </PopoverTrigger>
       </div>
-      <ul className="max-h-64 overflow-y-auto divide-y divide-border/60" data-testid={`${testId}-list`}>
-        {visible.length === 0 && (
-          <li className="px-3 py-2 text-xs text-muted-foreground italic">Sin coincidencias.</li>
-        )}
-        {visible.map((s) => {
-          const isSel = String(s) === cleanSel;
-          return (
-            <li key={s}>
-              <button
-                type="button"
-                onClick={() => onPick(s)}
-                data-testid={`${testId}-${s}`}
-                className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors flex items-center gap-2 ${
-                  isSel
-                    ? "bg-primary/15 text-primary border-l-2 border-primary"
-                    : "border-l-2 border-transparent hover:bg-accent/40 hover:border-primary/40"
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-primary shadow-[0_0_6px_rgba(251,146,60,0.7)]" : "bg-emerald-400/70"}`} />
-                <span className="flex-1 truncate">{s}</span>
-                {isSel && <span className="text-[10px] uppercase tracking-widest text-primary">seleccionada</span>}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      {(remaining > 0 || (expanded && suggestions.length > initial)) && (
-        <div className="px-3 py-2 border-t border-border bg-muted/10 flex items-center gap-3">
-          {remaining > 0 && (
-            <button
-              type="button"
-              className="text-[11px] text-primary hover:underline font-mono"
-              onClick={() => setExpanded(true)}
-              data-testid={`${testId}-expand`}
-            >
-              Ver {remaining} más…
-            </button>
-          )}
-          {expanded && suggestions.length > initial && (
-            <button
-              type="button"
-              className="text-[11px] text-muted-foreground hover:underline font-mono"
-              onClick={() => setExpanded(false)}
-            >
-              Contraer
-            </button>
-          )}
+      <PopoverContent
+        className="z-[1200] p-0 w-[--radix-popover-trigger-width] min-w-[260px]"
+        align="start"
+        sideOffset={6}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        data-testid={`${testId}-panel`}
+      >
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/20 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+          <span>Disponibles</span>
+          <span className="font-mono text-primary">{items.length}</span>
+          <span className="text-muted-foreground">/ {suggestions.length}</span>
+          <input
+            className="ml-auto h-6 rounded bg-transparent border border-border px-2 text-xs font-mono w-32 focus:outline-none focus:ring-1 focus:ring-ring"
+            placeholder="filtrar…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            data-testid={`${testId}-filter`}
+          />
         </div>
-      )}
-    </div>
+        <ul
+          className="max-h-80 overflow-y-auto overscroll-contain divide-y divide-border/60 scroll-smooth"
+          style={{ scrollbarGutter: "stable" }}
+          data-testid={`${testId}-list`}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          {items.length === 0 && (
+            <li className="px-3 py-2 text-xs text-muted-foreground italic">Sin coincidencias.</li>
+          )}
+          {items.map((s) => {
+            const isSel = String(s) === cleanSel;
+            return (
+              <li key={s}>
+                <button
+                  type="button"
+                  onClick={() => { onChange(field.name, s); setOpen(false); }}
+                  data-testid={`${testId}-opt-${s}`}
+                  className={`w-full text-left px-3 py-2 text-sm font-mono transition-colors flex items-center gap-2 ${
+                    isSel
+                      ? "bg-primary/15 text-primary border-l-2 border-primary"
+                      : "border-l-2 border-transparent hover:bg-accent/40 hover:border-primary/40"
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${isSel ? "bg-primary shadow-[0_0_6px_rgba(251,146,60,0.7)]" : "bg-emerald-400/70"}`} />
+                  <span className="flex-1 truncate">{s}</span>
+                  {isSel && <span className="text-[10px] uppercase tracking-widest text-primary">seleccionada</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
