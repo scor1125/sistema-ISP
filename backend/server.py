@@ -1100,35 +1100,40 @@ async def ip_pool(_: dict = Depends(get_current_user)):
 # ---------- Dashboard stats ----------
 @api.get("/stats/dashboard")
 async def dashboard(_: dict = Depends(get_current_user)):
-    total = await db.clients.count_documents({})
-    active = await db.clients.count_documents({"status": "active"})
-    suspended = await db.clients.count_documents({"status": "suspended"})
-    offline = await db.clients.count_documents({"status": "offline"})
-    new_c = await db.clients.count_documents({"status": "new"})
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     prev_month = (month_start - timedelta(days=1)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     ms_iso = month_start.isoformat()
-    pm_iso = prev_month.isoformat()
+
+    # --- Single aggregation for status counts (replaces 5 count_documents) ---
+    status_pipe = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
+    status_rows = await db.clients.aggregate(status_pipe).to_list(50)
+    counts = {r["_id"]: r["count"] for r in status_rows}
+    total = sum(counts.values())
+    active = counts.get("active", 0)
+    suspended = counts.get("suspended", 0)
+    offline = counts.get("offline", 0)
+    new_c = counts.get("new", 0)
+
     new_month = await db.clients.count_documents({"created_at": {"$gte": ms_iso}})
 
-    async def _sum(range_start, range_end=None):
-        m = {"is_promise": {"$ne": True}, "created_at": {"$gte": range_start}}
-        if range_end: m["created_at"]["$lt"] = range_end
-        pipe = [{"$match": m}, {"$group": {"_id": None, "s": {"$sum": "$amount"}}}]
-        r = await db.payments.aggregate(pipe).to_list(1)
-        return r[0]["s"] if r else 0
-
-    revenue = await _sum(ms_iso)
-    prev_revenue = await _sum(pm_iso, ms_iso)
-
-    # Monthly revenue for last 12 months.
+    # --- Single aggregation for 12 months of revenue (replaces 12+2 aggregations) ---
+    # We look back 12 whole months from the current one, using the ISO string
+    # prefix `YYYY-MM` as the bucket key.
+    cutoff = (month_start.replace(day=1) - timedelta(days=32 * 11)).replace(day=1).isoformat()
+    monthly_pipe = [
+        {"$match": {"is_promise": {"$ne": True}, "created_at": {"$gte": cutoff}}},
+        {"$group": {"_id": {"$substrCP": ["$created_at", 0, 7]}, "s": {"$sum": "$amount"}}},
+    ]
+    monthly_rows = await db.payments.aggregate(monthly_pipe).to_list(60)
+    by_month = {r["_id"]: r["s"] for r in monthly_rows}
     months = []
     for i in range(11, -1, -1):
-        d = (month_start.replace(day=15) - timedelta(days=30*i)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        nx = (d + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        s = await _sum(d.isoformat(), nx.isoformat())
-        months.append({"month": d.strftime("%Y-%m"), "amount": s})
+        d = (month_start.replace(day=15) - timedelta(days=30 * i)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        key = d.strftime("%Y-%m")
+        months.append({"month": key, "amount": by_month.get(key, 0)})
+    revenue = by_month.get(month_start.strftime("%Y-%m"), 0)
+    prev_revenue = by_month.get(prev_month.strftime("%Y-%m"), 0)
 
     recent = await db.payments.find(
         {"is_promise": {"$ne": True}}, {"_id": 0}

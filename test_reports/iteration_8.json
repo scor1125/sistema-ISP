@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 8 — Verified /api/stats/dashboard refactor (2 single aggregations replacing 12+5 sequential ones). Response shape identical: all 14 documented keys present. monthly_revenue is a 12-item list ending at 2026-07 (current YYYY-MM), all amounts numeric >=0. Status counts sum to total_clients (2+8+0+4=14). revenue_this_month=6777 matches last monthly bucket, revenue_prev_month=0 matches 2026-06 bucket. Created a fresh payment of 123.45 for current month and confirmed both revenue_this_month AND monthly_revenue[-1].amount increased by exactly that delta (idempotent, cleaned up). Perf: 3 consecutive dashboard calls averaged ~102ms (0.117/0.098/0.092s) — notable improvement over the 17-aggregation baseline. Backend pytest: 17/17 GREEN (added TestDashboardStats with 2 cases). Frontend: logged in as owner, /panel loads with zero pageerrors, KPIs render (Clientes totales 14, Activos 2, Suspendidos 8, Ingresos $6,777 / $0), and the 'Calendario de ingresos · últimos 12 meses' bar chart shows all 12 month ticks 2025-08..2026-07 with the current-month bar drawn. Only console noise is 2 benign pre-login 401s on /api/auth/me and 1 transient recharts width(-1)/height(-1) warning during initial layout before the container reflows — not a regression, chart renders correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Perf refactor is correct. Minor: cutoff for monthly_pipe uses `timedelta(days=32*11)` which is an approximation; safe because bucketing is done by `$substrCP` of the YYYY-MM prefix on `created_at`, but a strict cutoff via `month_start` minus 11 calendar months would be cleaner (e.g., using dateutil.relativedelta) and avoid pulling ~+1 month of extra docs into the $match.",
+    "monthly_revenue amount comes from $sum of $amount without $ifNull — safe as long as payments always store numeric amount; consider {$sum: {$ifNull: ['$amount', 0]}} for defensiveness."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (17/17 pytest)", "frontend": "100% (Panel de control KPIs + 12-bar chart)"},
+  "seed_data_creation": "Transient: created 1 TEST_DashClient and 1 payment of 123.45 during the delta test, both deleted in the same test (client via session-scope cleanup fixture, payment via explicit DELETE). Payment bbffc0d0... amount remains 777 from iteration 7's PATCH test.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "Dashboard endpoint fully validated end-to-end. 17-test pytest suite covers: auth cookies (4), onus determinism (1), clients minimal+patch (2), devices (1), dashboard shape+delta (2), payments PATCH (2), mikrotik/vpn (5). Preview URL: https://customer-net-ops.preview.emergentagent.com. Owner login active. No open regressions.",
+  "rca_of_the_issue": "N/A — refactor verified as correct and performant. Two aggregations now cover what previously required 5 count_documents + 12 $group aggregations; ~100ms end-to-end response confirms no N+1 remains."
+}

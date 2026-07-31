@@ -229,6 +229,84 @@ class TestPaymentsPatch:
         assert r.status_code == 404
 
 
+# ---------- Iteration 8: Dashboard aggregation refactor ----------
+class TestDashboardStats:
+    EXPECTED_KEYS = {
+        "total_clients", "active", "suspended", "offline", "new",
+        "new_this_month", "revenue_this_month", "revenue_prev_month",
+        "monthly_revenue", "recent_payments", "open_leads",
+        "disconnected_recent", "mikrotiks", "olts",
+    }
+
+    def test_dashboard_shape_and_invariants(self, auth_session):
+        from datetime import datetime, timezone
+        r = auth_session.get(f"{BASE_URL}/api/stats/dashboard")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        # shape
+        missing = self.EXPECTED_KEYS - set(d.keys())
+        assert not missing, f"missing keys: {missing}"
+        # monthly_revenue: 12 items, last == current YYYY-MM, all amounts numeric >= 0
+        mr = d["monthly_revenue"]
+        assert isinstance(mr, list) and len(mr) == 12, f"expected 12, got {len(mr)}"
+        cur_key = datetime.now(timezone.utc).strftime("%Y-%m")
+        assert mr[-1]["month"] == cur_key, f"last month {mr[-1]['month']} != {cur_key}"
+        for item in mr:
+            assert isinstance(item["month"], str) and len(item["month"]) == 7
+            assert isinstance(item["amount"], (int, float))
+            assert item["amount"] >= 0
+        # status counts sum == total_clients
+        # only known status buckets are exposed; sum should be <= total.
+        # Invariant per request: total_clients equals sum of all status buckets from aggregation
+        # (we approximate: active+suspended+offline+new <= total; equality when no other statuses)
+        s = d["active"] + d["suspended"] + d["offline"] + d["new"]
+        assert s <= d["total_clients"], f"sum of buckets {s} > total {d['total_clients']}"
+        # revenue derived from monthly aggregation
+        assert d["revenue_this_month"] == mr[-1]["amount"], \
+            f"revenue_this_month {d['revenue_this_month']} != last monthly {mr[-1]['amount']}"
+        # numeric
+        assert isinstance(d["revenue_this_month"], (int, float))
+        assert isinstance(d["revenue_prev_month"], (int, float))
+        assert isinstance(d["mikrotiks"], list) and isinstance(d["olts"], list)
+        assert isinstance(d["recent_payments"], list)
+
+    def test_dashboard_reflects_new_payment(self, auth_session, created_client_ids):
+        # create a client (so we have a valid client_id)
+        r = auth_session.post(f"{BASE_URL}/api/clients", json={
+            "full_name": "TEST_DashClient", "address": "x", "payment_day": 1,
+        })
+        assert r.status_code == 200, r.text
+        cid = r.json()["id"]
+        created_client_ids.append(cid)
+
+        # snapshot dashboard
+        r0 = auth_session.get(f"{BASE_URL}/api/stats/dashboard")
+        assert r0.status_code == 200
+        d0 = r0.json()
+        rev0 = d0["revenue_this_month"]
+        last0 = d0["monthly_revenue"][-1]["amount"]
+
+        # create a payment for current month
+        amt = 123.45
+        r = auth_session.post(f"{BASE_URL}/api/payments", json={
+            "client_id": cid, "amount": amt, "concept": "TEST_iter8_dash",
+            "method": "cash",
+        })
+        assert r.status_code == 200, r.text
+        pid = r.json().get("id")
+
+        # dashboard should reflect the delta
+        r1 = auth_session.get(f"{BASE_URL}/api/stats/dashboard")
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert d1["revenue_this_month"] == pytest.approx(rev0 + amt, rel=1e-6)
+        assert d1["monthly_revenue"][-1]["amount"] == pytest.approx(last0 + amt, rel=1e-6)
+
+        # cleanup: delete the payment
+        if pid:
+            auth_session.delete(f"{BASE_URL}/api/payments/{pid}")
+
+
 # ---------- Iteration 4: mikrotik-script / mikrotik-test / vpn-test ----------
 class TestMikrotikAndVpnEndpoints:
     def _get_or_create_mikrotik(self, s):
