@@ -24,7 +24,6 @@ const NAV = [
   { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Menú" },
   { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Menú" },
   { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Menú" },
-  { to: "/desconectados", label: "Desconectados", icon: ZapOff, group: "Menú" },
   { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Menú" },
   { to: "/planes", label: "Planes", icon: PackagePlus, group: "Menú" },
   { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Menú" },
