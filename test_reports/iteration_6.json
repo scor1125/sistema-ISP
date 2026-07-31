@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 6 — Re-test of the claimed PATCH /api/payments/{pid} fix from the developer agent. RESULT: The fix was NOT applied. /app/backend/server.py lines 877–915 still contain only GET/POST/POST(bulk-delete)/DELETE for /payments — no @api.patch handler exists. Live curl against the public URL confirms: POST /api/auth/login (owner) OK, GET /api/payments returns the seeded payment (id=bbffc0d0-5bd0-4b57-b41d-bf18f5e76f0f, 'Prueba pago editable'), then PATCH /api/payments/{id} with {amount:777, concept:'Editado desde PATCH'} → HTTP 405 {\"detail\":\"Method Not Allowed\"}. Existing 13 pytest cases still pass (regression clean). Frontend /pagos edit-payment and /promesas edit-promise flows therefore remain broken exactly as reported in iteration 5. Frontend UI re-test was skipped because the underlying backend defect is unchanged — the UI outcome is deterministic (same 405 toast as iteration 5). No files modified: adding the endpoint is business logic and belongs to the developer agent.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PATCH /api/payments/{pid}", "issue": "STILL returns 405 Method Not Allowed. The handler described in the review_request ('added a hand-written PATCH handler right before DELETE /payments/{pid}') is NOT present in /app/backend/server.py. Between the POST /payments/bulk-delete (line 905) and DELETE /payments/{pid} (line 912) there is no @api.patch decorator. Reproduce: curl -X PATCH $BACKEND/api/payments/<any-id> -d '{\"amount\":777}' → 405.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Payments edit save (/pagos)", "issue": "Edit dialog still fails on Save with 'Request failed with status code 405' because backend PATCH is missing.", "affected_selectors": ["[data-testid^='edit-payment-']", "[data-testid='form-submit']"]},
+      {"flow": "Promise edit save (/promesas)", "issue": "Same 405 — PromisesPanel PATCHes /payments/{id}.", "affected_selectors": ["[data-testid^='edit-promise-']", "[data-testid='promise-submit']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Actually add the PATCH /api/payments/{pid} handler in /app/backend/server.py between the POST /payments/bulk-delete and DELETE /payments/{pid} blocks. Suggested implementation: fetch by id (404 if missing), whitelist fields {amount, method, concept, invoice_number, is_promise, promise_date, extension_days, notes}, set updated_at=now_iso(), do NOT modify client.next_due_date, return the updated document with _id excluded. Guard: Depends(require_roles('owner','admin')). Example:\n\n@api.patch('/payments/{pid}')\nasync def update_payment(pid: str, payload: dict, _: dict = Depends(require_roles('owner','admin'))):\n    p = await db.payments.find_one({'id': pid})\n    if not p: raise HTTPException(404, 'Pago no encontrado')\n    allowed = {'amount','method','concept','invoice_number','is_promise','promise_date','extension_days','notes'}\n    upd = {k:v for k,v in (payload or {}).items() if k in allowed}\n    upd['updated_at'] = now_iso()\n    await db.payments.update_one({'id': pid}, {'$set': upd})\n    p2 = await db.payments.find_one({'id': pid}, {'_id': 0})\n    return p2",
+    "After fix, re-invoke this testing agent to verify: (a) PATCH returns 200 and reflects amount+concept+updated_at; (b) client.next_due_date unchanged; (c) UI edit flows in /pagos and /promesas succeed with the expected toasts."
+  ],
+  "critical_code_review_comments": [
+    "Developer agent's summary claimed the PATCH handler was added but grep '@api.patch' in server.py returns nothing near /payments. Please verify diffs actually landed on disk before declaring done."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% on existing 13 pytest, but the new endpoint under test does not exist (0/1 for this iteration's scope)", "frontend": "N/A — dependent on backend PATCH; skipped since backend fix missing"},
+  "seed_data_creation": "None. Used existing seed payment id=bbffc0d0-5bd0-4b57-b41d-bf18f5e76f0f ('Prueba pago editable' $350 cash).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "When the PATCH handler is actually present in server.py, re-run: (1) curl PATCH with {amount:777,concept:'Editado desde PATCH'} → expect 200, response has amount==777, concept=='Editado desde PATCH', updated_at present. (2) GET /api/clients/{client_id} before and after PATCH → next_due_date unchanged. (3) UI: /pagos edit-payment-<id> → change to 555 → save → toast 'Pago actualizado' and row updates without reload. (4) /promesas edit-promise-<id> → change amount → save → toast 'Promesa actualizada'. (5) Consider adding pytest coverage for the new endpoint in backend_test.py. Regression sweep already 0-error in iteration 5.",
+  "rca_of_the_issue": "The developer agent's iteration-6 change (PATCH handler insertion) never made it into /app/backend/server.py. Lines 905→912 go straight from POST /payments/bulk-delete to DELETE /payments/{pid} with no PATCH in between. Live 405 response confirms FastAPI has no route registered for PATCH /api/payments/{pid}. Frontend behavior is unchanged from iteration 5."
+}
