@@ -254,59 +254,6 @@ export default function Layout() {
             </div>
           ))}
         </nav>
-
-        {!collapsed && (
-          <div className="border-t border-border p-3">
-            <ThemePicker />
-          </div>
-        )}
-
-        <div className={`border-t border-border p-3 flex items-center ${collapsed ? "justify-center" : "gap-2"}`}>
-          <input
-            ref={avatarFileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            className="hidden"
-            onChange={(e) => uploadAvatar(e.target.files?.[0])}
-            data-testid="avatar-file-input"
-          />
-          <button
-            type="button"
-            onClick={() => avatarFileRef.current?.click()}
-            className="relative w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0 overflow-hidden group hover:ring-2 hover:ring-primary/50 transition"
-            title="Cambiar foto de perfil"
-            data-testid="avatar-upload"
-          >
-            {user?.avatar_url ? (
-              <img src={user.avatar_url} alt={user.name} className="w-full h-full object-cover" data-testid="user-avatar" />
-            ) : (
-              <span>{user?.name?.[0]?.toUpperCase() || "U"}</span>
-            )}
-            <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 grid place-items-center transition-opacity">
-              <Camera className="w-3.5 h-3.5 text-white" />
-            </span>
-            {uploadingAvatar && (
-              <span className="absolute inset-0 bg-black/60 grid place-items-center text-[9px] text-white">…</span>
-            )}
-          </button>
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <div className="text-sm truncate">{user?.name}</div>
-              <Badge variant="outline" className="text-[10px] py-0 h-4 font-mono uppercase">
-                {user?.role}
-              </Badge>
-            </div>
-          )}
-          <Button
-            size="icon"
-            variant="ghost"
-            data-testid="logout-btn"
-            title="Cerrar sesión"
-            onClick={async () => { await logout(); navigate("/login"); }}
-          >
-            <LogOut className="w-4 h-4" />
-          </Button>
-        </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 relative z-10">
@@ -320,12 +267,59 @@ export default function Layout() {
               <ServersStatus />
               <PendingBadges />
               <InboxWidget />
+              <div className="ml-auto flex items-center gap-2">
+                <ThemePicker />
+                <div className="flex items-center gap-2 pl-2 border-l border-border h-9">
+                  <input
+                    ref={avatarFileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(e) => uploadAvatar(e.target.files?.[0])}
+                    data-testid="avatar-file-input"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => avatarFileRef.current?.click()}
+                    className="relative w-8 h-8 rounded-md bg-secondary grid place-items-center text-xs font-mono shrink-0 overflow-hidden group hover:ring-2 hover:ring-primary/50 transition"
+                    title="Cambiar foto de perfil"
+                    data-testid="avatar-upload"
+                  >
+                    {user?.avatar_url ? (
+                      <img src={user.avatar_url} alt={user.name} className="w-full h-full object-cover" data-testid="user-avatar" />
+                    ) : (
+                      <span>{user?.name?.[0]?.toUpperCase() || "U"}</span>
+                    )}
+                    <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 grid place-items-center transition-opacity">
+                      <Camera className="w-3.5 h-3.5 text-white" />
+                    </span>
+                    {uploadingAvatar && (
+                      <span className="absolute inset-0 bg-black/60 grid place-items-center text-[9px] text-white">…</span>
+                    )}
+                  </button>
+                  <div className="hidden md:block min-w-0">
+                    <div className="text-xs truncate max-w-[140px] font-medium leading-tight">{user?.name}</div>
+                    <Badge variant="outline" className="text-[9px] py-0 h-4 font-mono uppercase">
+                      {user?.role}
+                    </Badge>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    data-testid="logout-btn"
+                    title="Cerrar sesión"
+                    onClick={async () => { await logout(); navigate("/login"); }}
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
             </>
           )}
           <button
             type="button"
             onClick={toggleHeader}
-            className="ml-auto p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            className={`${headerCollapsed ? "ml-auto" : ""} p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors`}
             title={headerCollapsed ? "Expandir barra" : "Comprimir barra"}
             data-testid="header-toggle"
           >

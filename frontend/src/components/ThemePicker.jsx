@@ -344,10 +344,10 @@ export default function ThemePicker() {
         <button
           type="button"
           data-testid="theme-picker-trigger"
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md border border-border transition-colors"
+          className="h-9 inline-flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md border border-border transition-colors"
         >
           <Paintbrush className="w-3.5 h-3.5" />
-          <span className="uppercase tracking-widest font-mono flex-1 text-left">Tema</span>
+          <span className="uppercase tracking-widest font-mono hidden md:inline">Tema</span>
           <span className="text-[10px] uppercase font-mono">{current.label}</span>
           <span
             className="w-4 h-4 rounded-full border border-border"
@@ -355,7 +355,7 @@ export default function ThemePicker() {
           />
         </button>
       </PopoverTrigger>
-      <PopoverContent side="right" align="end" className="w-96 p-3 max-h-[80vh] overflow-y-auto" data-testid="theme-picker-panel">
+      <PopoverContent side="bottom" align="end" className="w-96 p-3 max-h-[80vh] overflow-y-auto" data-testid="theme-picker-panel">
         <ThemeSection title="Oscuros" themes={dark} active={active} onPick={setActive} />
         <ThemeSection title="Claros" themes={light} active={active} onPick={setActive} />
         <ThemeSection title="Combos de color" themes={combos} active={active} onPick={setActive} />
