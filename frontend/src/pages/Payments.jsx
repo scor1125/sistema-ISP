@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 const methodLabel = {
@@ -22,6 +22,7 @@ export default function Payments() {
   const [items, setItems] = useState([]);
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [q, setQ] = useState("");
 
   useEffect(() => {
@@ -55,12 +56,32 @@ export default function Payments() {
   const save = async (v) => {
     try {
       const payload = { ...v, is_promise: String(v.is_promise) === "true" };
-      await api.post("/payments", payload);
-      toast.success("Pago registrado"); await load();
+      if (editing) {
+        await api.patch(`/payments/${editing.id}`, payload);
+        toast.success("Pago actualizado");
+      } else {
+        await api.post("/payments", payload);
+        toast.success("Pago registrado");
+      }
+      setEditing(null);
+      await load();
     } catch(e){ toast.error(formatApiError(e)); throw e; }
   };
 
-  const remove = async (id) => { if(window.confirm("¿Eliminar pago?")){ await api.delete(`/payments/${id}`); load(); } };
+  const remove = async (id) => {
+    if(!window.confirm("¿Eliminar pago?")) return;
+    try { await api.delete(`/payments/${id}`); toast.success("Eliminado"); await load(); }
+    catch(e){ toast.error(formatApiError(e)); }
+  };
+
+  const openEdit = (p) => {
+    setEditing({
+      ...p,
+      is_promise: p.is_promise ? "true" : "false",
+    });
+    setOpen(true);
+  };
+  const openNew = () => { setEditing(null); setOpen(true); };
 
   const clientsById = useMemo(() => {
     const m = new Map(); clients.forEach((c) => m.set(c.id, c)); return m;
@@ -101,7 +122,8 @@ export default function Payments() {
                 <TableCell>{p.concept}{p.is_promise && <Badge className="ml-2 bg-amber-500/10 text-amber-400 border border-amber-500/30" variant="outline">Promesa · {p.promise_date}</Badge>}</TableCell>
                 <TableCell className="font-mono text-xs">{p.invoice_number || "—"}</TableCell>
                 <TableCell className="text-right">
-                  <Button size="icon" variant="ghost" onClick={()=>remove(p.id)}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                  <Button size="icon" variant="ghost" onClick={()=>openEdit(p)} data-testid={`edit-payment-${p.id}`}><Pencil className="w-4 h-4" /></Button>
+                  <Button size="icon" variant="ghost" onClick={()=>remove(p.id)} data-testid={`del-payment-${p.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                 </TableCell>
               </TableRow>
             );
@@ -116,7 +138,7 @@ export default function Payments() {
       <PageHeader
         title="Pagos"
         subtitle="Registra pagos en efectivo, transferencias, promesas y factura manual. Los pagos reactivan al cliente automáticamente."
-        actions={<Button data-testid="new-payment-btn" onClick={()=>setOpen(true)}><Plus className="w-4 h-4 mr-1"/>Registrar pago</Button>}
+        actions={<Button data-testid="new-payment-btn" onClick={openNew}><Plus className="w-4 h-4 mr-1"/>Registrar pago</Button>}
       />
       <SearchBar value={q} onChange={setQ} placeholder="Buscar por cliente, monto, concepto, factura o fecha…" testId="payments-search" />
       <Tabs value={tab} onValueChange={(v) => { setTab(v); const next = new URLSearchParams(params); if (v !== "all") next.set("tab", v); else next.delete("tab"); setParams(next, { replace: true }); }}>
@@ -130,10 +152,11 @@ export default function Payments() {
         <TabsContent value="transfer" className="mt-4">{renderTable(filter("transfer"))}</TabsContent>
       </Tabs>
 
-      <FormDialog open={open} onOpenChange={setOpen} title="Registrar pago"
+      <FormDialog open={open} onOpenChange={(v)=>{ setOpen(v); if(!v) setEditing(null); }}
+        title={editing ? "Editar pago" : "Registrar pago"}
         fields={fields}
-        initial={{ client_id: preselectClient || "", method: "cash", concept: "Mensualidad", is_promise: false }}
-        onSubmit={save} submitLabel="Registrar" />
+        initial={editing || { client_id: preselectClient || "", method: "cash", concept: "Mensualidad", is_promise: "false" }}
+        onSubmit={save} submitLabel={editing ? "Guardar cambios" : "Registrar"} />
     </div>
   );
 }

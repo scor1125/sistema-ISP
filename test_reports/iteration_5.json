@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 5 — Verification of the frontend edit-flow rewrites (Payments/Tasks/PromisesPanel + FormDialog reset-on-open). Backend regression pytest 13/13 green. FormDialog useEffect(open, initial) correctly pre-fills edit dialogs for Payments/Tasks/Promises (verified — amount=350, concept='Prueba pago editable', task title='Tarea de prueba edit', promise amount=200, days=3 all pre-filled). Task detail modal opens on card body click; the 'Editar' button inside detail pre-fills the form. Regression sweep of /panel, /clientes, /pagos, /promesas, /arqueos, /desconectados, /whatsapp, /planes, /extras, /mapa, /olt, /mikrotik, /tareas, /usuarios, /config → 0 pageerrors per route. Mikrotik page now shows ServerInfoPanel (11 copy-* buttons) and the '+ Nuevo Mikrotik' dropdown (both iteration-4 blockers resolved). CRITICAL FINDING: /api/payments HAS NO PATCH ENDPOINT — payment edits (and promise edits, which also PATCH /payments) fail with HTTP 405 'Method Not Allowed'. The frontend Payments.jsx / PromisesPanel.jsx call `api.patch('/payments/{id}', payload)` but backend server.py only defines GET/POST/DELETE for /payments (custom router at lines 877-914), unlike /tasks which uses crud_router and does expose PATCH. Repro: on /pagos, click any edit-payment-<id>, change Monto to 777, Save → toast 'Request failed with status code 405' and DB not updated ($777 does not appear in table). Task edit save works (PATCH /tasks/{id} via crud_router).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PATCH /api/payments/{id}", "issue": "Endpoint does not exist → returns 405 Method Not Allowed. Both Payments.jsx edit flow and PromisesPanel.jsx edit flow call this. Add a PATCH handler in server.py alongside the custom /payments GET/POST/DELETE handlers (crud_router is not used for /payments because it needs custom side-effects on create — but PATCH must be added by hand). Must at minimum accept amount/method/concept/notes/promise_date/extension_days/is_promise and set updated_at.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Payments edit save", "issue": "PATCH /payments/{id} → 405, so the 'Editar pago' button in /pagos is functionally broken. Same for /promesas 'Editar promesa' (also PATCHes /payments/{id}).", "affected_selectors": ["[data-testid^='edit-payment-']", "[data-testid^='edit-promise-']", "[data-testid='form-submit']", "[data-testid='promise-submit']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Add PATCH /api/payments/{pid} in /app/backend/server.py: fetch payment, apply allowed field updates (amount, method, concept, invoice_number, is_promise, promise_date, extension_days, notes), set updated_at, upsert=False. Return the updated document (exclude _id). Guard with require_roles('owner','admin').",
+    "After fix, re-run frontend flow: edit-payment-<id> → change amount → save → verify table shows new amount and toast 'Pago actualizado'. Same on /promesas."
+  ],
+  "critical_code_review_comments": [
+    "server.py: /payments handlers were hand-written (POST has client next_due_date side-effect) so PATCH was omitted. When PATCH is added, decide whether editing amount/is_promise should also re-adjust the client's next_due_date; likely NO (edits shouldn't advance the cycle again).",
+    "PromisesPanel.PromiseDialog.submit sends is_promise:true and method:'other' on PATCH — make sure the future PATCH handler does not overwrite fields with unrelated defaults if the client didn't intend to change them."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (13/13 pytest, but /payments PATCH is missing altogether — not covered by existing tests)", "frontend": "88% (edit dialogs pre-fill correctly; task edit save works; payment/promise edit save fails due to backend 405)"},
+  "seed_data_creation": "None new. Existing seed used: payment 'Prueba pago editable' $350 cash, task 'Tarea de prueba edit' backlog, 2 promise-payments.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "benjahr1993@gmail.com / Admin123! (owner)",
+  "context_for_next_testing_agent": "Focus retest: (1) PATCH /api/payments/{id} exists and updates amount/concept persistently — verify with curl then via UI edit-payment-<id> in /pagos and edit-promise-<id> in /promesas. (2) After payment PATCH, confirm no unintended change to client.next_due_date. Regression pages already 0-error; skip full sweep. FormDialog reset-on-open works, edit-user prefill regression from iteration 4 is now fixed. Mikrotik ServerInfoPanel + Nuevo Mikrotik dropdown mounted.",
+  "rca_of_the_issue": "Frontend Payments.jsx (line 60) and PromisesPanel.jsx (line 218) were updated to call `api.patch('/payments/{id}', payload)`, but backend /app/backend/server.py defines /payments via hand-written GET/POST/DELETE handlers (lines 877-914) with no @api.patch. Unlike /tasks which uses crud_router (line 408) that ships PATCH, /payments is custom because create needs to update client.next_due_date. A PATCH handler must be added manually. Iteration-4 note 'PATCH /payments already verified via crud_router' is incorrect — /payments does not use crud_router."
+}

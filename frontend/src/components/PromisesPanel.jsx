@@ -10,7 +10,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Trash2, CalendarIcon, HandCoins, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, CalendarIcon, HandCoins, CheckCircle2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 const toISODate = (d) => {
@@ -30,6 +30,7 @@ export default function PromisesPanel() {
   const [filter, setFilter] = useState("all"); // all | active | expired
   const [selected, setSelected] = useState(new Set());
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const load = useCallback(async () => {
     const [p, c, u] = await Promise.all([
@@ -144,11 +145,14 @@ export default function PromisesPanel() {
                     : <Badge variant="outline" className="border-red-500/30 text-red-400 bg-red-500/10">Vencida</Badge>}
                 </div>
                 <div className="text-right">
+                  <Button size="icon" variant="ghost" onClick={() => { setEditing(p); setOpen(true); }} data-testid={`edit-promise-${p.id}`}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
                   <Button size="icon" variant="ghost" onClick={async () => {
                     if (window.confirm("¿Eliminar promesa?")) {
                       await api.delete(`/payments/${p.id}`); toast.success("Eliminada"); load();
                     }
-                  }}><Trash2 className="w-4 h-4 text-destructive" /></Button>
+                  }} data-testid={`del-promise-${p.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                 </div>
               </div>
             ))}
@@ -156,12 +160,12 @@ export default function PromisesPanel() {
         ))}
       </div>
 
-      <PromiseDialog open={open} onOpenChange={setOpen} clients={clients} onSaved={load} />
+      <PromiseDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setEditing(null); }} clients={clients} initial={editing} onSaved={load} />
     </div>
   );
 }
 
-function PromiseDialog({ open, onOpenChange, clients, onSaved }) {
+function PromiseDialog({ open, onOpenChange, clients, initial, onSaved }) {
   const [clientId, setClientId] = useState("");
   const [amount, setAmount] = useState("");
   const [days, setDays] = useState(3);
@@ -171,9 +175,17 @@ function PromiseDialog({ open, onOpenChange, clients, onSaved }) {
 
   useEffect(() => {
     if (open) {
-      setClientId(""); setAmount(""); setDays(3); setDate(addDays(today(), 3)); setNotes("");
+      if (initial) {
+        setClientId(initial.client_id || "");
+        setAmount(String(initial.amount || ""));
+        setDays(initial.extension_days ?? 3);
+        setDate(initial.promise_date ? parseISODate(initial.promise_date) : addDays(today(), initial.extension_days ?? 3));
+        setNotes(initial.notes || "");
+      } else {
+        setClientId(""); setAmount(""); setDays(3); setDate(addDays(today(), 3)); setNotes("");
+      }
     }
-  }, [open]);
+  }, [open, initial]);
 
   // Keep date in sync when days changes.
   const setDaysAndDate = (d) => {
@@ -192,7 +204,7 @@ function PromiseDialog({ open, onOpenChange, clients, onSaved }) {
     if (!clientId || !amount) { toast.error("Cliente y monto son requeridos"); return; }
     setLoading(true);
     try {
-      await api.post("/payments", {
+      const payload = {
         client_id: clientId,
         amount: Number(amount),
         method: "other",
@@ -201,8 +213,14 @@ function PromiseDialog({ open, onOpenChange, clients, onSaved }) {
         promise_date: toISODate(date),
         extension_days: days,
         notes,
-      });
-      toast.success("Promesa registrada");
+      };
+      if (initial?.id) {
+        await api.patch(`/payments/${initial.id}`, payload);
+        toast.success("Promesa actualizada");
+      } else {
+        await api.post("/payments", payload);
+        toast.success("Promesa registrada");
+      }
       onOpenChange(false);
       onSaved?.();
     } catch (e) { toast.error(formatApiError(e)); }
@@ -213,7 +231,7 @@ function PromiseDialog({ open, onOpenChange, clients, onSaved }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><HandCoins className="w-5 h-5 text-primary" /> Nueva promesa de pago</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><HandCoins className="w-5 h-5 text-primary" /> {initial ? "Editar promesa de pago" : "Nueva promesa de pago"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={submit} className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
@@ -252,7 +270,7 @@ function PromiseDialog({ open, onOpenChange, clients, onSaved }) {
           </div>
           <DialogFooter className="col-span-2">
             <Button type="submit" disabled={loading} data-testid="promise-submit">
-              {loading ? "Guardando…" : "Registrar promesa"}
+              {loading ? "Guardando…" : initial ? "Guardar cambios" : "Registrar promesa"}
             </Button>
           </DialogFooter>
         </form>
