@@ -30,6 +30,7 @@ const NAV = [
   { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Menú" },
   { to: "/mapa", label: "Mapa de servicio", icon: MapIcon, group: "Menú" },
   { to: "/olt", label: "OLT / ONUs", icon: Radio, group: "Menú" },
+  { to: "/onus", label: "ONUs Online/Offline", icon: Wifi, group: "Menú" },
   { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Menú" },
   { to: "/tareas", label: "Tareas", icon: ListTodo, group: "Menú" },
   { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Menú" },

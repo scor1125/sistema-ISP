@@ -23,6 +23,7 @@ import Settings from "@/pages/Settings";
 import MyPendings from "@/pages/MyPendings";
 import ControlPanel from "@/pages/ControlPanel";
 import Arqueos from "@/pages/Arqueos";
+import OnusStatus from "@/pages/OnusStatus";
 import "@/App.css";
 
 function Protected() {
@@ -63,6 +64,7 @@ function App() {
             <Route path="/extras" element={<Extras />} />
             <Route path="/mapa" element={<NapMap />} />
             <Route path="/olt" element={<OLT />} />
+            <Route path="/onus" element={<OnusStatus />} />
             <Route path="/mikrotik" element={<Mikrotik />} />
             <Route path="/desconectados" element={<Disconnected />} />
             <Route path="/whatsapp" element={<WhatsApp />} />
