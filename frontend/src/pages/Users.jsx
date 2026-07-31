@@ -40,6 +40,8 @@ export default function Users() {
     { name:"phone", label:"Teléfono" },
     { name:"role", label:"Rol", type:"select",
       options: Object.entries(ROLES).map(([v,l])=>({value:v,label:l})) },
+    { name:"active", label:"Estado", type:"select",
+      options: [{value:"true",label:"Activo"},{value:"false",label:"Inactivo / pendiente"}] },
     { name:"password", label:"Contraseña nueva (dejar en blanco para no cambiar)", full:true, placeholder:"••••••••" },
   ];
 
@@ -48,6 +50,7 @@ export default function Users() {
       if (editing) {
         const payload = { ...v };
         if (!payload.password) delete payload.password;
+        if (payload.active !== undefined) payload.active = String(payload.active) === "true";
         await api.patch(`/users/${editing.id}`, payload);
         toast.success("Usuario actualizado");
       } else {
@@ -56,6 +59,14 @@ export default function Users() {
       }
       setEditing(null); await load();
     } catch(e){ toast.error(formatApiError(e)); throw e; }
+  };
+
+  const approve = async (u) => {
+    try {
+      await api.patch(`/users/${u.id}`, { active: true });
+      toast.success(`${u.name} aprobado`);
+      await load();
+    } catch (e) { toast.error(formatApiError(e)); }
   };
   const del = async (id) => { if(window.confirm("¿Eliminar usuario?")){ await api.delete(`/users/${id}`); load(); } };
 
@@ -81,9 +92,12 @@ export default function Users() {
                 <TableCell className="font-mono text-xs">{u.email}</TableCell>
                 <TableCell><Badge variant="outline">{ROLES[u.role] || u.role}</Badge></TableCell>
                 <TableCell className="font-mono text-xs">{u.phone || "—"}</TableCell>
-                <TableCell>{u.active!==false ? <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10">Activo</Badge> : <Badge variant="outline">Inactivo</Badge>}</TableCell>
+                <TableCell>{u.active!==false ? <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10">Activo</Badge> : <Badge variant="outline" className="border-amber-500/40 text-amber-300 bg-amber-500/10">Pendiente</Badge>}</TableCell>
                 <TableCell className="text-right">
-                  <Button size="icon" variant="ghost" onClick={()=>{ setEditing(u); setOpen(true); }} data-testid={`edit-user-${u.id}`}><Pencil className="w-4 h-4"/></Button>
+                  {u.active===false && (
+                    <Button size="sm" variant="outline" className="mr-1" onClick={()=>approve(u)} data-testid={`approve-user-${u.id}`}>Aprobar</Button>
+                  )}
+                  <Button size="icon" variant="ghost" onClick={()=>{ setEditing({...u, active: String(u.active !== false)}); setOpen(true); }} data-testid={`edit-user-${u.id}`}><Pencil className="w-4 h-4"/></Button>
                   <Button size="icon" variant="ghost" onClick={()=>del(u.id)} data-testid={`del-user-${u.id}`}><Trash2 className="w-4 h-4 text-destructive"/></Button>
                 </TableCell>
               </TableRow>

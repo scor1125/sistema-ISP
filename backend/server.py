@@ -97,6 +97,12 @@ class UserCreate(BaseModel):
     password: str
     phone: Optional[str] = None
 
+class RegisterIn(BaseModel):
+    email: EmailStr
+    name: str
+    password: str
+    phone: Optional[str] = None
+
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[Role] = None
@@ -282,6 +288,31 @@ class BusinessConfigIn(BaseModel):
     network_reserved: List[str] = []
 
 # ---------- Auth Endpoints ----------
+@api.post("/auth/register")
+async def register(payload: RegisterIn):
+    """Public self-registration. New users land as inactive `technician` so an
+    owner/admin must approve them before they can log in. Duplicate email →
+    400, weak password (<8) → 400."""
+    if len(payload.password) < 8:
+        raise HTTPException(400, "La contraseña debe tener al menos 8 caracteres.")
+    email = payload.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Ya existe una cuenta con ese correo.")
+    doc = {
+        "id": new_id(), "email": email, "name": payload.name.strip(),
+        "role": "technician", "phone": (payload.phone or "").strip(),
+        "password_hash": hash_password(payload.password),
+        "active": False, "avatar_url": "",
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.users.insert_one(doc)
+    logger.info("[auth] register email=%s (pending approval)", email)
+    return {
+        "ok": True,
+        "message": "Cuenta creada. Un administrador debe aprobar tu acceso antes de que puedas ingresar.",
+        "user": {"id": doc["id"], "email": doc["email"], "name": doc["name"], "role": doc["role"], "active": False},
+    }
+
 @api.post("/auth/login")
 async def login(payload: LoginIn, response: Response):
     email = payload.email.lower().strip()
