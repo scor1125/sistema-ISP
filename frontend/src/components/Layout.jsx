@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
   ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight, StickyNote,
-  ChevronUp, ChevronDown, Camera, HandCoins, Calculator
+  ChevronUp, ChevronDown, Camera, HandCoins, Calculator, HardHat
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ const NAV = [
   { to: "/onus", label: "ONUs Online/Offline", icon: Wifi, group: "Red" },
   { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Red" },
   { to: "/tareas", label: "Tareas", icon: ListTodo, group: "Sistema" },
+  { to: "/trabajadores", label: "Trabajadores", icon: HardHat, group: "Sistema" },
   { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Sistema" },
   { to: "/configuracion", label: "Configuración", icon: Settings, group: "Sistema" },
 ];

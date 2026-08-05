@@ -19,6 +19,7 @@ import Mikrotik from "@/pages/Mikrotik";
 import Disconnected from "@/pages/Disconnected";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
+import Trabajadores from "@/pages/Trabajadores";
 import Settings from "@/pages/Settings";
 import MyPendings from "@/pages/MyPendings";
 import ControlPanel from "@/pages/ControlPanel";
@@ -71,6 +72,7 @@ function App() {
             <Route path="/tareas" element={<Tasks />} />
             <Route path="/mis-pendientes" element={<MyPendings />} />
             <Route path="/usuarios" element={<Users />} />
+            <Route path="/trabajadores" element={<Trabajadores />} />
             <Route path="/configuracion" element={<Settings />} />
           </Route>
         </Routes>

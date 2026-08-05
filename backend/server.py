@@ -211,6 +211,38 @@ class WhatsAppMessageIn(BaseModel):
     kind: Literal["reminder","maintenance","chat","other"] = "chat"
     channel: Literal["whatsapp","telegram"] = "whatsapp"
 
+class WhatsAppConfigIn(BaseModel):
+    provider: Literal["simulated","baileys","evolution","waha","wasenderapi","custom"] = "simulated"
+    base_url: Optional[str] = ""     # e.g. https://my-baileys.example.com
+    api_key: Optional[str] = ""      # sent as Authorization: Bearer / apikey header
+    instance: Optional[str] = ""     # instance/session name (Evolution/WAHA)
+    webhook_token: Optional[str] = ""  # shared secret required on inbound webhook
+
+class WhatsAppFunnelIn(BaseModel):
+    name: str
+    color: Optional[str] = "#f59e0b"
+    order: Optional[int] = 0
+    is_default: Optional[bool] = False
+
+class WhatsAppFunnelUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    order: Optional[int] = None
+
+class WhatsAppConversationUpdate(BaseModel):
+    funnel_id: Optional[str] = None
+    assigned_to: Optional[str] = None  # user id
+    tags: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+class WhatsAppWebhookIn(BaseModel):
+    phone: str
+    body: str
+    client_id: Optional[str] = None
+    direction: Literal["outgoing","incoming"] = "incoming"
+    provider_message_id: Optional[str] = None
+    sender_name: Optional[str] = None
+
 class TaskIn(BaseModel):
     title: str
     description: Optional[str] = ""
@@ -274,6 +306,30 @@ class ArqueoIn(BaseModel):
     user_filter_id: Optional[str] = None
     user_filter_name: Optional[str] = ""
     notes: Optional[str] = ""
+
+class TrabajadorIn(BaseModel):
+    full_name: str
+    role: Literal["technician","installer","secretary","supervisor","other"] = "technician"
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    community: Optional[str] = ""       # Zona / comunidad asignada
+    hire_date: Optional[str] = None     # YYYY-MM-DD
+    daily_rate: Optional[float] = None
+    active: bool = True
+    notes: Optional[str] = ""
+    user_id: Optional[str] = None       # Vincular a usuario del sistema (opcional)
+
+class TrabajadorUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[Literal["technician","installer","secretary","supervisor","other"]] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    community: Optional[str] = None
+    hire_date: Optional[str] = None
+    daily_rate: Optional[float] = None
+    active: Optional[bool] = None
+    notes: Optional[str] = None
+    user_id: Optional[str] = None
 
 class BusinessConfigIn(BaseModel):
     business_name: Optional[str] = ""
@@ -989,6 +1045,58 @@ async def delete_arqueo(aid: str, _: dict = Depends(require_roles("owner","admin
     return {"ok": True}
 
 # ---------- WhatsApp ----------
+DEFAULT_FUNNELS = [
+    {"name": "Nuevos", "color": "#38bdf8", "order": 0, "is_default": True},
+    {"name": "En proceso", "color": "#f59e0b", "order": 1, "is_default": False},
+    {"name": "Esperando pago", "color": "#a78bfa", "order": 2, "is_default": False},
+    {"name": "Cerrado", "color": "#22c55e", "order": 3, "is_default": False},
+]
+
+async def _ensure_default_funnel_id() -> str:
+    doc = await db.whatsapp_funnels.find_one({"is_default": True}, {"_id": 0, "id": 1})
+    if doc:
+        return doc["id"]
+    any_doc = await db.whatsapp_funnels.find_one({}, {"_id": 0, "id": 1})
+    return any_doc["id"] if any_doc else ""
+
+async def _get_or_create_conversation(phone: str, client_id: Optional[str] = None) -> dict:
+    conv = await db.whatsapp_conversations.find_one({"phone": phone}, {"_id": 0})
+    if conv:
+        return conv
+    funnel_id = await _ensure_default_funnel_id()
+    conv = {
+        "id": new_id(),
+        "phone": phone,
+        "client_id": client_id,
+        "funnel_id": funnel_id,
+        "assigned_to": None,
+        "tags": [],
+        "notes": "",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.whatsapp_conversations.insert_one(conv)
+    conv.pop("_id", None)
+    return conv
+
+async def _get_wa_config() -> dict:
+    cfg = await db.whatsapp_config.find_one({"id": "singleton"}, {"_id": 0})
+    if not cfg:
+        cfg = {
+            "id": "singleton",
+            "provider": "simulated",
+            "base_url": "",
+            "api_key": "",
+            "instance": "",
+            "webhook_token": "",
+            "connected": False,
+            "last_status_at": None,
+            "user_jid": None,
+        }
+        await db.whatsapp_config.insert_one(cfg)
+        cfg.pop("_id", None)
+    return cfg
+
 @api.get("/whatsapp/messages")
 async def list_wa(client_id: Optional[str] = None, phone: Optional[str] = None, _: dict = Depends(get_current_user)):
     q = {}
@@ -998,12 +1106,59 @@ async def list_wa(client_id: Optional[str] = None, phone: Optional[str] = None, 
     return items
 
 @api.post("/whatsapp/messages")
-async def create_wa(payload: WhatsAppMessageIn, _: dict = Depends(get_current_user)):
+async def create_wa(payload: WhatsAppMessageIn, user: dict = Depends(get_current_user)):
     doc = payload.dict()
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
     doc["status"] = "queued" if payload.direction == "outgoing" else "received"
+    if payload.direction == "outgoing":
+        doc["responded_by"] = user.get("id")
+        doc["responded_by_name"] = user.get("name") or user.get("email")
     await db.whatsapp.insert_one(doc)
+    await _get_or_create_conversation(payload.phone, payload.client_id)
+    await db.whatsapp_conversations.update_one(
+        {"phone": payload.phone},
+        {"$set": {"updated_at": doc["created_at"], "last_body": payload.body[:200],
+                  "last_direction": payload.direction, "client_id": payload.client_id}}
+    )
+
+    # Attempt real delivery when a provider is configured
+    if payload.direction == "outgoing":
+        cfg = await _get_wa_config()
+        if cfg.get("provider") not in (None, "", "simulated") and cfg.get("base_url"):
+            try:
+                import httpx
+                headers = {"Content-Type": "application/json"}
+                if cfg.get("api_key"):
+                    headers["Authorization"] = f"Bearer {cfg['api_key']}"
+                    headers["apikey"] = cfg["api_key"]
+                # Provider-specific payloads
+                url = cfg["base_url"].rstrip("/")
+                instance = cfg.get("instance") or "default"
+                if cfg["provider"] == "evolution":
+                    endpoint = f"{url}/message/sendText/{instance}"
+                    payload_body = {"number": payload.phone, "text": payload.body}
+                elif cfg["provider"] == "waha":
+                    endpoint = f"{url}/api/sendText"
+                    payload_body = {"session": instance, "chatId": f"{payload.phone.replace('+','')}@c.us", "text": payload.body}
+                else:  # baileys/wasenderapi/custom
+                    endpoint = f"{url}/send"
+                    payload_body = {"phone_number": payload.phone, "message": payload.body, "instance": instance}
+                async with httpx.AsyncClient(timeout=8.0) as hc:
+                    r = await hc.post(endpoint, json=payload_body, headers=headers)
+                    if r.status_code < 400:
+                        await db.whatsapp.update_one({"id": doc["id"]}, {"$set": {"status": "sent",
+                                                                                  "provider_response": r.json() if r.content else {}}})
+                        doc["status"] = "sent"
+                    else:
+                        await db.whatsapp.update_one({"id": doc["id"]}, {"$set": {"status": "failed",
+                                                                                  "provider_error": r.text[:400]}})
+                        doc["status"] = "failed"
+            except Exception as e:  # pragma: no cover - network dependent
+                await db.whatsapp.update_one({"id": doc["id"]}, {"$set": {"status": "failed",
+                                                                          "provider_error": str(e)[:400]}})
+                doc["status"] = "failed"
+
     doc.pop("_id", None)
     return doc
 
@@ -1016,8 +1171,246 @@ async def simulate_incoming(payload: WhatsAppMessageIn, _: dict = Depends(get_cu
     doc["created_at"] = now_iso()
     doc["status"] = "received"
     await db.whatsapp.insert_one(doc)
+    await _get_or_create_conversation(payload.phone, payload.client_id)
+    await db.whatsapp_conversations.update_one(
+        {"phone": payload.phone},
+        {"$set": {"updated_at": doc["created_at"], "last_body": payload.body[:200],
+                  "last_direction": "incoming", "client_id": payload.client_id}}
+    )
     doc.pop("_id", None)
     return doc
+
+# --- Provider config & connection ---
+@api.get("/whatsapp/config")
+async def get_wa_config(_: dict = Depends(require_roles("owner","admin"))):
+    cfg = await _get_wa_config()
+    # Mask api_key on read
+    if cfg.get("api_key"):
+        cfg["api_key_masked"] = cfg["api_key"][:4] + "•••" + cfg["api_key"][-3:] if len(cfg["api_key"]) > 7 else "•••"
+    cfg.pop("api_key", None)
+    return cfg
+
+@api.patch("/whatsapp/config")
+async def update_wa_config(payload: WhatsAppConfigIn, _: dict = Depends(require_roles("owner","admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    update["updated_at"] = now_iso()
+    await db.whatsapp_config.update_one({"id": "singleton"}, {"$set": update}, upsert=True)
+    return await get_wa_config()
+
+@api.get("/whatsapp/status")
+async def wa_status(_: dict = Depends(get_current_user)):
+    cfg = await _get_wa_config()
+    provider = cfg.get("provider") or "simulated"
+    if provider == "simulated" or not cfg.get("base_url"):
+        return {"provider": provider, "connected": False, "mode": "simulated", "user_jid": None}
+
+    # Try to fetch status from provider
+    import httpx
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+        headers["apikey"] = cfg["api_key"]
+    url = cfg["base_url"].rstrip("/")
+    instance = cfg.get("instance") or "default"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as hc:
+            if provider == "evolution":
+                r = await hc.get(f"{url}/instance/connectionState/{instance}", headers=headers)
+            elif provider == "waha":
+                r = await hc.get(f"{url}/api/sessions/{instance}", headers=headers)
+            else:
+                r = await hc.get(f"{url}/status", headers=headers)
+            data = r.json() if r.content else {}
+    except Exception as e:
+        return {"provider": provider, "connected": False, "mode": "provider", "error": str(e)[:200]}
+
+    connected = bool(data.get("connected") or data.get("state") == "open" or data.get("status") == "WORKING")
+    user_jid = (data.get("user") or {}).get("id") if isinstance(data.get("user"), dict) else data.get("me")
+    await db.whatsapp_config.update_one({"id": "singleton"}, {"$set": {
+        "connected": connected, "last_status_at": now_iso(), "user_jid": user_jid,
+    }})
+    return {"provider": provider, "connected": connected, "mode": "provider", "user_jid": user_jid, "raw": data}
+
+@api.get("/whatsapp/qr")
+async def wa_qr(_: dict = Depends(require_roles("owner","admin"))):
+    """Return QR code from configured provider (base64 or URL).
+
+    When no provider is configured returns {mode: 'simulated'} — the frontend then
+    tells the user how to plug in a Baileys/Evolution/WAHA instance.
+    """
+    cfg = await _get_wa_config()
+    provider = cfg.get("provider") or "simulated"
+    if provider == "simulated" or not cfg.get("base_url"):
+        return {"mode": "simulated", "qr": None,
+                "message": "Configura tu proveedor (Baileys/Evolution/WAHA) en Configurar para habilitar el QR."}
+
+    import httpx
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+        headers["apikey"] = cfg["api_key"]
+    url = cfg["base_url"].rstrip("/")
+    instance = cfg.get("instance") or "default"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as hc:
+            if provider == "evolution":
+                r = await hc.get(f"{url}/instance/connect/{instance}", headers=headers)
+            elif provider == "waha":
+                r = await hc.get(f"{url}/api/sessions/{instance}/auth/qr?format=raw", headers=headers)
+            else:
+                r = await hc.get(f"{url}/qr", headers=headers)
+            data = r.json() if r.headers.get("content-type","").startswith("application/json") else {"qr": r.text}
+    except Exception as e:
+        return {"mode": "provider", "qr": None, "error": str(e)[:200]}
+    qr = data.get("qr") or data.get("qrcode") or data.get("base64") or data.get("code")
+    return {"mode": "provider", "qr": qr, "raw": data}
+
+@api.post("/whatsapp/disconnect")
+async def wa_disconnect(_: dict = Depends(require_roles("owner","admin"))):
+    cfg = await _get_wa_config()
+    if cfg.get("provider") in (None, "", "simulated") or not cfg.get("base_url"):
+        await db.whatsapp_config.update_one({"id": "singleton"}, {"$set": {"connected": False}})
+        return {"ok": True, "mode": "simulated"}
+    import httpx
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+        headers["apikey"] = cfg["api_key"]
+    url = cfg["base_url"].rstrip("/")
+    instance = cfg.get("instance") or "default"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as hc:
+            if cfg["provider"] == "evolution":
+                await hc.delete(f"{url}/instance/logout/{instance}", headers=headers)
+            elif cfg["provider"] == "waha":
+                await hc.post(f"{url}/api/sessions/{instance}/stop", headers=headers)
+            else:
+                await hc.post(f"{url}/disconnect", headers=headers)
+    except Exception:
+        pass
+    await db.whatsapp_config.update_one({"id": "singleton"}, {"$set": {"connected": False, "user_jid": None}})
+    return {"ok": True}
+
+@api.post("/whatsapp/webhook")
+async def wa_webhook(request: Request):
+    """Receives inbound messages from the configured provider.
+
+    Provider must include header X-Webhook-Token = whatsapp_config.webhook_token,
+    OR ?token=... query param. This endpoint accepts multiple provider payload shapes.
+    """
+    cfg = await _get_wa_config()
+    expected = cfg.get("webhook_token") or ""
+    token = request.headers.get("x-webhook-token") or request.query_params.get("token") or ""
+    if not expected:
+        raise HTTPException(400, "Webhook token no configurado. Ajusta el token en /whatsapp/config.")
+    import hmac
+    if not hmac.compare_digest(expected, token):
+        raise HTTPException(401, "Webhook token inválido")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # Normalize
+    phone = (body.get("phone") or body.get("from") or body.get("sender")
+             or (body.get("data") or {}).get("key", {}).get("remoteJid") or "")
+    if isinstance(phone, str):
+        phone = phone.replace("@s.whatsapp.net", "").replace("@c.us", "")
+    text = (body.get("body") or body.get("message") or body.get("text")
+            or ((body.get("data") or {}).get("message") or {}).get("conversation") or "")
+    provider_message_id = body.get("provider_message_id") or body.get("id") \
+        or ((body.get("data") or {}).get("key") or {}).get("id")
+    sender_name = body.get("sender_name") or (body.get("data") or {}).get("pushName")
+
+    if not phone or not text:
+        return {"ok": True, "ignored": True, "reason": "missing phone or text"}
+
+    # Idempotency: skip if provider_message_id already stored
+    if provider_message_id:
+        exists = await db.whatsapp.find_one({"provider_message_id": provider_message_id}, {"_id": 0, "id": 1})
+        if exists:
+            return {"ok": True, "duplicate": True}
+
+    client = await db.clients.find_one({"phone": phone}, {"_id": 0, "id": 1, "full_name": 1})
+    doc = {
+        "id": new_id(),
+        "client_id": client["id"] if client else None,
+        "phone": phone,
+        "body": text,
+        "direction": "incoming",
+        "kind": "chat",
+        "channel": "whatsapp",
+        "status": "received",
+        "provider_message_id": provider_message_id,
+        "sender_name": sender_name,
+        "created_at": now_iso(),
+    }
+    await db.whatsapp.insert_one(doc)
+    await _get_or_create_conversation(phone, doc["client_id"])
+    await db.whatsapp_conversations.update_one(
+        {"phone": phone},
+        {"$set": {"updated_at": doc["created_at"], "last_body": text[:200],
+                  "last_direction": "incoming"}}
+    )
+    doc.pop("_id", None)
+    return {"ok": True, "message": doc}
+
+# --- Funnels (embudos) ---
+@api.get("/whatsapp/funnels")
+async def list_funnels(_: dict = Depends(get_current_user)):
+    items = await db.whatsapp_funnels.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return items
+
+@api.post("/whatsapp/funnels")
+async def create_funnel(payload: WhatsAppFunnelIn, _: dict = Depends(require_roles("owner","admin"))):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    if payload.is_default:
+        await db.whatsapp_funnels.update_many({}, {"$set": {"is_default": False}})
+    await db.whatsapp_funnels.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.patch("/whatsapp/funnels/{fid}")
+async def update_funnel(fid: str, payload: WhatsAppFunnelUpdate, _: dict = Depends(require_roles("owner","admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    r = await db.whatsapp_funnels.update_one({"id": fid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Embudo no encontrado")
+    return await db.whatsapp_funnels.find_one({"id": fid}, {"_id": 0})
+
+@api.delete("/whatsapp/funnels/{fid}")
+async def delete_funnel(fid: str, _: dict = Depends(require_roles("owner","admin"))):
+    target = await db.whatsapp_funnels.find_one({"id": fid}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "Embudo no encontrado")
+    if target.get("is_default"):
+        raise HTTPException(400, "No se puede eliminar el embudo por defecto")
+    default_id = await _ensure_default_funnel_id()
+    await db.whatsapp_conversations.update_many({"funnel_id": fid}, {"$set": {"funnel_id": default_id}})
+    await db.whatsapp_funnels.delete_one({"id": fid})
+    return {"ok": True, "moved_to": default_id}
+
+# --- Conversations ---
+@api.get("/whatsapp/conversations")
+async def list_conversations(_: dict = Depends(get_current_user)):
+    items = await db.whatsapp_conversations.find({}, {"_id": 0}).sort("updated_at", -1).to_list(2000)
+    return items
+
+@api.patch("/whatsapp/conversations/{phone}")
+async def update_conversation(phone: str, payload: WhatsAppConversationUpdate, _: dict = Depends(get_current_user)):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    # Ensure conversation exists
+    await _get_or_create_conversation(phone)
+    await db.whatsapp_conversations.update_one({"phone": phone}, {"$set": update})
+    return await db.whatsapp_conversations.find_one({"phone": phone}, {"_id": 0})
 
 @api.get("/inbox")
 async def inbox(_: dict = Depends(get_current_user)):
@@ -1278,6 +1671,40 @@ async def onus_status(_: dict = Depends(get_current_user)):
         },
     }
 
+# ---------- Trabajadores (workforce roster) ----------
+@api.get("/trabajadores")
+async def list_trabajadores(_: dict = Depends(get_current_user)):
+    items = await db.trabajadores.find({}, {"_id": 0}).sort("full_name", 1).to_list(2000)
+    return items
+
+@api.post("/trabajadores")
+async def create_trabajador(payload: TrabajadorIn, _: dict = Depends(require_roles("owner","admin"))):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    await db.trabajadores.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.patch("/trabajadores/{tid}")
+async def update_trabajador(tid: str, payload: TrabajadorUpdate,
+                            _: dict = Depends(require_roles("owner","admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.trabajadores.update_one({"id": tid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Trabajador no encontrado")
+    return await db.trabajadores.find_one({"id": tid}, {"_id": 0})
+
+@api.delete("/trabajadores/{tid}")
+async def delete_trabajador(tid: str, _: dict = Depends(require_roles("owner","admin"))):
+    r = await db.trabajadores.delete_one({"id": tid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Trabajador no encontrado")
+    return {"ok": True}
+
 # ---------- Startup ----------
 async def _run_suspend_overdue(run_id: str):
     """Background worker that suspends clients whose next_due_date has passed.
@@ -1340,6 +1767,17 @@ async def seed():
     await db.users.create_index("email", unique=True)
     await db.clients.create_index("status")
     await db.payments.create_index("client_id")
+    await db.whatsapp_funnels.create_index("id", unique=True)
+    await db.whatsapp_conversations.create_index("phone", unique=True)
+    await db.whatsapp.create_index("provider_message_id", sparse=True)
+
+    # Seed default WhatsApp funnels once
+    existing_funnel_count = await db.whatsapp_funnels.count_documents({})
+    if existing_funnel_count == 0:
+        for f in DEFAULT_FUNNELS:
+            await db.whatsapp_funnels.insert_one({
+                "id": new_id(), "created_at": now_iso(), **f
+            })
     admin_email = os.environ["ADMIN_EMAIL"].lower().strip()
     admin_password = os.environ["ADMIN_PASSWORD"]
     admin_name = os.environ.get("ADMIN_NAME", "Owner")

@@ -23,7 +23,9 @@ CRM para negocio ISP tipo Wispro: dashboard, clientes con fecha de pago flexible
 - Mongo con `id` UUID string (sin ObjectId leak).
 
 ## What's been implemented (2026-02)
-- **Sidebar reagrupado** en 3 secciones: Operación (Panel de control, Clientes, Pagos, Promesas, Arqueo, WhatsApp), Red (Planes, Extras, Mapa, OLT/ONUs, ONUs Online/Offline, Mikrotik), Sistema (Tareas, Usuarios, Configuración).
+- **WhatsApp v2 — QR + Embudos (2026-02-05)**: nuevo módulo con Kanban de embudos personalizables (`Nuevos / En proceso / Esperando pago / Cerrado` como seed), etiquetado automático del respondedor en cada mensaje saliente (`responded_by_name`), diálogo QR con status en vivo (conectado/desconectado/simulado), diálogo de configuración multi-proveedor (Baileys / Evolution / WAHA / WasenderAPI / custom) con base_url + api_key + instance + webhook_token, endpoint `/api/whatsapp/webhook` con validación por `X-Webhook-Token` + idempotencia via `provider_message_id`, envío real vía proveedor cuando configurado (Evolution/WAHA/Baileys), CRUD completo de embudos con default protegido, y asignación de conversaciones a usuarios operadores. UI en Kanban con drawer de chat, mover con select, y drag por dropdown per-card. 15 pytest cubriendo funnels/webhooks/idempotencia/tagging.
+- **Trabajadores (2026-02-05)**: nuevo módulo bajo Sistema. Nómina operativa con rol (técnico / instalador / secretaria / supervisor / otro), zona/comunidad, teléfono, email, sueldo diario, fecha de ingreso, vínculo opcional a usuario del sistema. KPIs (total/activos/campo), tabla con edit + delete, badges de rol coloreados, pytest CRUD.
+- **Sidebar reagrupado** en 3 secciones: Operación (Panel de control, Clientes, Pagos, Promesas, Arqueo, WhatsApp), Red (Planes, Extras, Mapa, OLT/ONUs, ONUs Online/Offline, Mikrotik), Sistema (Tareas, Trabajadores, Usuarios, Configuración).
 - **Auto-billing cron**: `POST /api/cron/suspend-overdue` autenticado con `WEBHOOK_CRON_SECRET`, corre cada día a las 09:00 UTC via `.emergent/crons.yml`, suspende clientes con `next_due_date` vencido, historial en `GET /api/cron/runs`.
 - **Módulo ONUs Online/Offline** (/onus): diagrama de tarjetas con potencia dBm, RX/TX Mb, tiempo de conexión, feed de alarmas > 60min, ordenamiento por estado/nombre/IP/tiempo, auto-refresh 20s.
 - **Módulo Arqueo de caja**: filtros por rango/mes/cobrador/método, selección múltiple con total en vivo, historial con detalle expandible.
@@ -36,7 +38,7 @@ CRM para negocio ISP tipo Wispro: dashboard, clientes con fecha de pago flexible
 - Panel de control con KPIs financieros, 12 meses de ingresos, últimos pagos y dispositivos online.
 - Panel OLT/ONUs con datos derivados (potencia dBm, RX/TX, IP) + umbrales configurables.
 - Mapa NAP interactivo (leaflet dark tiles) con markers de cajas y clientes coloreados por estado.
-- WhatsApp: bandeja bidireccional simulada + endpoint `/simulate-incoming` + buscador de conversaciones.
+- WhatsApp: bandeja bidireccional con Kanban de embudos personalizables, QR/status/webhook por proveedor externo (Baileys/Evolution/WAHA), tag del respondedor y buscador de conversaciones.
 - Tareas: Kanban 4 stages con drag por botones + buscador + detalle modal.
 - Configuración del negocio: nombre, RFC, moneda, logo, umbrales ONU, minutos para alerta.
 - Seed automático del admin owner benjahr1993@gmail.com.
@@ -54,10 +56,8 @@ CRM para negocio ISP tipo Wispro: dashboard, clientes con fecha de pago flexible
 
 ## Backlog (P0)
 - Integración Stripe (checkout + webhook para pagos por transferencia/tarjeta que activen cliente automáticamente).
-- Integración real WhatsApp (Twilio Business API o similar).
 - Vínculo real con OLT (SNMP/Telnet/API) y Mikrotik (RouterOS API) por VPN/IP pública.
 - Heartbeat automático + marcar `last_seen` y disparar alerta cuando > umbral.
-- Job programado para suspender clientes vencidos automáticamente.
 - Facturación PDF descargable (facturas manuales).
 
 ## Backlog (P1)
