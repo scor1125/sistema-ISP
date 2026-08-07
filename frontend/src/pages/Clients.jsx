@@ -265,9 +265,21 @@ export default function Clients() {
     { name: "wifi_password", label: "Contraseña del WiFi", placeholder: "Contraseña asignada" },
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v, i]) => ({ value: v, label: i.label })) },
     { name: "tag", label: "Etiqueta", placeholder: "Ej: VIP, Moroso, Preferente…" },
-    { name: "installer_id", label: "Técnico que instaló", type: "select",
+    { name: "installer_ids", label: "Técnicos que instalaron", type: "multiselect",
+      placeholder: "Selecciona uno o más técnicos…",
       options: users.map((u) => ({ value: u.id, label: `${u.name}${u.role ? " · " + u.role : ""}` })),
-      hint: users.length ? undefined : "Sin usuarios registrados — crea usuarios en el panel de Usuarios.",
+      hint: users.length ? "Puedes elegir varios técnicos que participaron en la instalación." : "Sin usuarios registrados — crea usuarios en el panel de Usuarios.",
+    },
+    { name: "vlan", label: "VLAN", type: "number", placeholder: "Ej: 100",
+      hint: "Número de VLAN asignada al cliente en el switch/Mikrotik.",
+    },
+    { name: "onu_mac", label: "MAC de la ONU",
+      placeholder: "aa:bb:cc:dd:ee:ff",
+      suggestions: (() => {
+        const macs = onus.map((o) => o.mac).filter(Boolean);
+        return Array.from(new Set(macs));
+      })(),
+      hint: "Amarra la ONU a su IP. Elige de la lista o pega la MAC.",
     },
   ];
 
@@ -277,6 +289,13 @@ export default function Clients() {
       if (payload.plan_id === "") payload.plan_id = null;
       if (payload.nap_box_id === "") payload.nap_box_id = null;
       if (payload.installer_id === "") payload.installer_id = null;
+      // installer_ids arrives as an array; mirror the first one to legacy
+      // installer_id so older code paths keep working.
+      if (Array.isArray(payload.installer_ids)) {
+        payload.installer_id = payload.installer_ids[0] || null;
+      }
+      if (payload.vlan === "" || payload.vlan == null) payload.vlan = null;
+      if (payload.onu_mac) payload.onu_mac = String(payload.onu_mac).trim().toLowerCase();
       if (editing) {
         await api.patch(`/clients/${editing.id}`, payload);
         toast.success("Cliente actualizado");
@@ -560,7 +579,16 @@ export default function Clients() {
         onOpenChange={(v) => { setOpen(v); if (!v) setEditing(null); }}
         title={editing ? "Editar cliente" : "Nuevo cliente"}
         fields={fields}
-        initial={editing || { payment_day: 1, status: "new" }}
+        initial={editing
+          ? {
+              ...editing,
+              // Seed installer_ids from legacy installer_id when only the old
+              // field exists on this record — so the multi-select is prefilled.
+              installer_ids: Array.isArray(editing.installer_ids) && editing.installer_ids.length > 0
+                ? editing.installer_ids
+                : (editing.installer_id ? [editing.installer_id] : []),
+            }
+          : { payment_day: 1, status: "new", installer_ids: [] }}
         onSubmit={save}
         size="full"
       />

@@ -179,6 +179,9 @@ class ClientIn(BaseModel):
     wifi_password: Optional[str] = ""
     tag: Optional[str] = ""
     installer_id: Optional[str] = None
+    installer_ids: Optional[List[str]] = []
+    vlan: Optional[int] = None
+    onu_mac: Optional[str] = ""
     status: Literal["active","suspended","offline","new"] = "new"
     notes: Optional[str] = ""
 
@@ -202,6 +205,9 @@ class ClientUpdate(BaseModel):
     wifi_password: Optional[str] = None
     tag: Optional[str] = None
     installer_id: Optional[str] = None
+    installer_ids: Optional[List[str]] = None
+    vlan: Optional[int] = None
+    onu_mac: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
 
@@ -1645,11 +1651,15 @@ async def list_onus(_: dict = Depends(get_current_user)):
         power = c.get("onu_power_dbm") or round(-28.5 + (h[4] / 255.0) * 16.5, 2)  # -28.5..-12
         rx_mbps = round(1 + (h[5] / 255.0) * 89, 1)
         tx_mbps = round(0.2 + (h[6] / 255.0) * 11.8, 1)
+        # Derive a stable MAC from the same hash so the ONU list can populate
+        # the Clients form MAC picker without needing real OLT data yet.
+        mac = ":".join(f"{h[9 + i]:02x}" for i in range(6))
         result.append({
             "client_id": c["id"],
             "full_name": c["full_name"],
             "onu_serial": c.get("onu_serial") or f"ONU{seed:08X}",
             "ip_address": c.get("ip_address") or f"10.10.{h[7] % 255}.{h[8] % 255}",
+            "mac": mac,
             "mikrotik_server": c.get("mikrotik_server") or "srv-01",
             "status": c.get("status"),
             "power_dbm": power,

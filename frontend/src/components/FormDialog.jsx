@@ -185,6 +185,109 @@ function FieldControl({ field, value, onChange, inputId, values }) {
   );
 }
 
+function MultiSelectField({ field, value, onChange, testId, values }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const rawOpts = typeof field.options === "function" ? field.options(values) : (field.options || []);
+  const options = rawOpts.filter((o) => String(o.value ?? "") !== "");
+  const selected = Array.isArray(value) ? value.map(String) : [];
+  const filtered = q
+    ? options.filter((o) => String(o.label).toLowerCase().includes(q.toLowerCase()))
+    : options;
+
+  const toggle = (v) => {
+    const s = new Set(selected);
+    if (s.has(v)) s.delete(v); else s.add(v);
+    onChange(field.name, Array.from(s));
+  };
+
+  const remove = (v) => {
+    onChange(field.name, selected.filter((x) => x !== v));
+  };
+
+  const selectedOptions = selected
+    .map((s) => options.find((o) => String(o.value) === s))
+    .filter(Boolean);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid={testId}
+          className="w-full min-h-[40px] rounded-md border border-input bg-background px-2 py-1.5 text-sm text-left hover:bg-accent/20 transition-colors flex flex-wrap items-center gap-1"
+        >
+          {selectedOptions.length === 0 && (
+            <span className="text-muted-foreground text-xs">{field.placeholder || "Seleccionar…"}</span>
+          )}
+          {selectedOptions.map((o) => (
+            <Badge
+              key={o.value}
+              variant="outline"
+              className="gap-1 pl-2 pr-1 py-0.5 text-xs bg-primary/10 border-primary/30"
+              data-testid={`${testId}-chip-${o.value}`}
+            >
+              <span className="truncate max-w-[180px]">{o.label}</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); remove(String(o.value)); }}
+                className="ml-0.5 hover:text-red-400"
+                data-testid={`${testId}-remove-${o.value}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </Badge>
+          ))}
+          <ChevronDown className="w-3.5 h-3.5 ml-auto text-muted-foreground shrink-0" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0 max-h-[320px] overflow-hidden flex flex-col">
+        <div className="p-2 border-b border-border">
+          <Input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar…"
+            className="h-8 text-xs"
+            data-testid={`${testId}-search`}
+          />
+        </div>
+        <div className="overflow-y-auto flex-1 py-1">
+          {filtered.length === 0 && (
+            <div className="px-3 py-4 text-xs text-muted-foreground text-center">Sin opciones</div>
+          )}
+          {filtered.map((o) => {
+            const isChecked = selected.includes(String(o.value));
+            return (
+              <label
+                key={o.value}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-accent cursor-pointer text-sm"
+                data-testid={`${testId}-option-${o.value}`}
+              >
+                <Checkbox checked={isChecked} onCheckedChange={() => toggle(String(o.value))} />
+                <span className="truncate">{o.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        {selected.length > 0 && (
+          <div className="p-2 border-t border-border flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground font-mono">{selected.length} seleccionados</span>
+            <button
+              type="button"
+              onClick={() => onChange(field.name, [])}
+              className="text-muted-foreground hover:text-foreground underline"
+              data-testid={`${testId}-clear`}
+            >
+              Limpiar
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function SuggestionInputDropdown({ inputId, testId, field, value, onChange }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
