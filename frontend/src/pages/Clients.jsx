@@ -273,13 +273,9 @@ export default function Clients() {
     { name: "vlan", label: "VLAN", type: "number", placeholder: "Ej: 100",
       hint: "Número de VLAN asignada al cliente en el switch/Mikrotik.",
     },
-    { name: "onu_mac", label: "MAC de la ONU",
+    { name: "onu_mac", label: "MAC de la ONU", type: "mac-picker",
       placeholder: "aa:bb:cc:dd:ee:ff",
-      suggestions: (() => {
-        const macs = onus.map((o) => o.mac).filter(Boolean);
-        return Array.from(new Set(macs));
-      })(),
-      hint: "Amarra la ONU a su IP. Elige de la lista o pega la MAC.",
+      hint: "Usa el botón Buscar para elegir de las MACs detectadas por la OLT (o pega manualmente).",
     },
   ];
 

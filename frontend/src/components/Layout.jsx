@@ -35,7 +35,7 @@ const NAV = [
   { to: "/onus", label: "ONUs Online/Offline", icon: Wifi, group: "Red" },
   { to: "/mikrotik", label: "Mikrotik", icon: Router, group: "Red" },
   { to: "/tareas", label: "Tareas", icon: ListTodo, group: "Sistema" },
-  { to: "/trabajadores", label: "Trabajadores", icon: HardHat, group: "Sistema" },
+  { to: "/colaboradores", label: "Colaboradores", icon: HardHat, group: "Sistema" },
   { to: "/usuarios", label: "Usuarios sistema", icon: UserCog, group: "Sistema" },
   { to: "/configuracion", label: "Configuración", icon: Settings, group: "Sistema" },
 ];

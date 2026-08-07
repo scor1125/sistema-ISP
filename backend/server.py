@@ -358,6 +358,7 @@ class TrabajadorIn(BaseModel):
     active: bool = True
     notes: Optional[str] = ""
     user_id: Optional[str] = None       # Vincular a usuario del sistema (opcional)
+    work_days: Optional[List[str]] = []  # ISO dates (YYYY-MM-DD) trabajado
 
 class PortalLoginIn(BaseModel):
     phone: str
@@ -2107,6 +2108,80 @@ async def delete_trabajador(tid: str, _: dict = Depends(require_roles("owner","a
     if r.deleted_count == 0:
         raise HTTPException(404, "Trabajador no encontrado")
     return {"ok": True}
+
+
+class WorkDayIn(BaseModel):
+    date: str  # YYYY-MM-DD
+
+def _week_bounds(anchor_iso: Optional[str] = None) -> tuple[str, str]:
+    """Return the ISO date bounds (Sunday..Saturday inclusive) of the week
+    containing ``anchor_iso`` — pay week runs Sun→Sat with cut-off Saturday."""
+    if anchor_iso:
+        try:
+            anchor = datetime.strptime(anchor_iso[:10], "%Y-%m-%d").date()
+        except ValueError:
+            anchor = datetime.now(timezone.utc).date()
+    else:
+        anchor = datetime.now(timezone.utc).date()
+    # Sunday=6 in Python's weekday() (Mon=0..Sun=6). Move back to previous Sunday.
+    days_since_sunday = (anchor.weekday() + 1) % 7  # Sun->0, Mon->1, ..., Sat->6
+    sunday = anchor - timedelta(days=days_since_sunday)
+    saturday = sunday + timedelta(days=6)
+    return sunday.isoformat(), saturday.isoformat()
+
+@api.post("/trabajadores/{tid}/work-days/toggle")
+async def toggle_work_day(tid: str, payload: WorkDayIn,
+                          _: dict = Depends(require_roles("owner","admin","secretary"))):
+    """Marca o desmarca un día trabajado para el colaborador."""
+    doc = await db.trabajadores.find_one({"id": tid}, {"_id": 0, "work_days": 1})
+    if not doc:
+        raise HTTPException(404, "Colaborador no encontrado")
+    days = set(doc.get("work_days") or [])
+    d = payload.date[:10]
+    if d in days:
+        days.remove(d)
+        added = False
+    else:
+        days.add(d)
+        added = True
+    await db.trabajadores.update_one({"id": tid}, {"$set": {
+        "work_days": sorted(days),
+        "updated_at": now_iso(),
+    }})
+    return {"ok": True, "added": added, "date": d, "work_days": sorted(days)}
+
+@api.get("/trabajadores/week-summary")
+async def week_summary(anchor: Optional[str] = None,
+                       _: dict = Depends(get_current_user)):
+    """Resumen semanal (Domingo → Sábado con corte los sábados). Devuelve por
+    cada colaborador activo la cantidad de días trabajados y el monto a pagar
+    esa semana (días × sueldo_diario)."""
+    start, end = _week_bounds(anchor)
+    trabajadores = await db.trabajadores.find({}, {"_id": 0}).sort("full_name", 1).to_list(2000)
+    result = []
+    grand_total = 0.0
+    for t in trabajadores:
+        days = [d for d in (t.get("work_days") or []) if start <= d <= end]
+        rate = float(t.get("daily_rate") or 0)
+        total = round(rate * len(days), 2)
+        grand_total += total
+        result.append({
+            "id": t["id"],
+            "full_name": t["full_name"],
+            "role": t.get("role"),
+            "active": t.get("active", True),
+            "community": t.get("community"),
+            "daily_rate": rate,
+            "days_worked_this_week": days,
+            "days_count": len(days),
+            "weekly_total": total,
+        })
+    return {
+        "week_start": start,     # Sunday
+        "week_end": end,         # Saturday cut-off
+        "grand_total": round(grand_total, 2),
+        "trabajadores": result,
+    }
 
 # ---------- Startup ----------
 async def _run_suspend_overdue(run_id: str):
