@@ -59,7 +59,7 @@ export default function Login() {
             data-testid="brand-title"
             className="font-display font-black text-4xl xl:text-5xl tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-amber-300 via-orange-500 to-rose-600 drop-shadow-[0_2px_18px_rgba(251,146,60,0.35)]"
           >
-            CRM Jupiter
+            EnlaceHR ISP
           </div>
         </div>
         <div>

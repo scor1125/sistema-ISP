@@ -33,7 +33,7 @@ CRM para negocio ISP tipo Wispro: dashboard, clientes con fecha de pago flexible
 - **Módulo Mikrotik rediseñado**: dropdown "+ Nuevo Mikrotik" con opción "VPN/Túnel" → wizard con selector WireGuard/L2TP, credenciales VPN + API autogeneradas, checkboxes PPP/Queues, script RouterOS en vivo (copiar/descargar .rsc).
 - **Diagnóstico Mikrotik** ("Probar" por router): checklist 8 items con TCP real + tráfico simulado (AreaChart) y auto-refresh 4s.
 - **Datos del servidor CRM** (ServerInfoPanel): IP pública, puertos WG/L2TP/OpenVPN, Public Key, red del túnel con botones copiar + editar en `/api/vpn/server-info`.
-- Login + AuthContext + rutas protegidas. Branding **CRM Jupiter** (gradiente ámbar→rosa) en login y sidebar. Footer "Creado por EnlaceHR".
+- Login + AuthContext + rutas protegidas. Branding **EnlaceHR ISP** (gradiente ámbar→rosa) en login y sidebar. Footer "Creado por EnlaceHR".
 - Buscador universal en las 11 listas (Planes, Extras, Usuarios, Pagos, Tareas, OLT, Mikrotik, NAPs, WhatsApp, Clientes, Leads).
 - CRUD completo: Users con edit + reset password, NAP boxes con edit/delete, Payments con PATCH whitelisted, Tasks con edit + detalle, Promises con edit.
 - Panel de control con KPIs financieros, 12 meses de ingresos, últimos pagos y dispositivos online.

@@ -776,22 +776,22 @@ async def mikrotik_script(device_id: str, protocol: str = "wireguard", _: dict =
     # analyzers and prevents runtime NameError).
     script = f"# Protocolo '{proto}' no soportado. Elegí wireguard, l2tp u openvpn."
     steps = ["Protocolo no soportado."]
-    filename = f"crm-jupiter-{name}-unknown.rsc"
+    filename = f"enlacehr-isp-{name}-unknown.rsc"
 
     if proto == "wireguard":
         script = f"""# ============================================================
-# CRM Jupiter · Script de vinculación WireGuard
+# EnlaceHR ISP · Script de vinculación WireGuard
 # Router: {d.get('name')}  ({d.get('host')})
 # Pegar en /system script o ejecutar linea por linea en el terminal.
 # ============================================================
 
 # 1) Crear la interfaz WireGuard (si no existe)
 /interface wireguard
-add listen-port={remote_port} mtu=1420 name={iface} comment="CRM-Jupiter"
+add listen-port={remote_port} mtu=1420 name={iface} comment="EnlaceHR-ISP"
 
 # 2) Asignar IP de tunel al router
 /ip address
-add address=10.100.0.2/24 interface={iface} comment="CRM-Jupiter"
+add address=10.100.0.2/24 interface={iface} comment="EnlaceHR-ISP"
 
 # 3) Registrar el peer (servidor VPN del CRM)
 /interface wireguard peers
@@ -801,15 +801,15 @@ add interface={iface} \\
     allowed-address=10.100.0.0/24 \\
     persistent-keepalive=25s \\
     public-key="<PEGAR_PUBLIC_KEY_DEL_SERVIDOR>" \\
-    comment="CRM-Jupiter"
+    comment="EnlaceHR-ISP"
 
 # 4) Firewall: permitir la VPN entrante
 /ip firewall filter
-add chain=input action=accept protocol=udp dst-port={remote_port} comment="CRM-Jupiter WireGuard"
+add chain=input action=accept protocol=udp dst-port={remote_port} comment="EnlaceHR-ISP WireGuard"
 
 # 5) NAT para que el CRM pueda ver la LAN (opcional)
 # /ip firewall nat
-# add chain=srcnat action=masquerade out-interface={iface} comment="CRM-Jupiter"
+# add chain=srcnat action=masquerade out-interface={iface} comment="EnlaceHR-ISP"
 
 # 6) Verificacion
 /interface wireguard peers print
@@ -823,18 +823,18 @@ add chain=input action=accept protocol=udp dst-port={remote_port} comment="CRM-J
             "En el CRM copiá la Public Key generada por el router: `/interface wireguard print` y pégala en la sección VPN.",
             "Verificá el handshake: `/interface wireguard peers print` — debe mostrar `last-handshake` con un valor reciente.",
         ]
-        filename = f"crm-jupiter-{name}-wireguard.rsc"
+        filename = f"enlacehr-isp-{name}-wireguard.rsc"
 
     elif proto == "l2tp":
         script = f"""# ============================================================
-# CRM Jupiter · Script L2TP/IPsec — {d.get('name')}
+# EnlaceHR ISP · Script L2TP/IPsec — {d.get('name')}
 # ============================================================
 /interface l2tp-client
 add name=l2tp-crm connect-to={remote_host} user=<USUARIO> password=<PASSWORD> \\
-    use-ipsec=yes ipsec-secret=<PSK> add-default-route=no comment="CRM-Jupiter"
+    use-ipsec=yes ipsec-secret=<PSK> add-default-route=no comment="EnlaceHR-ISP"
 
 /ip firewall filter
-add chain=input action=accept protocol=udp dst-port=500,4500,1701 comment="CRM-Jupiter L2TP"
+add chain=input action=accept protocol=udp dst-port=500,4500,1701 comment="EnlaceHR-ISP L2TP"
 
 /interface l2tp-client print
 """
@@ -844,16 +844,16 @@ add chain=input action=accept protocol=udp dst-port=500,4500,1701 comment="CRM-J
             "Verifica con `/interface l2tp-client print` que aparezca `R` (running).",
             "Si no conecta, revisa: `/log print where topics~\"l2tp\"`.",
         ]
-        filename = f"crm-jupiter-{name}-l2tp.rsc"
+        filename = f"enlacehr-isp-{name}-l2tp.rsc"
 
     else:  # openvpn
         script = f"""# ============================================================
-# CRM Jupiter · Script OpenVPN — {d.get('name')}
+# EnlaceHR ISP · Script OpenVPN — {d.get('name')}
 # ============================================================
 # 1) Subí el archivo .ovpn/certificados a Files y luego:
 /interface ovpn-client
 add name=ovpn-crm connect-to={remote_host} port={remote_port} user=<USUARIO> \\
-    password=<PASSWORD> certificate=none auth=sha1 cipher=aes256 comment="CRM-Jupiter"
+    password=<PASSWORD> certificate=none auth=sha1 cipher=aes256 comment="EnlaceHR-ISP"
 
 /interface ovpn-client print
 """
@@ -862,7 +862,7 @@ add name=ovpn-crm connect-to={remote_host} port={remote_port} user=<USUARIO> \\
             "Pega el script en el terminal y reemplaza usuario/contraseña.",
             "Verifica el enlace con `/interface ovpn-client print`.",
         ]
-        filename = f"crm-jupiter-{name}-openvpn.rsc"
+        filename = f"enlacehr-isp-{name}-openvpn.rsc"
 
     return {"filename": filename, "script": script, "steps": steps, "protocol": proto}
 

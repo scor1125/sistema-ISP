@@ -67,7 +67,7 @@ export default function ServerInfoPanel() {
       <div className="flex items-center gap-2 mb-1">
         <Server className="w-4 h-4 text-primary" />
         <div className="font-display font-bold tracking-tight">Datos de este servidor para vincular Mikrotiks</div>
-        <Badge variant="outline" className="ml-2 text-[10px] uppercase font-mono">CRM Jupiter</Badge>
+        <Badge variant="outline" className="ml-2 text-[10px] uppercase font-mono">EnlaceHR ISP</Badge>
         <Button
           size="sm"
           variant="outline"

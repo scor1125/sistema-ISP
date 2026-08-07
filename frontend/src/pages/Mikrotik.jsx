@@ -34,7 +34,7 @@ const buildScript = ({ name, protocol, vpnUser, vpnPass, apiEnabled, apiUser, ap
   const tunnelNet = server?.tunnel_network || "10.100.0.0/24";
 
   let out = `# ============================================================\n`;
-  out += `# CRM Jupiter - Script de vinculacion para: ${name || "(sin nombre)"}\n`;
+  out += `# EnlaceHR ISP - Script de vinculacion para: ${name || "(sin nombre)"}\n`;
   out += `# Protocolo: ${protocol.toUpperCase()}\n`;
   out += `# Pega este script en /system > New Terminal del Mikrotik.\n`;
   out += `# ============================================================\n\n`;
@@ -42,12 +42,12 @@ const buildScript = ({ name, protocol, vpnUser, vpnPass, apiEnabled, apiUser, ap
   if (protocol === "wireguard") {
     out += `# 1) Crear interfaz WireGuard\n`;
     out += `/interface wireguard\n`;
-    out += `add name=${iface} listen-port=${port} mtu=1420 comment="CRM-Jupiter"\n\n`;
+    out += `add name=${iface} listen-port=${port} mtu=1420 comment="EnlaceHR-ISP"\n\n`;
     out += `# 2) Ver la Public Key del router y pegarla en el CRM (preshared_key)\n`;
     out += `/interface wireguard print\n\n`;
     out += `# 3) Asignar IP del tunel al router\n`;
     out += `/ip address\n`;
-    out += `add address=${clientIp} interface=${iface} comment="CRM-Jupiter"\n\n`;
+    out += `add address=${clientIp} interface=${iface} comment="EnlaceHR-ISP"\n\n`;
     out += `# 4) Registrar peer del servidor CRM\n`;
     out += `/interface wireguard peers\n`;
     out += `add interface=${iface} \\\n`;
@@ -56,26 +56,26 @@ const buildScript = ({ name, protocol, vpnUser, vpnPass, apiEnabled, apiUser, ap
     out += `    public-key="${serverKey}" \\\n`;
     out += `    allowed-address=${tunnelNet} \\\n`;
     out += `    persistent-keepalive=25s \\\n`;
-    out += `    comment="CRM-Jupiter"\n\n`;
+    out += `    comment="EnlaceHR-ISP"\n\n`;
     out += `# 5) Firewall: permitir la VPN entrante\n`;
     out += `/ip firewall filter\n`;
-    out += `add chain=input action=accept protocol=udp dst-port=${port} comment="CRM-Jupiter WG"\n\n`;
+    out += `add chain=input action=accept protocol=udp dst-port=${port} comment="EnlaceHR-ISP WG"\n\n`;
   } else if (protocol === "l2tp") {
     out += `# 1) Crear cliente L2TP/IPsec\n`;
     out += `/interface l2tp-client\n`;
     out += `add name=${iface} connect-to=${publicIp} user=${vpnUser || "<VPN_USER>"} password=${vpnPass || "<VPN_PASS>"} \\\n`;
-    out += `    use-ipsec=yes ipsec-secret=CRM-JUPITER-PSK add-default-route=no comment="CRM-Jupiter"\n\n`;
+    out += `    use-ipsec=yes ipsec-secret=CRM-JUPITER-PSK add-default-route=no comment="EnlaceHR-ISP"\n\n`;
     out += `# 2) Firewall: L2TP/IPsec\n`;
     out += `/ip firewall filter\n`;
-    out += `add chain=input action=accept protocol=udp dst-port=500,4500,1701 comment="CRM-Jupiter L2TP"\n\n`;
+    out += `add chain=input action=accept protocol=udp dst-port=500,4500,1701 comment="EnlaceHR-ISP L2TP"\n\n`;
   }
 
   if (apiEnabled) {
     out += `# --- Usuario API para gestion desde el CRM ---\n`;
     out += `/user group\n`;
-    out += `add name=crm-jupiter policy=api,read,write,test,winbox,ssh,web,sensitive comment="CRM-Jupiter"\n`;
+    out += `add name=enlacehr-isp policy=api,read,write,test,winbox,ssh,web,sensitive comment="EnlaceHR-ISP"\n`;
     out += `/user\n`;
-    out += `add name=${apiUser || "crm-api"} password="${apiPass || rand(14)}" group=crm-jupiter comment="CRM-Jupiter"\n`;
+    out += `add name=${apiUser || "crm-api"} password="${apiPass || rand(14)}" group=enlacehr-isp comment="EnlaceHR-ISP"\n`;
     out += `/ip service enable api\n`;
     out += `/ip service enable api-ssl\n\n`;
   }
@@ -83,7 +83,7 @@ const buildScript = ({ name, protocol, vpnUser, vpnPass, apiEnabled, apiUser, ap
   if (modes?.includes("ppp")) {
     out += `# --- Modo PPP: perfil base gestionado por CRM ---\n`;
     out += `/ppp profile\n`;
-    out += `add name=crm-default local-address=10.10.0.1 dns-server=${server?.dns || "1.1.1.1"} comment="CRM-Jupiter"\n`;
+    out += `add name=crm-default local-address=10.10.0.1 dns-server=${server?.dns || "1.1.1.1"} comment="EnlaceHR-ISP"\n`;
     out += `# El CRM creara secretos PPP por cliente automaticamente.\n\n`;
   }
   if (modes?.includes("queues")) {
@@ -125,7 +125,7 @@ function MikrotikWizard({ open, onOpenChange, server, onSaved, initial }) {
     modes: f.management_modes, server,
   }), [f, server]);
 
-  const filename = `crm-jupiter-${(f.name || "mikrotik").replace(/\s+/g, "-").toLowerCase()}.rsc`;
+  const filename = `enlacehr-isp-${(f.name || "mikrotik").replace(/\s+/g, "-").toLowerCase()}.rsc`;
 
   const genVpn = () => setF((p) => ({
     ...p,
