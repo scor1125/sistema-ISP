@@ -46,12 +46,12 @@ def test_client(owner_session):
 
 class TestPortalAuth:
     def test_login_requires_valid_pin(self, test_client):
-        r = requests.post(f"{BASE_URL}/api/portal/login", json={"phone": test_client["phone"], "pin": "000000"})
+        r = requests.post(f"{BASE_URL}/api/portal/login", json={"pin": "000000"})
         assert r.status_code == 401
 
     def test_login_ok(self, test_client):
         s = requests.Session()
-        r = s.post(f"{BASE_URL}/api/portal/login", json={"phone": test_client["phone"], "pin": test_client["portal_pin"]})
+        r = s.post(f"{BASE_URL}/api/portal/login", json={"pin": test_client["portal_pin"]})
         assert r.status_code == 200, r.text
         assert "portal_token" in s.cookies
         assert r.json()["client"]["id"] == test_client["id"]

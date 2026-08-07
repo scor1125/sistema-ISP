@@ -41,19 +41,19 @@ const STATUS_MAP = {
 
 /* --------------- LOGIN --------------- */
 function PortalLogin({ onLoggedIn }) {
-  const [phone, setPhone] = useState("");
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
+    if (pin.trim().length < 4) { toast.error("Ingresa tu PIN"); return; }
     setLoading(true);
     try {
-      const { data } = await portalApi.post("/portal/login", { phone: phone.trim(), pin: pin.trim() });
+      const { data } = await portalApi.post("/portal/login", { pin: pin.trim() });
       toast.success(`Hola ${data.client.full_name?.split(" ")[0] || ""}!`);
       onLoggedIn(data.client);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "No se pudo iniciar sesión");
+      toast.error(e?.response?.data?.detail || "PIN inválido");
     } finally { setLoading(false); }
   };
 
@@ -70,37 +70,24 @@ function PortalLogin({ onLoggedIn }) {
           </div>
         </div>
         <h1 className="text-2xl font-bold text-white mb-1">Bienvenido</h1>
-        <p className="text-sm text-slate-400 mb-5">Ingresa con tu teléfono y PIN para ver tu servicio.</p>
+        <p className="text-sm text-slate-400 mb-5">Ingresa tu PIN de 6 dígitos para acceder a tu servicio.</p>
         <form onSubmit={submit} className="space-y-3">
-          <div>
-            <Label className="text-slate-300 text-xs uppercase tracking-widest font-mono">Teléfono</Label>
-            <div className="relative mt-1">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <Input
-                data-testid="portal-phone"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+52 999 123 4567"
-                className="pl-9 bg-slate-950/50 border-slate-700 text-white"
-                required
-              />
-            </div>
-          </div>
           <div>
             <Label className="text-slate-300 text-xs uppercase tracking-widest font-mono">PIN de 6 dígitos</Label>
             <Input
               data-testid="portal-pin"
+              autoFocus
               value={pin}
-              onChange={(e) => setPin(e.target.value)}
+              onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ""))}
               type="password"
               inputMode="numeric"
               maxLength={6}
               placeholder="••••••"
-              className="mt-1 bg-slate-950/50 border-slate-700 text-white tracking-widest text-center font-mono text-lg"
+              className="mt-1 bg-slate-950/50 border-slate-700 text-white tracking-widest text-center font-mono text-2xl h-14"
               required
             />
           </div>
-          <Button type="submit" disabled={loading} data-testid="portal-login-btn" className="w-full bg-gradient-to-r from-amber-500 to-rose-500 hover:opacity-90 text-white font-semibold">
+          <Button type="submit" disabled={loading || pin.length < 4} data-testid="portal-login-btn" className="w-full bg-gradient-to-r from-amber-500 to-rose-500 hover:opacity-90 text-white font-semibold h-11">
             <LogInIcon className="w-4 h-4 mr-2" />
             {loading ? "Ingresando…" : "Ingresar"}
           </Button>

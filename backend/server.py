@@ -392,8 +392,8 @@ class TrabajadorIn(BaseModel):
     work_days: Optional[List[str]] = []  # ISO dates (YYYY-MM-DD) trabajado
 
 class PortalLoginIn(BaseModel):
-    phone: str
     pin: str
+    phone: Optional[str] = None  # legacy — kept for backwards-compat, ignored when None
 
 class PortalPaymentUploadMeta(BaseModel):
     amount: Optional[float] = None
@@ -1828,15 +1828,29 @@ def _sanitize_client_portal(c: dict) -> dict:
 
 @api.post("/portal/login")
 async def portal_login(payload: PortalLoginIn, response: Response):
-    phone = (payload.phone or "").strip()
-    if not phone or not payload.pin:
-        raise HTTPException(400, "Teléfono y PIN son obligatorios")
-    client = await db.clients.find_one({"phone": phone})
-    if not client or not client.get("portal_pin_hash"):
-        raise HTTPException(401, "Credenciales inválidas")
-    if not verify_password(payload.pin, client["portal_pin_hash"]):
-        raise HTTPException(401, "Credenciales inválidas")
-    token = create_portal_token(client["id"], phone)
+    if not payload.pin:
+        raise HTTPException(400, "El PIN es obligatorio")
+
+    client = None
+    # Fast path — if phone was provided (legacy clients), narrow the search.
+    if payload.phone:
+        phone = payload.phone.strip()
+        candidate = await db.clients.find_one({"phone": phone})
+        if candidate and candidate.get("portal_pin_hash") \
+                and verify_password(payload.pin, candidate["portal_pin_hash"]):
+            client = candidate
+
+    # Otherwise (or if phone lookup failed) scan clients since PINs are unique.
+    if not client:
+        async for doc in db.clients.find({"portal_pin_hash": {"$exists": True}}):
+            if verify_password(payload.pin, doc.get("portal_pin_hash", "")):
+                client = doc
+                break
+
+    if not client:
+        raise HTTPException(401, "PIN inválido")
+
+    token = create_portal_token(client["id"], client.get("phone", ""))
     response.set_cookie(
         "portal_token", token,
         max_age=30 * 24 * 3600, httponly=True, secure=True, samesite="lax", path="/",
