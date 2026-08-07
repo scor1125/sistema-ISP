@@ -14,7 +14,7 @@ from typing import Optional, List, Any, Literal
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, model_validator
 
 # ---------- DB ----------
 mongo_url = os.environ["MONGO_URL"]
@@ -155,9 +155,16 @@ class NapBoxIn(BaseModel):
     name: str
     lat: float
     lng: float
+    port_type: Literal["1x8","1x16"] = "1x16"
     capacity: int = 16
     address: Optional[str] = ""
     notes: Optional[str] = ""
+
+    @model_validator(mode="after")
+    def _derive_capacity(self):
+        # capacity is always derived from port_type so the DB stays consistent
+        self.capacity = 8 if self.port_type == "1x8" else 16
+        return self
 
 class ClientIn(BaseModel):
     full_name: str
@@ -984,6 +991,15 @@ def _next_due_date(payment_day: int, from_iso: Optional[str] = None) -> str:
     day = min(payment_day, 28)
     return datetime(year, month, day, tzinfo=timezone.utc).isoformat()
 
+def _nap_capacity(nap: dict) -> int:
+    """Effective capacity for a NAP box based on its port_type ('1x8'/'1x16')."""
+    pt = nap.get("port_type")
+    if pt == "1x8":
+        return 8
+    if pt == "1x16":
+        return 16
+    return int(nap.get("capacity") or 16)
+
 async def _check_nap_capacity(nap_box_id: str, exclude_client_id: Optional[str] = None):
     if not nap_box_id: return
     nap = await db.nap_boxes.find_one({"id": nap_box_id})
@@ -991,8 +1007,31 @@ async def _check_nap_capacity(nap_box_id: str, exclude_client_id: Optional[str] 
     q = {"nap_box_id": nap_box_id}
     if exclude_client_id: q["id"] = {"$ne": exclude_client_id}
     count = await db.clients.count_documents(q)
-    if count >= nap.get("capacity", 16):
-        raise HTTPException(400, f"La caja NAP '{nap['name']}' está llena ({count}/{nap['capacity']})")
+    cap = _nap_capacity(nap)
+    if count >= cap:
+        raise HTTPException(400, f"La caja NAP '{nap['name']}' está llena ({count}/{cap})")
+
+@api.get("/nap-boxes/status")
+async def nap_status(_: dict = Depends(get_current_user)):
+    """Return every NAP + used count + derived capacity + status label. UI uses this."""
+    naps = await db.nap_boxes.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
+    counts = {}
+    async for c in db.clients.find({"nap_box_id": {"$ne": None}}, {"_id": 0, "nap_box_id": 1}):
+        nid = c.get("nap_box_id")
+        if nid:
+            counts[nid] = counts.get(nid, 0) + 1
+    out = []
+    for n in naps:
+        cap = _nap_capacity(n)
+        used = counts.get(n["id"], 0)
+        if used >= cap:
+            status = "full"
+        elif used == 0:
+            status = "empty"
+        else:
+            status = "partial"
+        out.append({**n, "capacity": cap, "used": used, "available": max(0, cap - used), "status": status})
+    return out
 
 @api.get("/clients")
 async def list_clients(_: dict = Depends(get_current_user)):

@@ -246,7 +246,16 @@ export default function Clients() {
         : "Aún no hay lugares. Ve al módulo Lugares y crea el primero.",
     },
     { name: "plan_id", label: "Plan", type: "select", options: plans.map((p) => ({ value: p.id, label: `${p.name} · ${p.speed_mbps}M · $${p.price}` })) },
-    { name: "nap_box_id", label: "Caja NAP", type: "select", options: naps.map((n) => ({ value: n.id, label: n.name })) },
+    { name: "nap_box_id", label: "Caja NAP", type: "select",
+      options: naps.map((n) => {
+        const cap = n.port_type === "1x8" ? 8 : (n.port_type === "1x16" ? 16 : (n.capacity || 16));
+        // count of current clients on this NAP (excluding the one being edited)
+        const used = clients.filter((c) => c.nap_box_id === n.id && c.id !== editing?.id).length;
+        const full = used >= cap;
+        const label = `${n.name} · ${n.port_type || "1x16"} · ${used}/${cap}${full ? " · LLENA" : ""}`;
+        return { value: n.id, label, disabled: full };
+      }),
+    },
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
     { name: "ip_address", label: "IP",
       suggestions: (() => {

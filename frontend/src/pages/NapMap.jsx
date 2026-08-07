@@ -33,14 +33,20 @@ const STATUS_COLOR = {
 
 const NAP_FIELDS = [
   { name: "name", label: "Nombre", required: true, full: true },
+  { name: "port_type", label: "Tipo de caja", type: "select", required: true,
+    options: [
+      { value: "1x8", label: "1x8 (8 clientes máximo)" },
+      { value: "1x16", label: "1x16 (16 clientes máximo)" },
+    ],
+    hint: "Determina la capacidad máxima de clientes que puede alojar.",
+  },
   { name: "lat", label: "Latitud", type: "number", required: true },
   { name: "lng", label: "Longitud", type: "number", required: true },
-  { name: "capacity", label: "Capacidad", type: "number", required: true },
   { name: "address", label: "Dirección", full: true },
   { name: "notes", label: "Notas", type: "textarea", full: true },
 ];
 
-const INITIAL_NAP = { capacity: 16 };
+const INITIAL_NAP = { port_type: "1x16" };
 
 export default function NapMap() {
   const [naps, setNaps] = useState([]);
@@ -119,7 +125,7 @@ export default function NapMap() {
                 <Popup>
                   <div className="font-medium">{n.name}</div>
                   <div className="text-xs">{n.address}</div>
-                  <div className="text-xs">Ocupación: {countByNap[n.id] || 0}/{n.capacity}</div>
+                  <div className="text-xs">Ocupación: {countByNap[n.id] || 0}/{n.port_type === "1x8" ? 8 : (n.port_type === "1x16" ? 16 : (n.capacity || 16))} ({n.port_type || "1x16"})</div>
                 </Popup>
               </Marker>
             ))}
@@ -134,17 +140,27 @@ export default function NapMap() {
           {filteredNaps.length === 0 && <div className="text-sm text-muted-foreground">{naps.length === 0 ? "Aún no hay cajas NAP." : "Nada coincide con la búsqueda."}</div>}
           {filteredNaps.map((n) => {
             const used = countByNap[n.id] || 0;
-            const full = used >= n.capacity;
+            const cap = n.port_type === "1x8" ? 8 : (n.port_type === "1x16" ? 16 : (n.capacity || 16));
+            const full = used >= cap;
+            const empty = used === 0;
+            const statusBadge = full
+              ? <Badge className="bg-red-500/15 text-red-300 border-red-500/40" variant="outline">Llena</Badge>
+              : empty
+                ? <Badge className="bg-slate-500/10 text-slate-300 border-slate-500/40" variant="outline">Vacía</Badge>
+                : <Badge variant="outline" className="bg-emerald-500/10 text-emerald-300 border-emerald-500/40"><Users className="w-3 h-3 mr-1" />{used}/{cap}</Badge>;
             return (
               <div key={n.id} className="rounded-md border border-border p-3 hover:bg-accent transition-colors" data-testid={`nap-card-${n.id}`}>
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0"><Boxes className="w-4 h-4 text-primary shrink-0" /><div className="font-medium truncate">{n.name}</div></div>
-                  {full ? <Badge className="bg-red-500/10 text-red-400 border border-red-500/30" variant="outline">Llena</Badge>
-                    : <Badge variant="outline"><Users className="w-3 h-3 mr-1" />{used}/{n.capacity}</Badge>}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Boxes className="w-4 h-4 text-primary shrink-0" />
+                    <div className="font-medium truncate">{n.name}</div>
+                    <Badge variant="outline" className="text-[9px] font-mono px-1">{n.port_type || "1x16"}</Badge>
+                  </div>
+                  {statusBadge}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">{n.address}</div>
                 <div className="mt-2 h-1.5 rounded bg-secondary overflow-hidden">
-                  <div className="h-full bg-primary" style={{ width: `${Math.min(100, (used / n.capacity) * 100)}%` }} />
+                  <div className={`h-full ${full ? "bg-red-500" : "bg-primary"}`} style={{ width: `${Math.min(100, (used / cap) * 100)}%` }} />
                 </div>
                 <div className="mt-2 flex gap-1 justify-end">
                   <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditing(n); setOpen(true); }} data-testid={`nap-edit-${n.id}`}>
