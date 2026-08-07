@@ -353,19 +353,35 @@ function PortalDashboard({ initialClient, onLogout }) {
           </div>
           {payments.length === 0 && <div className="text-xs text-slate-500 py-4 text-center">Aún no hay pagos registrados.</div>}
           <div className="space-y-2">
-            {payments.slice(0, 10).map((p) => (
-              <div key={p.id} className="flex items-center gap-3 p-2 rounded-md bg-slate-950/40 border border-slate-800" data-testid={`portal-payment-${p.id}`}>
-                <div className={`w-2 h-2 rounded-full ${p.status === "pending_review" ? "bg-amber-400" : "bg-emerald-400"}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold truncate">{p.concept || "Pago"}</div>
-                  <div className="text-[10px] text-slate-500 font-mono">{fmtDate(p.created_at)} · {p.method}</div>
+            {payments.slice(0, 10).map((p) => {
+              const s = p.status || "pending_review";
+              const chipCls = s === "accepted"
+                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                : s === "rejected"
+                  ? "bg-red-500/15 text-red-300 border-red-500/40"
+                  : "bg-amber-500/15 text-amber-300 border-amber-500/40";
+              const chipLbl = s === "accepted" ? "Aceptado" : s === "rejected" ? "Rechazado" : "Por revisar";
+              return (
+                <div key={p.id} className="p-2 rounded-md bg-slate-950/40 border border-slate-800" data-testid={`portal-payment-${p.id}`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-2 h-2 rounded-full ${s === "accepted" ? "bg-emerald-400" : s === "rejected" ? "bg-red-400" : "bg-amber-400"}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold truncate">{p.concept || "Pago"}</div>
+                      <div className="text-[10px] text-slate-500 font-mono">{fmtDate(p.created_at)} · {p.method}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-emerald-300">${p.amount}</div>
+                      <span className={`inline-block mt-0.5 text-[9px] px-1.5 py-0.5 rounded border font-mono ${chipCls}`}>{chipLbl}</span>
+                    </div>
+                  </div>
+                  {p.review_notes && (
+                    <div className="mt-1.5 text-[10px] text-slate-400 pl-5 border-l-2 border-slate-700">
+                      <span className="font-mono">Nota{p.reviewed_by_name ? ` de ${p.reviewed_by_name}` : ""}:</span> {p.review_notes}
+                    </div>
+                  )}
                 </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-emerald-300">${p.amount}</div>
-                  {p.status === "pending_review" && <div className="text-[9px] text-amber-300 font-mono">Por revisar</div>}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

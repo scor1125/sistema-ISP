@@ -1817,6 +1817,86 @@ async def onus_status(_: dict = Depends(get_current_user)):
         },
     }
 
+class PaymentReviewIn(BaseModel):
+    status: Literal["accepted","rejected","pending_review"]
+    review_notes: Optional[str] = ""
+    rollback_extension: Optional[bool] = False  # if True, undo the auto-cycle extension on reject
+
+
+# ---------- Payments to review (from portal uploads) ----------
+@api.get("/payments/pending-review")
+async def list_pending_review(_: dict = Depends(get_current_user)):
+    """Return payments awaiting admin review (uploaded from the client portal).
+
+    Includes the base64 receipt so the admin can preview the photo in-app.
+    """
+    items = await db.payments.find(
+        {"status": {"$in": ["pending_review", "accepted", "rejected"]},
+         "created_by_name": {"$regex": "^Portal", "$options": "i"}},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
+    # attach the client's display name so the admin doesn't need to cross-lookup
+    client_ids = list({p.get("client_id") for p in items if p.get("client_id")})
+    clients = {c["id"]: c for c in await db.clients.find(
+        {"id": {"$in": client_ids}},
+        {"_id": 0, "id": 1, "full_name": 1, "phone": 1, "status": 1, "next_due_date": 1},
+    ).to_list(2000)} if client_ids else {}
+    for p in items:
+        c = clients.get(p.get("client_id"))
+        if c:
+            p["client_full_name"] = c.get("full_name")
+            p["client_phone"] = c.get("phone")
+            p["client_status"] = c.get("status")
+            p["client_next_due"] = c.get("next_due_date")
+    return items
+
+@api.patch("/payments/{pid}/review")
+async def review_payment(pid: str, payload: PaymentReviewIn,
+                         user: dict = Depends(require_roles("owner","admin","secretary"))):
+    """Admin reviews a portal-uploaded payment (accept / reject / keep pending).
+
+    - `accepted`: mark as approved. Nothing to do — the auto-cycle extension
+      already applied at upload time stays.
+    - `rejected` + `rollback_extension=true`: revert the cycle extension applied
+      at upload time (subtract one payment cycle from next_due_date and, if the
+      client is left with a past-due date, mark them as suspended).
+    - `pending_review`: keeps the payment in the queue (idempotent).
+    """
+    payment = await db.payments.find_one({"id": pid}, {"_id": 0})
+    if not payment:
+        raise HTTPException(404, "Pago no encontrado")
+
+    update = {
+        "status": payload.status,
+        "review_notes": payload.review_notes or "",
+        "reviewed_at": now_iso(),
+        "reviewed_by": user.get("id"),
+        "reviewed_by_name": user.get("name") or user.get("email"),
+        "updated_at": now_iso(),
+    }
+
+    # If admin is rejecting and asks to rollback the cycle extension, revert.
+    if payload.status == "rejected" and payload.rollback_extension and payment.get("client_id"):
+        client = await db.clients.find_one({"id": payment["client_id"]}, {"_id": 0})
+        if client and client.get("next_due_date"):
+            # Undo: subtract ~30 days from next_due_date
+            try:
+                d = datetime.fromisoformat(client["next_due_date"].replace("Z", "+00:00"))
+                rolled = d - timedelta(days=30)
+                new_status = client.get("status")
+                if rolled < datetime.now(timezone.utc):
+                    new_status = "suspended"
+                await db.clients.update_one({"id": client["id"]}, {"$set": {
+                    "next_due_date": rolled.isoformat(),
+                    "status": new_status,
+                    "updated_at": now_iso(),
+                }})
+            except Exception:
+                pass
+
+    await db.payments.update_one({"id": pid}, {"$set": update})
+    return await db.payments.find_one({"id": pid}, {"_id": 0})
+
 # ---------- Client portal ----------
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024   # 4 MB
 ALLOWED_RECEIPT_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
@@ -1875,6 +1955,11 @@ async def portal_payments(client: dict = Depends(get_portal_client)):
         {"client_id": client["id"]},
         {"_id": 0, "receipt_url": 0},
     ).sort("created_at", -1).to_list(200)
+    # Ensure review metadata is exposed so the client sees Aceptado / Rechazado
+    for p in items:
+        p.setdefault("review_notes", p.get("review_notes", ""))
+        p.setdefault("reviewed_by_name", p.get("reviewed_by_name"))
+        p.setdefault("reviewed_at", p.get("reviewed_at"))
     return items
 
 @api.get("/portal/onu")

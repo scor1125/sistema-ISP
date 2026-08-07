@@ -25,6 +25,7 @@ const NAV = [
   { to: "/panel", label: "Panel de control", icon: LayoutDashboard, group: "Operación" },
   { to: "/clientes", label: "Clientes", icon: Users, group: "Operación" },
   { to: "/pagos", label: "Pagos", icon: CreditCard, group: "Operación" },
+  { to: "/pagos-revisar", label: "Pagos a revisar", icon: HandCoins, group: "Operación" },
   { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Operación" },
   { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Operación" },
   { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Operación" },
