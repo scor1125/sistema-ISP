@@ -347,6 +347,16 @@ class ArqueoIn(BaseModel):
     user_filter_name: Optional[str] = ""
     notes: Optional[str] = ""
 
+class LugarIn(BaseModel):
+    name: str
+    notes: Optional[str] = ""
+    color: Optional[str] = "#38bdf8"
+
+class LugarUpdate(BaseModel):
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    color: Optional[str] = None
+
 class TrabajadorIn(BaseModel):
     full_name: str
     role: Literal["technician","installer","secretary","supervisor","other"] = "technician"
@@ -2074,6 +2084,51 @@ async def cron_send_reminders(request: Request):
     run_id = request.headers.get("x-webhook-id") or body.get("run_id") or new_id()
     asyncio.create_task(_run_send_reminders(run_id))
     return {"ok": True, "queued_run_id": run_id}
+
+# ---------- Lugares (community/place catalog) ----------
+@api.get("/lugares")
+async def list_lugares(_: dict = Depends(get_current_user)):
+    items = await db.lugares.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
+    return items
+
+@api.post("/lugares")
+async def create_lugar(payload: LugarIn, _: dict = Depends(require_roles("owner","admin"))):
+    existing = await db.lugares.find_one({"name": payload.name}, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(400, f"Ya existe un lugar con el nombre '{payload.name}'")
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    await db.lugares.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.patch("/lugares/{lid}")
+async def update_lugar(lid: str, payload: LugarUpdate,
+                       _: dict = Depends(require_roles("owner","admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    old = await db.lugares.find_one({"id": lid}, {"_id": 0, "name": 1})
+    if not old:
+        raise HTTPException(404, "Lugar no encontrado")
+    await db.lugares.update_one({"id": lid}, {"$set": update})
+    # Rename cascades to clients that referenced this place by name
+    if "name" in update and update["name"] != old["name"]:
+        await db.clients.update_many({"community": old["name"]}, {"$set": {"community": update["name"]}})
+    return await db.lugares.find_one({"id": lid}, {"_id": 0})
+
+@api.delete("/lugares/{lid}")
+async def delete_lugar(lid: str, _: dict = Depends(require_roles("owner","admin"))):
+    doc = await db.lugares.find_one({"id": lid}, {"_id": 0, "name": 1})
+    if not doc:
+        raise HTTPException(404, "Lugar no encontrado")
+    used = await db.clients.count_documents({"community": doc["name"]})
+    r = await db.lugares.delete_one({"id": lid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Lugar no encontrado")
+    return {"ok": True, "clients_affected": used}
 
 # ---------- Trabajadores (workforce roster) ----------
 @api.get("/trabajadores")

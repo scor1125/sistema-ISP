@@ -44,8 +44,8 @@ const COLS_STORAGE_KEY = "netops-client-cols";
 const SORT_OPTIONS = [
   { value: "name_asc", label: "Nombre (A → Z)" },
   { value: "name_desc", label: "Nombre (Z → A)" },
-  { value: "community_asc", label: "Comunidad (A → Z)" },
-  { value: "community_desc", label: "Comunidad (Z → A)" },
+  { value: "community_asc", label: "Lugar (A → Z)" },
+  { value: "community_desc", label: "Lugar (Z → A)" },
   { value: "ip_asc", label: "IP (menor → mayor)" },
   { value: "ip_desc", label: "IP (mayor → menor)" },
   { value: "created_desc", label: "Creación (recientes primero)" },
@@ -105,6 +105,8 @@ export default function Clients() {
   const [mikrotiks, setMikrotiks] = useState([]);
   const [users, setUsers] = useState([]);
   const [onus, setOnus] = useState([]);
+  const [lugares, setLugares] = useState([]);
+  const [colaboradores, setColaboradores] = useState([]);
   const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -129,7 +131,7 @@ export default function Clients() {
   };
 
   const load = useCallback(async () => {
-    const [c, p, n, ip, d, u, o] = await Promise.all([
+    const [c, p, n, ip, d, u, o, lg, tr] = await Promise.all([
       api.get("/clients"),
       api.get("/plans"),
       api.get("/nap-boxes"),
@@ -137,11 +139,15 @@ export default function Clients() {
       api.get("/devices"),
       api.get("/users"),
       api.get("/onus"),
+      api.get("/lugares").catch(() => ({ data: [] })),
+      api.get("/trabajadores").catch(() => ({ data: [] })),
     ]);
     setClients(c.data); setPlans(p.data); setNaps(n.data); setIpPool(ip.data);
     setMikrotiks(d.data.filter((x) => x.kind === "mikrotik"));
     setUsers(u.data);
     setOnus(o.data);
+    setLugares(lg.data);
+    setColaboradores(tr.data);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -232,7 +238,13 @@ export default function Clients() {
   const fields = [
     { name: "full_name", label: "Nombre completo", required: true, full: true },
     { name: "phone", label: "Teléfono" },
-    { name: "community", label: "Comunidad", full: true, placeholder: "Ej: Colonia Centro, Ejido Los Pinos…" },
+    { name: "community", label: "Lugar", type: "select",
+      placeholder: lugares.length ? "Selecciona un lugar" : "Registra lugares en el módulo Lugares",
+      options: lugares.map((l) => ({ value: l.name, label: l.name })),
+      hint: lugares.length
+        ? "Elige de la lista de lugares registrados en el módulo Lugares."
+        : "Aún no hay lugares. Ve al módulo Lugares y crea el primero.",
+    },
     { name: "plan_id", label: "Plan", type: "select", options: plans.map((p) => ({ value: p.id, label: `${p.name} · ${p.speed_mbps}M · $${p.price}` })) },
     { name: "nap_box_id", label: "Caja NAP", type: "select", options: naps.map((n) => ({ value: n.id, label: n.name })) },
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
@@ -266,9 +278,13 @@ export default function Clients() {
     { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v, i]) => ({ value: v, label: i.label })) },
     { name: "tag", label: "Etiqueta", placeholder: "Ej: VIP, Moroso, Preferente…" },
     { name: "installer_ids", label: "Técnicos que instalaron", type: "multiselect",
-      placeholder: "Selecciona uno o más técnicos…",
-      options: users.map((u) => ({ value: u.id, label: `${u.name}${u.role ? " · " + u.role : ""}` })),
-      hint: users.length ? "Puedes elegir varios técnicos que participaron en la instalación." : "Sin usuarios registrados — crea usuarios en el panel de Usuarios.",
+      placeholder: "Selecciona uno o más colaboradores…",
+      options: colaboradores
+        .filter((c) => c.active !== false)
+        .map((c) => ({ value: c.id, label: `${c.full_name}${c.role ? " · " + c.role : ""}` })),
+      hint: colaboradores.length
+        ? "Puedes elegir varios colaboradores que participaron en la instalación."
+        : "Aún no hay colaboradores. Ve al módulo Colaboradores y registra al equipo.",
     },
     { name: "vlan", label: "VLAN", type: "number", placeholder: "Ej: 100",
       hint: "Número de VLAN asignada al cliente en el switch/Mikrotik.",
@@ -362,7 +378,7 @@ export default function Clients() {
         <div className="flex flex-wrap gap-2 items-center">
           <div className="relative flex-1 min-w-[240px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input className="pl-9" placeholder="Buscar por nombre, comunidad, teléfono, IP, etiqueta…"
+            <Input className="pl-9" placeholder="Buscar por nombre, lugar, teléfono, IP, etiqueta…"
               value={filters.q} onChange={(e) => setF("q", e.target.value)} data-testid="filter-q" />
           </div>
 
@@ -439,13 +455,13 @@ export default function Clients() {
               </Select>
             </div>
             <div>
-              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Comunidad</Label>
+              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground font-mono">Lugar</Label>
               <Select value={filters.community} onValueChange={(v) => setF("community", v)}>
                 <SelectTrigger data-testid="filter-community"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas</SelectItem>
                   {communities.map((c) => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
-                  {communities.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">Sin comunidades registradas</div>}
+                  {communities.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">Sin lugares registrados</div>}
                 </SelectContent>
               </Select>
             </div>

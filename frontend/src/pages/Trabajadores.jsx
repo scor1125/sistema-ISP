@@ -249,12 +249,13 @@ export default function Trabajadores() {
                     ))}
                     <TableHead className="text-center w-16">Días</TableHead>
                     <TableHead className="text-right w-28">Total semana</TableHead>
+                    <TableHead className="text-right w-20">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {summary.trabajadores.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={11} className="text-center text-muted-foreground py-8 text-sm">
+                      <TableCell colSpan={12} className="text-center text-muted-foreground py-8 text-sm">
                         <HardHat className="w-8 h-8 mx-auto mb-2 text-muted-foreground/60" />
                         Aún no hay colaboradores. Crea el primero.
                       </TableCell>
@@ -298,6 +299,16 @@ export default function Trabajadores() {
                       </TableCell>
                       <TableCell className="text-right font-bold text-amber-300">
                         {moneyMX(t.weekly_total)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="inline-flex gap-1">
+                          <Button size="icon" variant="ghost" onClick={() => { const full = items.find(x => x.id === t.id); if (full) { setEditing(full); setOpen(true); } }} data-testid={`colab-week-edit-${t.id}`}>
+                            <Pencil className="w-3 h-3" />
+                          </Button>
+                          <Button size="icon" variant="ghost" onClick={() => { const full = items.find(x => x.id === t.id); if (full) del(full); }} data-testid={`colab-week-delete-${t.id}`}>
+                            <Trash2 className="w-3 h-3 text-red-400" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

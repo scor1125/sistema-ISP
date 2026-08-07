@@ -29,6 +29,7 @@ const NAV = [
   { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Operación" },
   { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Operación" },
   { to: "/planes", label: "Planes", icon: PackagePlus, group: "Red" },
+  { to: "/lugares", label: "Lugares", icon: MapIcon, group: "Red" },
   { to: "/extras", label: "Servicios extras", icon: Boxes, group: "Red" },
   { to: "/mapa", label: "Mapa de servicio", icon: MapIcon, group: "Red" },
   { to: "/olt", label: "OLT / ONUs", icon: Radio, group: "Red" },

@@ -20,6 +20,7 @@ import Disconnected from "@/pages/Disconnected";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
 import Trabajadores from "@/pages/Trabajadores";
+import Lugares from "@/pages/Lugares";
 // Legacy /trabajadores route is aliased to /colaboradores for backwards compat
 import Recordatorios from "@/pages/Recordatorios";
 import ClientPortal from "@/pages/ClientPortal";
@@ -79,6 +80,7 @@ function App() {
             <Route path="/usuarios" element={<Users />} />
             <Route path="/trabajadores" element={<Trabajadores />} />
             <Route path="/colaboradores" element={<Trabajadores />} />
+            <Route path="/lugares" element={<Lugares />} />
             <Route path="/recordatorios" element={<Recordatorios />} />
             <Route path="/configuracion" element={<Settings />} />
           </Route>
