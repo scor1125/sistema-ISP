@@ -583,7 +583,7 @@ export default function Clients() {
                         <Button size="icon" variant="ghost" title="Registrar pago" onClick={() => navigate(`/pagos?client=${c.id}`)}><DollarSign className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" title="WhatsApp" onClick={() => navigate(`/whatsapp?client=${c.id}`)}><MessageCircle className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" onClick={() => { setEditing(c); setOpen(true); }} data-testid={`edit-${c.id}`}><Pencil className="w-4 h-4" /></Button>
-                        <Button size="icon" variant="ghost" onClick={() => regeneratePin(c)} data-testid={`portal-pin-${c.id}`} title="Regenerar PIN de portal"><KeyRound className="w-4 h-4 text-amber-400" /></Button>
+                        <Button size="icon" variant="ghost" onClick={() => regeneratePin(c)} data-testid={`portal-pin-${c.id}`} title="Generar PIN único para el portal del cliente"><KeyRound className="w-4 h-4 text-amber-400" /></Button>
                         <Button size="icon" variant="ghost" onClick={() => remove(c.id)} data-testid={`delete-${c.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                       </div>
                     </TableCell>

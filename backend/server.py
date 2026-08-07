@@ -86,10 +86,24 @@ async def get_portal_client(request: Request) -> dict:
         raise HTTPException(401, "Cliente ya no existe")
     return client
 
-def generate_portal_pin() -> str:
-    """Generate a 6-digit numeric PIN — easy for clients to type on mobile."""
+async def generate_portal_pin(max_attempts: int = 20) -> str:
+    """Generate a 6-digit PIN that is guaranteed unique across all existing
+    client portal PINs (verified against bcrypt hashes). Ensures no two
+    clients ever share the same portal login PIN."""
     import secrets
-    return f"{secrets.randbelow(1_000_000):06d}"
+    for _ in range(max_attempts):
+        pin = f"{secrets.randbelow(1_000_000):06d}"
+        # Verify uniqueness — scan existing hashes and reject if any matches
+        collision = False
+        async for doc in db.clients.find({"portal_pin_hash": {"$exists": True}}, {"portal_pin_hash": 1, "_id": 0}):
+            h = doc.get("portal_pin_hash")
+            if h and verify_password(pin, h):
+                collision = True
+                break
+        if not collision:
+            return pin
+    # Fallback (extremely unlikely): raise so admin knows to expand namespace
+    raise HTTPException(500, "No se pudo generar un PIN único; contacta soporte.")
 
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
@@ -1057,7 +1071,7 @@ async def create_client(payload: ClientIn, _: dict = Depends(get_current_user)):
     doc["onu_power_dbm"] = None
     # Autogenerate PIN for the client portal (6-digit). Store hashed; also
     # return the plaintext once so admin can share it with the client.
-    pin_plain = generate_portal_pin()
+    pin_plain = await generate_portal_pin()
     doc["portal_pin_hash"] = hash_password(pin_plain)
     await db.clients.insert_one(doc)
     doc.pop("_id", None)
@@ -1070,7 +1084,7 @@ async def regenerate_portal_pin(cid: str, _: dict = Depends(require_roles("owner
     client = await db.clients.find_one({"id": cid}, {"_id": 0, "id": 1, "phone": 1})
     if not client:
         raise HTTPException(404, "Cliente no encontrado")
-    pin = generate_portal_pin()
+    pin = await generate_portal_pin()
     await db.clients.update_one({"id": cid}, {"$set": {
         "portal_pin_hash": hash_password(pin), "updated_at": now_iso(),
     }})
