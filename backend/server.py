@@ -57,6 +57,40 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
+def create_portal_token(client_id: str, phone: str) -> str:
+    payload = {
+        "sub": client_id, "phone": phone,
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "type": "portal",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+async def get_portal_client(request: Request) -> dict:
+    token = request.cookies.get("portal_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(401, "Portal no autenticado")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Sesión expirada")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Token portal inválido")
+    if payload.get("type") != "portal":
+        raise HTTPException(401, "Token no es de portal")
+    client = await db.clients.find_one({"id": payload["sub"]}, {"_id": 0, "portal_pin_hash": 0})
+    if not client:
+        raise HTTPException(401, "Cliente ya no existe")
+    return client
+
+def generate_portal_pin() -> str:
+    """Generate a 6-digit numeric PIN — easy for clients to type on mobile."""
+    import secrets
+    return f"{secrets.randbelow(1_000_000):06d}"
+
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
@@ -318,6 +352,27 @@ class TrabajadorIn(BaseModel):
     active: bool = True
     notes: Optional[str] = ""
     user_id: Optional[str] = None       # Vincular a usuario del sistema (opcional)
+
+class PortalLoginIn(BaseModel):
+    phone: str
+    pin: str
+
+class PortalPaymentUploadMeta(BaseModel):
+    amount: Optional[float] = None
+    method: Optional[Literal["cash","transfer","other"]] = "transfer"
+    notes: Optional[str] = ""
+
+class ReminderConfigIn(BaseModel):
+    template: Optional[str] = None
+    days_before: Optional[int] = None
+    auto_send: Optional[bool] = None
+    active_hours_start: Optional[int] = None  # 0-23
+    active_hours_end: Optional[int] = None
+
+class ReminderSendIn(BaseModel):
+    client_ids: List[str]
+    template: Optional[str] = None            # override the saved template
+    kind: Literal["reminder","chat","other"] = "reminder"
 
 class TrabajadorUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -944,9 +999,26 @@ async def create_client(payload: ClientIn, _: dict = Depends(get_current_user)):
     doc["next_due_date"] = _next_due_date(doc["payment_day"])
     doc["last_seen"] = None
     doc["onu_power_dbm"] = None
+    # Autogenerate PIN for the client portal (6-digit). Store hashed; also
+    # return the plaintext once so admin can share it with the client.
+    pin_plain = generate_portal_pin()
+    doc["portal_pin_hash"] = hash_password(pin_plain)
     await db.clients.insert_one(doc)
     doc.pop("_id", None)
+    doc.pop("portal_pin_hash", None)
+    doc["portal_pin"] = pin_plain
     return doc
+
+@api.post("/clients/{cid}/regenerate-pin")
+async def regenerate_portal_pin(cid: str, _: dict = Depends(require_roles("owner","admin"))):
+    client = await db.clients.find_one({"id": cid}, {"_id": 0, "id": 1, "phone": 1})
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+    pin = generate_portal_pin()
+    await db.clients.update_one({"id": cid}, {"$set": {
+        "portal_pin_hash": hash_password(pin), "updated_at": now_iso(),
+    }})
+    return {"portal_pin": pin, "phone": client.get("phone", "")}
 
 @api.patch("/clients/{cid}")
 async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(get_current_user)):
@@ -1670,6 +1742,327 @@ async def onus_status(_: dict = Depends(get_current_user)):
             "checked_at": now.isoformat(),
         },
     }
+
+# ---------- Client portal ----------
+MAX_RECEIPT_BYTES = 4 * 1024 * 1024   # 4 MB
+ALLOWED_RECEIPT_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
+
+def _sanitize_client_portal(c: dict) -> dict:
+    """Strip sensitive fields before sending the client dict to the portal."""
+    out = {k: v for k, v in c.items() if k not in ("portal_pin_hash", "_id", "notes", "installer_id")}
+    return out
+
+@api.post("/portal/login")
+async def portal_login(payload: PortalLoginIn, response: Response):
+    phone = (payload.phone or "").strip()
+    if not phone or not payload.pin:
+        raise HTTPException(400, "Teléfono y PIN son obligatorios")
+    client = await db.clients.find_one({"phone": phone})
+    if not client or not client.get("portal_pin_hash"):
+        raise HTTPException(401, "Credenciales inválidas")
+    if not verify_password(payload.pin, client["portal_pin_hash"]):
+        raise HTTPException(401, "Credenciales inválidas")
+    token = create_portal_token(client["id"], phone)
+    response.set_cookie(
+        "portal_token", token,
+        max_age=30 * 24 * 3600, httponly=True, secure=True, samesite="lax", path="/",
+    )
+    return {"token": token, "client": _sanitize_client_portal({k: v for k, v in client.items() if k != "portal_pin_hash"})}
+
+@api.post("/portal/logout")
+async def portal_logout(response: Response):
+    response.delete_cookie("portal_token", path="/")
+    return {"ok": True}
+
+@api.get("/portal/me")
+async def portal_me(client: dict = Depends(get_portal_client)):
+    plan = None
+    if client.get("plan_id"):
+        plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0, "name": 1, "speed_mbps": 1, "price": 1})
+    return {"client": _sanitize_client_portal(client), "plan": plan}
+
+@api.get("/portal/payments")
+async def portal_payments(client: dict = Depends(get_portal_client)):
+    items = await db.payments.find(
+        {"client_id": client["id"]},
+        {"_id": 0, "receipt_url": 0},
+    ).sort("created_at", -1).to_list(200)
+    return items
+
+@api.get("/portal/onu")
+async def portal_onu(client: dict = Depends(get_portal_client)):
+    """Return deterministic live-looking values for the client's ONU. Mirrors
+    the same hash-based mock used by staff `/api/onus` so the two views agree.
+    """
+    import hashlib
+    seed = (client.get("onu_serial") or client.get("id") or "seed").encode()
+    h = hashlib.sha256(seed).digest()
+    now = datetime.now(timezone.utc)
+    minute = int(now.timestamp() // 15)  # rotate every 15s
+    jitter = int(hashlib.sha256(seed + str(minute).encode()).digest()[0]) / 255
+    power = -12 - (h[0] % 16) - jitter * 0.7
+    rx = 1 + (h[1] % 89) + jitter * 4
+    tx = 0.2 + (h[2] % 11) + jitter * 0.8
+    online = client.get("status") in ("active",)
+    # Build 30-min sparkline
+    series = []
+    for i in range(30):
+        step = int(hashlib.sha256(seed + f"s{i}{minute}".encode()).digest()[0]) / 255
+        series.append({
+            "t": (now - timedelta(minutes=29 - i)).strftime("%H:%M"),
+            "rx": round(rx * (0.6 + step * 0.8), 2),
+            "tx": round(tx * (0.5 + step * 0.9), 2),
+        })
+    return {
+        "online": online,
+        "power_dbm": round(power, 1),
+        "rx_mbps": round(rx, 2),
+        "tx_mbps": round(tx, 2),
+        "ip_address": client.get("ip_address") or "",
+        "series": series,
+        "checked_at": now.isoformat(),
+    }
+
+@api.post("/portal/payments/upload")
+async def portal_upload_receipt(
+    file: UploadFile = File(...),
+    amount: Optional[float] = None,
+    method: Optional[str] = "transfer",
+    notes: Optional[str] = "",
+    client: dict = Depends(get_portal_client),
+):
+    """Client uploads a payment receipt. Instantly extends `next_due_date` by
+    one cycle and marks the client as `active`, so service turns back on right
+    away. The payment lands with status=`pending_review` for the admin to
+    reconcile from the Pagos module."""
+    if file.content_type not in ALLOWED_RECEIPT_MIME:
+        raise HTTPException(415, f"Tipo de archivo no soportado: {file.content_type}")
+    data = await file.read()
+    if len(data) > MAX_RECEIPT_BYTES:
+        raise HTTPException(413, "Archivo mayor a 4 MB")
+    import base64
+    b64 = base64.b64encode(data).decode("ascii")
+    receipt_url = f"data:{file.content_type};base64,{b64}"
+
+    doc = {
+        "id": new_id(),
+        "client_id": client["id"],
+        "amount": amount or 0,
+        "method": method or "transfer",
+        "concept": "Comprobante subido por cliente",
+        "notes": notes or "",
+        "is_promise": False,
+        "status": "pending_review",
+        "receipt_url": receipt_url,
+        "receipt_mime": file.content_type,
+        "receipt_size": len(data),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "created_by": None,
+        "created_by_name": f"Portal · {client.get('full_name','')}",
+    }
+    await db.payments.insert_one(doc)
+
+    # Instant reactivation: extend one billing cycle and set active
+    current_due = client.get("next_due_date") or now_iso()
+    new_due = _next_due_date(client.get("payment_day", 1), current_due)
+    await db.clients.update_one(
+        {"id": client["id"]},
+        {"$set": {"next_due_date": new_due, "status": "active", "updated_at": now_iso(),
+                  "last_payment_at": now_iso()}},
+    )
+    doc.pop("_id", None)
+    doc["receipt_url"] = None  # never echo full base64 back to portal user
+    return {"payment": doc, "new_due_date": new_due, "status": "active"}
+
+# ---------- Payment reminders ----------
+DEFAULT_REMINDER_TEMPLATE = (
+    "Hola {{name}}, te recordamos que tu pago de {{amount}} vence el {{due_date}}. "
+    "Puedes pagar y activar tu servicio en {{portal_url}}. ¡Gracias!"
+)
+
+async def _get_reminder_config() -> dict:
+    cfg = await db.reminder_config.find_one({"id": "singleton"}, {"_id": 0})
+    if cfg:
+        return cfg
+    cfg = {
+        "id": "singleton",
+        "template": DEFAULT_REMINDER_TEMPLATE,
+        "days_before": 3,
+        "auto_send": False,
+        "active_hours_start": 9,
+        "active_hours_end": 19,
+        "updated_at": now_iso(),
+    }
+    await db.reminder_config.insert_one(cfg)
+    cfg.pop("_id", None)
+    return cfg
+
+def _render_template(tpl: str, ctx: dict) -> str:
+    out = tpl or ""
+    for k, v in ctx.items():
+        out = out.replace("{{" + k + "}}", str(v))
+    return out
+
+async def _build_reminder_context(c: dict, plan: Optional[dict], portal_base: str) -> dict:
+    return {
+        "name": c.get("full_name", ""),
+        "amount": (plan or {}).get("price") or "-",
+        "due_date": (c.get("next_due_date") or "")[:10],
+        "plan": (plan or {}).get("name") or "",
+        "portal_url": portal_base,
+        "phone": c.get("phone", ""),
+    }
+
+@api.get("/reminders/config")
+async def get_reminder_config(_: dict = Depends(require_roles("owner","admin"))):
+    return await _get_reminder_config()
+
+@api.patch("/reminders/config")
+async def update_reminder_config(payload: ReminderConfigIn,
+                                 _: dict = Depends(require_roles("owner","admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        return await _get_reminder_config()
+    update["updated_at"] = now_iso()
+    await db.reminder_config.update_one({"id": "singleton"}, {"$set": update}, upsert=True)
+    return await _get_reminder_config()
+
+@api.get("/reminders/preview")
+async def preview_reminders(days_before: Optional[int] = None,
+                            _: dict = Depends(require_roles("owner","admin","secretary"))):
+    cfg = await _get_reminder_config()
+    n = int(days_before if days_before is not None else cfg.get("days_before", 3))
+    now = datetime.now(timezone.utc)
+    target = (now + timedelta(days=n)).date()
+    # Find clients whose next_due_date falls on the target date
+    cursor = db.clients.find(
+        {"status": {"$in": ["active", "new", "offline"]}, "phone": {"$ne": ""}},
+        {"_id": 0, "id": 1, "full_name": 1, "phone": 1, "next_due_date": 1, "plan_id": 1, "status": 1}
+    )
+    all_clients = await cursor.to_list(5000)
+    matches = []
+    for c in all_clients:
+        due = c.get("next_due_date")
+        if not due:
+            continue
+        try:
+            due_date = datetime.fromisoformat(due.replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        days_left = (due_date - now.date()).days
+        if 0 <= days_left <= n:
+            matches.append({**c, "days_left": days_left, "due_date": due[:10]})
+    matches.sort(key=lambda x: x["days_left"])
+    return {"config": cfg, "n_days": n, "clients": matches, "count": len(matches)}
+
+@api.post("/reminders/send")
+async def send_reminders(payload: ReminderSendIn, user: dict = Depends(require_roles("owner","admin","secretary"))):
+    cfg = await _get_reminder_config()
+    tpl = payload.template or cfg.get("template") or DEFAULT_REMINDER_TEMPLATE
+    portal_base = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/") + "/portal"
+
+    sent, skipped, errors = [], [], []
+    for cid in payload.client_ids:
+        c = await db.clients.find_one({"id": cid}, {"_id": 0})
+        if not c:
+            skipped.append({"id": cid, "reason": "not_found"}); continue
+        if not c.get("phone"):
+            skipped.append({"id": cid, "reason": "no_phone"}); continue
+        plan = await db.plans.find_one({"id": c.get("plan_id")}, {"_id": 0, "name": 1, "price": 1}) if c.get("plan_id") else None
+        ctx = await _build_reminder_context(c, plan, portal_base)
+        body = _render_template(tpl, ctx)
+        doc = {
+            "id": new_id(),
+            "client_id": c["id"],
+            "phone": c["phone"],
+            "body": body,
+            "direction": "outgoing",
+            "kind": payload.kind,
+            "channel": "whatsapp",
+            "status": "queued",
+            "created_at": now_iso(),
+            "responded_by": user.get("id"),
+            "responded_by_name": user.get("name") or user.get("email"),
+        }
+        await db.whatsapp.insert_one(doc)
+        # Ensure a conversation entry exists for the Kanban
+        try:
+            await _get_or_create_conversation(c["phone"], c["id"])
+            await db.whatsapp_conversations.update_one(
+                {"phone": c["phone"]},
+                {"$set": {"updated_at": doc["created_at"], "last_body": body[:200], "last_direction": "outgoing"}}
+            )
+        except Exception:
+            pass
+        sent.append({"id": c["id"], "phone": c["phone"], "message_id": doc["id"]})
+    return {"sent": len(sent), "skipped": len(skipped), "sent_list": sent, "skipped_list": skipped, "errors": errors}
+
+async def _run_send_reminders(run_id: str):
+    existing = await db.cron_runs.find_one({"run_id": run_id})
+    if existing:
+        return
+    cfg = await _get_reminder_config()
+    n = int(cfg.get("days_before", 3))
+    now = datetime.now(timezone.utc)
+    hour = now.hour
+    if not (int(cfg.get("active_hours_start", 9)) <= hour < int(cfg.get("active_hours_end", 19))):
+        await db.cron_runs.insert_one({
+            "run_id": run_id, "job": "send-reminders",
+            "started_at": now.isoformat(), "sent_count": 0, "skipped_reason": "outside_active_hours",
+        })
+        return
+    portal_base = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/") + "/portal"
+
+    cursor = db.clients.find(
+        {"status": {"$in": ["active", "new", "offline"]}, "phone": {"$ne": ""}, "next_due_date": {"$ne": None}},
+        {"_id": 0}
+    )
+    all_clients = await cursor.to_list(5000)
+    target = now.date() + timedelta(days=n)
+    sent = 0
+    tpl = cfg.get("template") or DEFAULT_REMINDER_TEMPLATE
+    for c in all_clients:
+        due = c.get("next_due_date")
+        try:
+            due_date = datetime.fromisoformat(due.replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        if due_date != target:
+            continue
+        plan = await db.plans.find_one({"id": c.get("plan_id")}, {"_id": 0, "name": 1, "price": 1}) if c.get("plan_id") else None
+        ctx = await _build_reminder_context(c, plan, portal_base)
+        body = _render_template(tpl, ctx)
+        await db.whatsapp.insert_one({
+            "id": new_id(), "client_id": c["id"], "phone": c["phone"],
+            "body": body, "direction": "outgoing", "kind": "reminder",
+            "channel": "whatsapp", "status": "queued", "created_at": now_iso(),
+            "responded_by_name": "Cron · Recordatorios",
+        })
+        sent += 1
+    await db.cron_runs.insert_one({
+        "run_id": run_id, "job": "send-reminders",
+        "started_at": now.isoformat(), "sent_count": sent,
+        "days_before": n,
+    })
+    logger.info("[cron] send-reminders run_id=%s sent=%d", run_id, sent)
+
+@api.post("/cron/send-reminders")
+async def cron_send_reminders(request: Request):
+    import hmac
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:] if auth.lower().startswith("bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(401, "Unauthorized cron webhook")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    run_id = request.headers.get("x-webhook-id") or body.get("run_id") or new_id()
+    asyncio.create_task(_run_send_reminders(run_id))
+    return {"ok": True, "queued_run_id": run_id}
 
 # ---------- Trabajadores (workforce roster) ----------
 @api.get("/trabajadores")

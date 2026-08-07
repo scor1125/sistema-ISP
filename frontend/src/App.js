@@ -20,6 +20,8 @@ import Disconnected from "@/pages/Disconnected";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
 import Trabajadores from "@/pages/Trabajadores";
+import Recordatorios from "@/pages/Recordatorios";
+import ClientPortal from "@/pages/ClientPortal";
 import Settings from "@/pages/Settings";
 import MyPendings from "@/pages/MyPendings";
 import ControlPanel from "@/pages/ControlPanel";
@@ -53,6 +55,8 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+          {/* Public client-facing portal — no staff auth required, uses its own portal cookie */}
+          <Route path="/portal/*" element={<ClientPortal />} />
           <Route element={<Protected />}>
             <Route path="/" element={<Navigate to="/panel" replace />} />
             <Route path="/panel" element={<ControlPanel />} />
@@ -73,6 +77,7 @@ function App() {
             <Route path="/mis-pendientes" element={<MyPendings />} />
             <Route path="/usuarios" element={<Users />} />
             <Route path="/trabajadores" element={<Trabajadores />} />
+            <Route path="/recordatorios" element={<Recordatorios />} />
             <Route path="/configuracion" element={<Settings />} />
           </Route>
         </Routes>

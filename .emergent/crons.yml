@@ -6,3 +6,10 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+
+  - name: send-reminders
+    description: "Envía por WhatsApp recordatorios personalizados a clientes cuyo pago vence en `days_before` días (config en /reminders/config). Corre cada día a las 15:00 UTC (mediodía America/Mexico)."
+    cron: "0 15 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/send-reminders"
+    method: POST
+    enabled: true

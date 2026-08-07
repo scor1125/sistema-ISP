@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, CreditCard, MessageCircle, Settings, UserCog,
   Radio, Router, ClipboardList, PackagePlus, Map as MapIcon, ZapOff,
   ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight, StickyNote,
-  ChevronUp, ChevronDown, Camera, HandCoins, Calculator, HardHat
+  ChevronUp, ChevronDown, Camera, HandCoins, Calculator, HardHat, BellRing
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
