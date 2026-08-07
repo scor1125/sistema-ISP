@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, Link } from "react-router-dom";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,6 +108,16 @@ function PortalLogin({ onLoggedIn }) {
         <p className="text-[11px] text-slate-500 mt-4 text-center">
           ¿No tienes tu PIN? Contacta a soporte por WhatsApp.
         </p>
+
+        <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-center">
+          <Link
+            to="/login"
+            data-testid="portal-staff-login-link"
+            className="text-[11px] font-mono uppercase tracking-widest text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            ¿Eres operador? Ir al panel →
+          </Link>
+        </div>
       </div>
     </div>
   );

@@ -4,8 +4,9 @@ import { api, formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Wifi, UserPlus, LogIn, CheckCircle2 } from "lucide-react";
+import { Wifi, UserPlus, LogIn, CheckCircle2, User, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 
 const MODES = { login: "login", register: "register" };
 
@@ -185,6 +186,34 @@ export default function Login() {
               )}
             </>
           )}
+
+          {/* Client-facing portal entry — separate flow from staff auth */}
+          <div className="pt-2">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border"></span>
+              </div>
+              <div className="relative flex justify-center text-[11px] uppercase tracking-widest">
+                <span className="bg-background px-2 text-muted-foreground font-mono">o si eres cliente</span>
+              </div>
+            </div>
+            <Link
+              to="/portal"
+              data-testid="go-to-portal"
+              className="mt-3 flex items-center justify-between gap-3 w-full rounded-md border border-amber-500/40 bg-gradient-to-r from-amber-500/10 to-rose-500/10 hover:from-amber-500/20 hover:to-rose-500/20 px-4 py-3 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-rose-500 grid place-items-center shrink-0">
+                  <User className="w-4 h-4 text-white" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-semibold text-foreground">Ingresar como cliente</div>
+                  <div className="text-[11px] text-muted-foreground">Ver mi servicio, pagar y activar al instante</div>
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-amber-400" />
+            </Link>
+          </div>
 
           <div className="text-xs text-muted-foreground font-mono text-center pt-2">
             Creado por <span className="text-primary font-semibold">EnlaceHR</span>
