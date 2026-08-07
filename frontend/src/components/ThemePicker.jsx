@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Paintbrush, Check } from "lucide-react";
+import { Paintbrush, Check, Sun, Moon, RotateCcw } from "lucide-react";
+
+// Default theme keys — used by the "Reestablecer por defecto" reset button.
+export const DEFAULT_THEME_KEY = "midnight"; // Oscuro
+export const DAY_THEME_KEY = "paper";        // Día
+export const NIGHT_THEME_KEY = "midnight";   // Noche
 
 /**
  * Full theme presets — each one adjusts background, card, border and accent
@@ -200,9 +205,9 @@ export function initThemeFromStorage() {
   let saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) {
     const legacy = localStorage.getItem(LEGACY_ACCENT_KEY);
-    if (legacy) saved = "midnight";
+    if (legacy) saved = DEFAULT_THEME_KEY;
   }
-  const theme = THEMES.find((t) => t.key === saved) || THEMES[0];
+  const theme = THEMES.find((t) => t.key === saved) || THEMES.find((t) => t.key === DEFAULT_THEME_KEY) || THEMES[0];
   const tint = localStorage.getItem(SIDEBAR_KEY) || "auto";
   applyTheme(theme, tint);
   return theme.key;
@@ -276,9 +281,9 @@ function hexToHsl(hex) {
 
 export default function ThemePicker() {
   const [active, setActive] = useState(() => {
-    if (typeof window === "undefined") return "midnight";
+    if (typeof window === "undefined") return DEFAULT_THEME_KEY;
     const saved = localStorage.getItem(STORAGE_KEY);
-    return THEMES.find((t) => t.key === saved) ? saved : "midnight";
+    return THEMES.find((t) => t.key === saved) ? saved : DEFAULT_THEME_KEY;
   });
   const [sidebar, setSidebar] = useState(() => {
     if (typeof window === "undefined") return "auto";
@@ -338,6 +343,28 @@ export default function ThemePicker() {
     if (t) applyTheme(t, sidebar);
   };
 
+  // Restore everything back to the "oscuro" (midnight) default: clears custom
+  // primary color, wallpaper, uploaded background, and sidebar tint.
+  const resetToDefault = () => {
+    localStorage.removeItem(CUSTOM_KEY);
+    localStorage.removeItem(WALLPAPER_KEY + "-custom");
+    localStorage.setItem(WALLPAPER_KEY, "none");
+    localStorage.setItem(SIDEBAR_KEY, "auto");
+    localStorage.setItem(STORAGE_KEY, DEFAULT_THEME_KEY);
+    setCustom("");
+    setCustomWall("");
+    setWallpaper("none");
+    setSidebar("auto");
+    setActive(DEFAULT_THEME_KEY);
+    const t = THEMES.find((x) => x.key === DEFAULT_THEME_KEY) || THEMES[0];
+    // clear inline overrides then apply cleanly
+    document.documentElement.style.setProperty("--app-gradient", t.gradient || "none");
+    applyTheme(t, "auto");
+  };
+
+  const isDay = active === DAY_THEME_KEY;
+  const isNight = active === NIGHT_THEME_KEY;
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -356,6 +383,42 @@ export default function ThemePicker() {
         </button>
       </PopoverTrigger>
       <PopoverContent side="bottom" align="end" className="w-96 p-3 max-h-[80vh] overflow-y-auto" data-testid="theme-picker-panel">
+        {/* Quick Day / Night toggle */}
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono mb-2">Modo</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setActive(DAY_THEME_KEY)}
+              data-testid="theme-mode-day"
+              className={`relative rounded-md border overflow-hidden text-left transition-all ${isDay ? "border-foreground ring-2 ring-primary/40" : "border-border hover:border-foreground/60"}`}
+            >
+              <div className="h-16 flex items-center justify-center bg-gradient-to-br from-amber-50 to-sky-100">
+                <Sun className="w-7 h-7 text-amber-500" />
+              </div>
+              <div className="px-2 py-1.5 flex items-center gap-2 bg-card">
+                <span className="text-xs font-semibold">Día</span>
+                {isDay && <Check className="w-3.5 h-3.5 ml-auto text-primary" />}
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActive(NIGHT_THEME_KEY)}
+              data-testid="theme-mode-night"
+              className={`relative rounded-md border overflow-hidden text-left transition-all ${isNight ? "border-foreground ring-2 ring-primary/40" : "border-border hover:border-foreground/60"}`}
+            >
+              <div className="h-16 flex items-center justify-center" style={{ background: "linear-gradient(135deg, #0b1029, #1e2749)" }}>
+                <Moon className="w-7 h-7 text-slate-200" />
+              </div>
+              <div className="px-2 py-1.5 flex items-center gap-2 bg-card">
+                <span className="text-xs font-semibold">Noche</span>
+                <span className="text-[9px] uppercase font-mono text-muted-foreground">por defecto</span>
+                {isNight && <Check className="w-3.5 h-3.5 ml-auto text-primary" />}
+              </div>
+            </button>
+          </div>
+        </div>
+
         <ThemeSection title="Oscuros" themes={dark} active={active} onPick={setActive} />
         <ThemeSection title="Claros" themes={light} active={active} onPick={setActive} />
         <ThemeSection title="Combos de color" themes={combos} active={active} onPick={setActive} />
@@ -426,8 +489,22 @@ export default function ThemePicker() {
             )}
           </div>
         </div>
+        <div className="mt-4 pt-3 border-t border-border flex items-center gap-2">
+          <button
+            type="button"
+            onClick={resetToDefault}
+            data-testid="theme-reset-default"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border hover:bg-accent text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reestablecer por defecto
+          </button>
+          <span className="text-[10px] text-muted-foreground font-mono ml-auto">
+            Default: Oscuro
+          </span>
+        </div>
         <div className="mt-3 text-[11px] text-muted-foreground">
-          Elige claro u oscuro. Los gradientes se mantienen sutiles para no afectar la lectura.
+          Elige claro u oscuro, personaliza el color primario o restablece a la vista oscura por defecto.
         </div>
       </PopoverContent>
     </Popover>
