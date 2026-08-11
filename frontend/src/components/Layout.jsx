@@ -20,6 +20,7 @@ import ThemePicker, { initThemeFromStorage } from "@/components/ThemePicker";
 import ServersStatus from "@/components/ServersStatus";
 import PendingBadges from "@/components/PendingBadges";
 import InboxWidget from "@/components/InboxWidget";
+import CalculatorWidget from "@/components/CalculatorWidget";
 
 const NAV = [
   { to: "/panel", label: "Panel de control", icon: LayoutDashboard, group: "Operación" },
@@ -275,6 +276,7 @@ export default function Layout() {
               <PendingBadges />
               <InboxWidget />
               <div className="ml-auto flex items-center gap-2">
+                <CalculatorWidget />
                 <ThemePicker />
                 <div className="flex items-center pl-2 border-l border-border h-9">
                   <input
