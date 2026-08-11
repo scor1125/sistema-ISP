@@ -2390,6 +2390,33 @@ async def week_summary(anchor: Optional[str] = None,
         "trabajadores": result,
     }
 
+# ---------- Energía de respaldo (Growatt ShinePhone) ----------
+from growatt import get_estado_cached, read_growatt_estado  # noqa: E402
+
+@api.get("/energia/estado")
+async def energia_estado(force: bool = False, _: dict = Depends(get_current_user)):
+    """Estado en tiempo real del sistema de almacenamiento (SOC / consumo / potencia carga-descarga).
+
+    Cachea 4 min en Mongo — la UI polea cada 5 min, así que evitamos hits duplicados.
+    Pasar ?force=true fuerza una lectura fresca a Growatt.
+    """
+    try:
+        if force:
+            api_key = os.environ.get("GROWATT_API_KEY")
+            plant_id = os.environ.get("GROWATT_PLANT_ID")
+            base_url = os.environ.get("GROWATT_BASE_URL") or "https://openapi.growatt.com/v1"
+            device_sn = os.environ.get("GROWATT_DEVICE_SN") or None
+            if not api_key or not plant_id:
+                raise RuntimeError("Growatt no configurado en backend/.env")
+            state = await read_growatt_estado(api_key, plant_id, base_url, device_sn)
+            await db.energia_estado.replace_one({"_id": "current"}, {"_id": "current", **state}, upsert=True)
+            state["cached"] = False
+            return state
+        return await get_estado_cached(db)
+    except Exception as e:
+        logger.exception("Growatt fetch failed")
+        raise HTTPException(502, f"No se pudo leer Growatt: {e}")
+
 # ---------- Startup ----------
 async def _run_suspend_overdue(run_id: str):
     """Background worker that suspends clients whose next_due_date has passed.
