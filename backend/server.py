@@ -105,6 +105,51 @@ async def generate_portal_pin(max_attempts: int = 20) -> str:
     # Fallback (extremely unlikely): raise so admin knows to expand namespace
     raise HTTPException(500, "No se pudo generar un PIN único; contacta soporte.")
 
+async def _enforce_time_restrictions(user: dict):
+    """Called by get_current_user. Rejects with 401/403 when the user is
+    outside their allowed access window. Owners/admins bypass all checks."""
+    role = user.get("role")
+    if role in ("owner", "admin"):
+        return
+    tr = user.get("time_restrictions") or {}
+    if not tr:
+        return
+
+    now = datetime.now(timezone.utc)
+
+    expires_at = tr.get("expires_at")
+    if expires_at:
+        try:
+            exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+            if now > exp:
+                # Auto-deactivate so future logins are rejected too
+                await db.users.update_one({"id": user["id"]}, {"$set": {"active": False}})
+                raise HTTPException(401, "Cuenta expirada")
+        except ValueError:
+            pass
+
+    allowed_days = tr.get("allowed_days")
+    if allowed_days:
+        # weekday()  Mon=0..Sun=6 → convert to Sun=0..Sat=6 so it matches the UI
+        dow_python = now.weekday()
+        dow_ui = (dow_python + 1) % 7
+        if dow_ui not in allowed_days:
+            raise HTTPException(403, "Acceso restringido: día no permitido para tu cuenta")
+
+    hs = tr.get("allowed_hours_start")
+    he = tr.get("allowed_hours_end")
+    if hs is not None and he is not None:
+        h = now.hour
+        if hs <= he:
+            # normal same-day range
+            if not (hs <= h < he):
+                raise HTTPException(403, f"Acceso restringido: fuera del horario permitido ({hs:02d}:00 – {he:02d}:00)")
+        else:
+            # wraparound (e.g. 22 → 06)
+            if not (h >= hs or h < he):
+                raise HTTPException(403, f"Acceso restringido: fuera del horario permitido ({hs:02d}:00 – {he:02d}:00)")
+
+
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
@@ -122,7 +167,27 @@ async def get_current_user(request: Request) -> dict:
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(401, "Usuario no existe")
+    if user.get("active") is False:
+        raise HTTPException(401, "Cuenta inactiva")
+    await _enforce_time_restrictions(user)
     return user
+
+
+def require_permission(module: str, action: str):
+    """Dependency factory — asserts the caller has a specific module.action bit.
+
+    Owners and admins always pass. Other roles are checked against the
+    per-user permissions dict (falling back to role defaults if missing)."""
+    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+        role = user.get("role")
+        if role in ("owner", "admin"):
+            return user
+        perms = user.get("permissions") or default_perms_for(role)
+        mod = perms.get(module) or {}
+        if not mod.get(action, False):
+            raise HTTPException(403, f"Permiso denegado: requiere {module}.{action}")
+        return user
+    return _dep
 
 def require_roles(*roles):
     async def _dep(user: dict = Depends(get_current_user)) -> dict:
@@ -132,11 +197,59 @@ def require_roles(*roles):
     return _dep
 
 # ---------- Models ----------
-Role = Literal["owner", "admin", "technician", "secretary"]
+Role = Literal["owner", "admin", "technician", "secretary", "cobrador"]
+
+# Modules exposed to the permission editor. Each maps to actual API endpoint
+# handlers via require_permission() below.
+PERMISSION_MODULES = ("clients", "lugares", "plans", "promesas", "payments")
+PERMISSION_ACTIONS = ("read", "write", "delete")
+
+# Default per-role permissions matrix. Owner/admin bypass all checks; the map
+# only matters for less-privileged roles that are constrained by default.
+DEFAULT_PERMISSIONS_BY_ROLE = {
+    "owner":      {m: {"read": True,  "write": True,  "delete": True}  for m in PERMISSION_MODULES},
+    "admin":      {m: {"read": True,  "write": True,  "delete": True}  for m in PERMISSION_MODULES},
+    "technician": {m: {"read": True,  "write": False, "delete": False} for m in PERMISSION_MODULES},
+    "secretary":  {"clients":  {"read": True,  "write": True,  "delete": False},
+                   "lugares":  {"read": True,  "write": False, "delete": False},
+                   "plans":    {"read": True,  "write": False, "delete": False},
+                   "promesas": {"read": True,  "write": True,  "delete": False},
+                   "payments": {"read": True,  "write": True,  "delete": False}},
+    "cobrador":   {"clients":  {"read": True,  "write": False, "delete": False},   # only name/phone to pick client
+                   "lugares":  {"read": False, "write": False, "delete": False},
+                   "plans":    {"read": False, "write": False, "delete": False},
+                   "promesas": {"read": False, "write": False, "delete": False},
+                   "payments": {"read": False, "write": True,  "delete": False}},  # ← only add new payments
+}
+
+def default_perms_for(role: str) -> dict:
+    base = DEFAULT_PERMISSIONS_BY_ROLE.get(role, DEFAULT_PERMISSIONS_BY_ROLE["technician"])
+    # Deep copy so callers don't mutate the shared template
+    return {m: dict(base.get(m, {"read": False, "write": False, "delete": False})) for m in PERMISSION_MODULES}
+
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+class ModulePerms(BaseModel):
+    read: bool = False
+    write: bool = False
+    delete: bool = False
+
+class UserPermissions(BaseModel):
+    clients:  Optional[ModulePerms] = None
+    lugares:  Optional[ModulePerms] = None
+    plans:    Optional[ModulePerms] = None
+    promesas: Optional[ModulePerms] = None
+    payments: Optional[ModulePerms] = None
+
+class UserTimeRestrictions(BaseModel):
+    ttl_hours: Optional[float] = None            # counts from created_at
+    expires_at: Optional[str] = None             # ISO — computed from ttl_hours OR set explicitly
+    allowed_days: Optional[List[int]] = None     # 0=Sun..6=Sat (empty/None = all days)
+    allowed_hours_start: Optional[int] = None    # 0-23 inclusive
+    allowed_hours_end: Optional[int] = None      # 0-24 exclusive (24 == end of day)
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -144,6 +257,8 @@ class UserCreate(BaseModel):
     role: Role = "technician"
     password: str
     phone: Optional[str] = None
+    permissions: Optional[UserPermissions] = None
+    time_restrictions: Optional[UserTimeRestrictions] = None
 
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -157,6 +272,14 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     password: Optional[str] = None
     active: Optional[bool] = None
+    permissions: Optional[UserPermissions] = None
+    time_restrictions: Optional[UserTimeRestrictions] = None
+
+class PermissionsPatchIn(BaseModel):
+    permissions: UserPermissions
+
+class TimeRestrictionsPatchIn(BaseModel):
+    time_restrictions: UserTimeRestrictions
 
 class PlanIn(BaseModel):
     name: str
@@ -345,6 +468,9 @@ class DeviceIn(BaseModel):
     api_password: Optional[str] = ""
     management_modes: Optional[List[Literal["ppp","queues"]]] = []
     interfaces: Optional[List[str]] = None  # e.g., ["ether1","bridge","pppoe-out1"]
+    # --- REST API (Mikrotik RouterOS v7+) ---
+    rest_api_url: Optional[str] = ""       # e.g. https://10.100.0.2  (no trailing /)
+    rest_verify_ssl: Optional[bool] = False  # RouterOS usa cert self-signed por default
 
 class VpnConnectionIn(BaseModel):
     name: str
@@ -522,10 +648,25 @@ async def create_user(u: UserCreate, _: dict = Depends(require_roles("owner","ad
     email = u.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email ya existe")
+
+    now = datetime.now(timezone.utc)
+    perms = (u.permissions.dict(exclude_none=False) if u.permissions else None) or default_perms_for(u.role)
+    # Normalize: ensure every module has all 3 action keys
+    for m in PERMISSION_MODULES:
+        perms.setdefault(m, {"read": False, "write": False, "delete": False})
+        for a in PERMISSION_ACTIONS:
+            perms[m].setdefault(a, False)
+
+    tr = (u.time_restrictions.dict(exclude_none=True) if u.time_restrictions else None) or {}
+    if tr.get("ttl_hours") and not tr.get("expires_at"):
+        tr["expires_at"] = (now + timedelta(hours=float(tr["ttl_hours"]))).isoformat()
+
     doc = {
         "id": new_id(), "email": email, "name": u.name, "role": u.role,
         "phone": u.phone or "", "password_hash": hash_password(u.password),
         "active": True, "created_at": now_iso(),
+        "permissions": perms,
+        "time_restrictions": tr or None,
     }
     await db.users.insert_one(doc)
     doc.pop("password_hash", None); doc.pop("_id", None)
@@ -533,13 +674,61 @@ async def create_user(u: UserCreate, _: dict = Depends(require_roles("owner","ad
 
 @api.patch("/users/{uid}")
 async def update_user(uid: str, u: UserUpdate, _: dict = Depends(require_roles("owner","admin"))):
-    updates = {k: v for k, v in u.dict(exclude_none=True).items()}
+    updates = u.dict(exclude_none=True)
     if "password" in updates:
         updates["password_hash"] = hash_password(updates.pop("password"))
+    # Recompute permissions default when role changes and permissions weren't passed
+    if "role" in updates and "permissions" not in updates:
+        updates["permissions"] = default_perms_for(updates["role"])
+    if "time_restrictions" in updates:
+        tr = updates["time_restrictions"] or {}
+        if tr.get("ttl_hours") and not tr.get("expires_at"):
+            existing = await db.users.find_one({"id": uid}, {"_id": 0, "created_at": 1})
+            base = datetime.now(timezone.utc)
+            if existing and existing.get("created_at"):
+                try:
+                    base = datetime.fromisoformat(existing["created_at"].replace("Z", "+00:00"))
+                except Exception:
+                    pass
+            tr["expires_at"] = (base + timedelta(hours=float(tr["ttl_hours"]))).isoformat()
+        updates["time_restrictions"] = tr or None
     if updates:
         await db.users.update_one({"id": uid}, {"$set": updates})
     doc = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
     return doc
+
+@api.patch("/users/{uid}/permissions")
+async def update_user_permissions(uid: str, payload: PermissionsPatchIn,
+                                  _: dict = Depends(require_roles("owner","admin"))):
+    """Fine-grained switch update for a single user's module permissions."""
+    perms = payload.permissions.dict(exclude_none=False)
+    # Normalize
+    for m in PERMISSION_MODULES:
+        perms.setdefault(m, {"read": False, "write": False, "delete": False})
+        for a in PERMISSION_ACTIONS:
+            perms[m].setdefault(a, False)
+    r = await db.users.update_one({"id": uid}, {"$set": {"permissions": perms, "updated_at": now_iso()}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Usuario no encontrado")
+    return await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+
+@api.patch("/users/{uid}/time-restrictions")
+async def update_user_time_restrictions(uid: str, payload: TimeRestrictionsPatchIn,
+                                        _: dict = Depends(require_roles("owner","admin"))):
+    tr = payload.time_restrictions.dict(exclude_none=True)
+    if tr.get("ttl_hours") and not tr.get("expires_at"):
+        existing = await db.users.find_one({"id": uid}, {"_id": 0, "created_at": 1})
+        base = datetime.now(timezone.utc)
+        if existing and existing.get("created_at"):
+            try:
+                base = datetime.fromisoformat(existing["created_at"].replace("Z", "+00:00"))
+            except Exception:
+                pass
+        tr["expires_at"] = (base + timedelta(hours=float(tr["ttl_hours"]))).isoformat()
+    r = await db.users.update_one({"id": uid}, {"$set": {"time_restrictions": tr or None, "updated_at": now_iso()}})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Usuario no encontrado")
+    return await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
 
 @api.delete("/users/{uid}")
 async def delete_user(uid: str, current: dict = Depends(require_roles("owner","admin"))):
@@ -549,16 +738,20 @@ async def delete_user(uid: str, current: dict = Depends(require_roles("owner","a
     return {"ok": True}
 
 # ---------- Generic collection helpers ----------
-def crud_router(prefix: str, model_in, collection: str, extra_defaults=None):
+def crud_router(prefix: str, model_in, collection: str, extra_defaults=None,
+                permission_module: Optional[str] = None):
     r = APIRouter(prefix=prefix)
 
+    def _dep(action: str):
+        return Depends(require_permission(permission_module, action)) if permission_module else Depends(get_current_user)
+
     @r.get("")
-    async def _list(_: dict = Depends(get_current_user)):
+    async def _list(_: dict = _dep("read")):
         items = await db[collection].find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
         return items
 
     @r.post("")
-    async def _create(payload: model_in, _: dict = Depends(get_current_user)):
+    async def _create(payload: model_in, _: dict = _dep("write")):
         doc = payload.dict()
         doc["id"] = new_id()
         doc["created_at"] = now_iso()
@@ -571,21 +764,21 @@ def crud_router(prefix: str, model_in, collection: str, extra_defaults=None):
         return doc
 
     @r.patch("/{item_id}")
-    async def _update(item_id: str, payload: dict, _: dict = Depends(get_current_user)):
+    async def _update(item_id: str, payload: dict, _: dict = _dep("write")):
         payload = {k: v for k, v in payload.items() if v is not None}
         payload["updated_at"] = now_iso()
         await db[collection].update_one({"id": item_id}, {"$set": payload})
         return await db[collection].find_one({"id": item_id}, {"_id": 0})
 
     @r.delete("/{item_id}")
-    async def _delete(item_id: str, _: dict = Depends(get_current_user)):
+    async def _delete(item_id: str, _: dict = _dep("delete")):
         await db[collection].delete_one({"id": item_id})
         return {"ok": True}
 
     return r
 
 # ---------- Plans, NAP, Extras, Leads, Tasks, Devices ----------
-api.include_router(crud_router("/plans", PlanIn, "plans"))
+api.include_router(crud_router("/plans", PlanIn, "plans", permission_module="plans"))
 api.include_router(crud_router("/nap-boxes", NapBoxIn, "nap_boxes"))
 api.include_router(crud_router("/extras", ExtraServiceIn, "extras"))
 api.include_router(crud_router("/leads", LeadIn, "leads"))
@@ -776,6 +969,163 @@ async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
         "message": ("Conectado correctamente." if reachable and critical_ok
                     else "Faltan datos o el endpoint no responde. Revisa los ítems marcados en rojo."),
     }
+
+@api.post("/devices/{device_id}/rest-sync")
+async def mikrotik_rest_sync(device_id: str, _: dict = Depends(require_roles("owner", "admin"))):
+    """Sincroniza interfaces del router Mikrotik usando su REST API.
+
+    Hace GET a `{rest_api_url}/rest/interface` con Basic Auth (`api_user` +
+    `api_password`), guarda el snapshot en `device_interfaces` (upsert por
+    device_id+name) y actualiza el documento del device con métricas de sync.
+    """
+    import httpx
+    import base64
+
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+
+    url = (d.get("rest_api_url") or "").rstrip("/")
+    user = d.get("api_user") or ""
+    pwd = d.get("api_password") or ""
+    if not url or not user or not pwd:
+        raise HTTPException(400, "Configura URL REST + usuario y contraseña API antes de sincronizar.")
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "La URL REST debe iniciar con http:// o https://")
+
+    verify_ssl = bool(d.get("rest_verify_ssl", False))
+    endpoint = f"{url}/rest/interface"
+
+    sync_started = now_iso()
+    err_msg = None
+    interfaces_payload = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0, verify=verify_ssl) as hc:
+            resp = await hc.get(endpoint, auth=(user, pwd))
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, list):
+                raise ValueError("La respuesta REST no es una lista de interfaces")
+            interfaces_payload = data
+    except httpx.HTTPStatusError as e:
+        code = e.response.status_code if e.response is not None else None
+        if code == 401:
+            err_msg = "Credenciales inválidas (401). Revisa usuario/contraseña API en RouterOS."
+        elif code == 404:
+            err_msg = "404 en /rest/interface. Habilita el servicio www-ssl en RouterOS."
+        else:
+            err_msg = f"HTTP {code}: {e.response.text[:200] if e.response is not None else ''}"
+    except httpx.ConnectError as e:
+        err_msg = f"No se pudo conectar a {endpoint}. Verifica la URL y la conectividad VPN."
+    except httpx.ReadTimeout:
+        err_msg = f"Timeout al conectar con {endpoint}."
+    except Exception as e:
+        err_msg = f"{type(e).__name__}: {str(e)[:200]}"
+
+    if err_msg:
+        await db.devices.update_one({"id": device_id}, {"$set": {
+            "last_sync_at": sync_started,
+            "last_sync_status": "error",
+            "last_sync_error": err_msg,
+            "updated_at": now_iso(),
+        }})
+        # 424 Failed Dependency: upstream (router) failed. Chosen over 502 because
+        # Cloudflare/ingress intercepts 5xx and swallows the JSON body.
+        raise HTTPException(424, err_msg)
+
+    # Normalizar interfaces (RouterOS devuelve strings "true"/"false")
+    def _b(v):
+        if isinstance(v, bool): return v
+        if v is None: return None
+        return str(v).strip().lower() in ("true", "yes", "1")
+
+    def _i(v, default=0):
+        try: return int(v)
+        except (TypeError, ValueError): return default
+
+    normalized = []
+    for it in interfaces_payload:
+        if not isinstance(it, dict):
+            continue
+        name = it.get("name") or it.get(".id") or ""
+        if not name:
+            continue
+        row = {
+            "device_id": device_id,
+            "name": name,
+            "type": it.get("type") or "",
+            "mac_address": it.get("mac-address") or "",
+            "comment": it.get("comment") or "",
+            "running": _b(it.get("running")),
+            "disabled": _b(it.get("disabled")),
+            "mtu": _i(it.get("mtu")),
+            "actual_mtu": _i(it.get("actual-mtu")),
+            "rx_byte": _i(it.get("rx-byte")),
+            "tx_byte": _i(it.get("tx-byte")),
+            "rx_packet": _i(it.get("rx-packet")),
+            "tx_packet": _i(it.get("tx-packet")),
+            "last_link_up_time": it.get("last-link-up-time") or "",
+            "last_link_down_time": it.get("last-link-down-time") or "",
+            "raw": it,
+            "synced_at": sync_started,
+        }
+        normalized.append(row)
+        await db.device_interfaces.update_one(
+            {"device_id": device_id, "name": name},
+            {"$set": row},
+            upsert=True,
+        )
+
+    # Purge interfaces que ya no existen en el router
+    current_names = [r["name"] for r in normalized]
+    if current_names:
+        await db.device_interfaces.delete_many({
+            "device_id": device_id,
+            "name": {"$nin": current_names},
+        })
+
+    down_count = sum(
+        1 for r in normalized
+        if r["running"] is False and r["disabled"] is not True
+    )
+
+    await db.devices.update_one({"id": device_id}, {"$set": {
+        "last_sync_at": sync_started,
+        "last_sync_status": "ok",
+        "last_sync_error": "",
+        "interfaces_count": len(normalized),
+        "interfaces_down": down_count,
+        "updated_at": now_iso(),
+    }})
+
+    return {
+        "device_id": device_id,
+        "synced_at": sync_started,
+        "interfaces_count": len(normalized),
+        "interfaces_down": down_count,
+        "interfaces": normalized,
+    }
+
+
+@api.get("/devices/{device_id}/interfaces")
+async def get_device_interfaces(device_id: str, _: dict = Depends(get_current_user)):
+    """Lista interfaces almacenadas para un router específico."""
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+    items = await db.device_interfaces.find(
+        {"device_id": device_id}, {"_id": 0, "raw": 0}
+    ).sort("name", 1).to_list(500)
+    return {
+        "device_id": device_id,
+        "last_sync_at": d.get("last_sync_at"),
+        "last_sync_status": d.get("last_sync_status"),
+        "last_sync_error": d.get("last_sync_error"),
+        "interfaces_count": d.get("interfaces_count", len(items)),
+        "interfaces_down": d.get("interfaces_down", 0),
+        "interfaces": items,
+    }
+
 
 @api.post("/vpn/{vpn_id}/test")
 async def test_vpn(vpn_id: str, _: dict = Depends(get_current_user)):
@@ -1048,18 +1398,29 @@ async def nap_status(_: dict = Depends(get_current_user)):
     return out
 
 @api.get("/clients")
-async def list_clients(_: dict = Depends(get_current_user)):
+async def list_clients(user: dict = Depends(require_permission("clients", "read"))):
+    # Cobradores get a slim projection (name/phone/id/status only) — enough to
+    # pick a client when recording a payment, but no personal or billing data.
+    if user.get("role") == "cobrador":
+        items = await db.clients.find(
+            {}, {"_id": 0, "id": 1, "full_name": 1, "phone": 1, "status": 1, "next_due_date": 1},
+        ).sort("full_name", 1).to_list(5000)
+        return items
     items = await db.clients.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
     return items
 
 @api.get("/clients/{cid}")
-async def get_client(cid: str, _: dict = Depends(get_current_user)):
-    c = await db.clients.find_one({"id": cid}, {"_id": 0})
+async def get_client(cid: str, user: dict = Depends(require_permission("clients", "read"))):
+    if user.get("role") == "cobrador":
+        c = await db.clients.find_one({"id": cid},
+            {"_id": 0, "id": 1, "full_name": 1, "phone": 1, "status": 1, "next_due_date": 1})
+    else:
+        c = await db.clients.find_one({"id": cid}, {"_id": 0})
     if not c: raise HTTPException(404, "Cliente no encontrado")
     return c
 
 @api.post("/clients")
-async def create_client(payload: ClientIn, _: dict = Depends(get_current_user)):
+async def create_client(payload: ClientIn, _: dict = Depends(require_permission("clients", "write"))):
     if payload.nap_box_id:
         await _check_nap_capacity(payload.nap_box_id)
     doc = payload.dict()
@@ -1091,7 +1452,7 @@ async def regenerate_portal_pin(cid: str, _: dict = Depends(require_roles("owner
     return {"portal_pin": pin, "phone": client.get("phone", "")}
 
 @api.patch("/clients/{cid}")
-async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(get_current_user)):
+async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(require_permission("clients", "write"))):
     updates = payload.dict(exclude_none=True)
     if updates.get("nap_box_id"):
         await _check_nap_capacity(updates["nap_box_id"], exclude_client_id=cid)
@@ -1102,19 +1463,40 @@ async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(get_c
     return await db.clients.find_one({"id": cid}, {"_id": 0})
 
 @api.delete("/clients/{cid}")
-async def delete_client(cid: str, _: dict = Depends(require_roles("owner","admin"))):
+async def delete_client(cid: str, _: dict = Depends(require_permission("clients", "delete"))):
     await db.clients.delete_one({"id": cid})
     return {"ok": True}
 
 # ---------- Payments ----------
 @api.get("/payments")
-async def list_payments(client_id: Optional[str] = None, _: dict = Depends(get_current_user)):
+async def list_payments(client_id: Optional[str] = None,
+                        user: dict = Depends(get_current_user)):
+    """Combined payments+promesas listing. The dispatcher checks each type's
+    permission based on the ?client_id filter's contents (or both perms if
+    unfiltered)."""
+    # Owner/admin always allowed. Others: require at least payments.read OR
+    # promesas.read; the response filters accordingly.
+    perms = user.get("permissions") or default_perms_for(user.get("role"))
+    can_pay = user.get("role") in ("owner","admin") or perms.get("payments", {}).get("read")
+    can_pro = user.get("role") in ("owner","admin") or perms.get("promesas", {}).get("read")
+    if not can_pay and not can_pro:
+        raise HTTPException(403, "Permiso denegado: requiere payments.read o promesas.read")
     q = {"client_id": client_id} if client_id else {}
+    # Filter by is_promise based on which perms the user has
+    if not can_pay and can_pro:
+        q["is_promise"] = True
+    elif can_pay and not can_pro:
+        q["is_promise"] = {"$ne": True}
     items = await db.payments.find(q, {"_id": 0}).sort("created_at", -1).to_list(5000)
     return items
 
 @api.post("/payments")
 async def create_payment(payload: PaymentIn, user: dict = Depends(get_current_user)):
+    # Route the write permission based on is_promise
+    module = "promesas" if payload.is_promise else "payments"
+    perms = user.get("permissions") or default_perms_for(user.get("role"))
+    if user.get("role") not in ("owner","admin") and not perms.get(module, {}).get("write"):
+        raise HTTPException(403, f"Permiso denegado: requiere {module}.write")
     client = await db.clients.find_one({"id": payload.client_id})
     if not client:
         raise HTTPException(404, "Cliente no encontrado")
@@ -1136,17 +1518,21 @@ async def create_payment(payload: PaymentIn, user: dict = Depends(get_current_us
     return doc
 
 @api.post("/payments/bulk-delete")
-async def bulk_delete_payments(payload: BulkDeleteIn, _: dict = Depends(require_roles("owner","admin"))):
+async def bulk_delete_payments(payload: BulkDeleteIn, _: dict = Depends(require_permission("payments", "delete"))):
     if not payload.ids:
         return {"deleted": 0}
     res = await db.payments.delete_many({"id": {"$in": payload.ids}})
     return {"deleted": res.deleted_count}
 
 @api.patch("/payments/{pid}")
-async def update_payment(pid: str, payload: dict, _: dict = Depends(require_roles("owner","admin"))):
+async def update_payment(pid: str, payload: dict, user: dict = Depends(get_current_user)):
     existing = await db.payments.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Pago no encontrado")
+    module = "promesas" if existing.get("is_promise") else "payments"
+    perms = user.get("permissions") or default_perms_for(user.get("role"))
+    if user.get("role") not in ("owner","admin") and not perms.get(module, {}).get("write"):
+        raise HTTPException(403, f"Permiso denegado: requiere {module}.write")
     # Only allow editing these fields; do NOT re-apply the next_due_date side
     # effect from create — edits should not shift the client's billing cycle.
     ALLOWED = {"amount", "method", "concept", "invoice_number", "is_promise",
@@ -1160,7 +1546,12 @@ async def update_payment(pid: str, payload: dict, _: dict = Depends(require_role
     return updated
 
 @api.delete("/payments/{pid}")
-async def delete_payment(pid: str, _: dict = Depends(require_roles("owner","admin"))):
+async def delete_payment(pid: str, user: dict = Depends(get_current_user)):
+    existing = await db.payments.find_one({"id": pid}, {"_id": 0, "is_promise": 1})
+    module = "promesas" if (existing or {}).get("is_promise") else "payments"
+    perms = user.get("permissions") or default_perms_for(user.get("role"))
+    if user.get("role") not in ("owner","admin") and not perms.get(module, {}).get("delete"):
+        raise HTTPException(403, f"Permiso denegado: requiere {module}.delete")
     await db.payments.delete_one({"id": pid})
     return {"ok": True}
 
@@ -2257,7 +2648,7 @@ async def create_lugar(payload: LugarIn, _: dict = Depends(require_roles("owner"
 
 @api.patch("/lugares/{lid}")
 async def update_lugar(lid: str, payload: LugarUpdate,
-                       _: dict = Depends(require_roles("owner","admin"))):
+                       _: dict = Depends(require_permission("lugares", "write"))):
     update = {k: v for k, v in payload.dict().items() if v is not None}
     if not update:
         raise HTTPException(400, "Nada que actualizar")
@@ -2272,7 +2663,7 @@ async def update_lugar(lid: str, payload: LugarUpdate,
     return await db.lugares.find_one({"id": lid}, {"_id": 0})
 
 @api.delete("/lugares/{lid}")
-async def delete_lugar(lid: str, _: dict = Depends(require_roles("owner","admin"))):
+async def delete_lugar(lid: str, _: dict = Depends(require_permission("lugares", "delete"))):
     doc = await db.lugares.find_one({"id": lid}, {"_id": 0, "name": 1})
     if not doc:
         raise HTTPException(404, "Lugar no encontrado")

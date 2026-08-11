@@ -14,9 +14,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Router as RouterIcon, ShieldCheck, Terminal, Copy, Download, Shuffle, ChevronDown, Trash2, Pencil, Zap,
+  RefreshCw, Globe, AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import MikrotikTestDialog from "@/components/MikrotikTestDialog";
+import MikrotikInterfacesDialog from "@/components/MikrotikInterfacesDialog";
 import ServerInfoPanel from "@/components/ServerInfoPanel";
 
 const rand = (n = 10) => {
@@ -112,6 +114,8 @@ const emptyForm = () => ({
   api_user: "",
   api_password: "",
   management_modes: [],
+  rest_api_url: "",
+  rest_verify_ssl: false,
 });
 
 function MikrotikWizard({ open, onOpenChange, server, onSaved, initial }) {
@@ -168,6 +172,8 @@ function MikrotikWizard({ open, onOpenChange, server, onSaved, initial }) {
         api_user: f.api_user,
         api_password: f.api_password,
         management_modes: f.management_modes,
+        rest_api_url: (f.rest_api_url || "").trim().replace(/\/$/, ""),
+        rest_verify_ssl: !!f.rest_verify_ssl,
       };
       if (initial?.id) {
         await api.patch(`/devices/${initial.id}`, payload);
@@ -266,6 +272,32 @@ function MikrotikWizard({ open, onOpenChange, server, onSaved, initial }) {
             </div>
 
             <div className="rounded-md border border-border p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Globe className="w-3.5 h-3.5 text-primary" />
+                <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">REST API (RouterOS v7+)</div>
+              </div>
+              <Label className="text-xs">URL HTTPS del router</Label>
+              <Input
+                placeholder="https://10.100.0.2"
+                value={f.rest_api_url}
+                onChange={(e) => setF({ ...f, rest_api_url: e.target.value })}
+                data-testid="mk-rest-url-input"
+              />
+              <div className="text-[11px] text-muted-foreground italic">
+                Se consultará <span className="font-mono">GET {(f.rest_api_url || "https://<router>").replace(/\/$/,"")}/rest/interface</span> con Basic Auth (usuario/contraseña API de arriba).
+                Requiere <span className="font-mono">/ip service enable www-ssl</span> en el router.
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer text-xs">
+                <Checkbox
+                  checked={!!f.rest_verify_ssl}
+                  onCheckedChange={(v) => setF({ ...f, rest_verify_ssl: !!v })}
+                  data-testid="mk-rest-verify-ssl"
+                />
+                Verificar certificado TLS (desmarca si el router usa cert self-signed)
+              </label>
+            </div>
+
+            <div className="rounded-md border border-border p-3 space-y-2">
               <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Modo de gestión</div>
               <div className="space-y-2">
                 {[
@@ -323,6 +355,7 @@ export default function Mikrotik() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [testing, setTesting] = useState(null);
+  const [interfacesFor, setInterfacesFor] = useState(null);
   const [q, setQ] = useState("");
 
   const load = async () => {
@@ -387,30 +420,75 @@ export default function Mikrotik() {
             <TableHead>Protocolo</TableHead>
             <TableHead>Usuario VPN</TableHead>
             <TableHead>Usuario API</TableHead>
+            <TableHead>REST</TableHead>
+            <TableHead>Última sync</TableHead>
             <TableHead>Modo gestión</TableHead>
-            <TableHead>Creado</TableHead>
             <TableHead className="text-right">Acciones</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {filtered.length === 0 && (
-              <EmptyRow colSpan={7} text={devices.length === 0
+              <EmptyRow colSpan={8} text={devices.length === 0
                 ? "Aún no registras Mikrotiks. Presiona '+ Nuevo Mikrotik' y elige VPN/Túnel."
                 : "Nada coincide con la búsqueda."} />
             )}
-            {filtered.map((d) => (
+            {filtered.map((d) => {
+              const restConfigured = !!(d.rest_api_url && d.api_user && d.api_password);
+              const down = d.interfaces_down || 0;
+              const syncStatus = d.last_sync_status;
+              return (
               <TableRow key={d.id}>
                 <TableCell className="font-medium"><RouterIcon className="w-4 h-4 text-primary inline mr-1" />{d.name}</TableCell>
                 <TableCell><Badge variant="outline" className="uppercase text-[10px]">{d.vpn_protocol || "—"}</Badge></TableCell>
                 <TableCell className="font-mono text-xs">{d.vpn_user || "—"}</TableCell>
                 <TableCell className="font-mono text-xs">{d.api_enabled ? (d.api_user || "crm-api") : "—"}</TableCell>
                 <TableCell>
+                  {restConfigured ? (
+                    <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500">
+                      <Globe className="w-3 h-3 mr-1" /> configurado
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {d.last_sync_at ? (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="font-mono">{new Date(d.last_sync_at).toLocaleString()}</span>
+                      {syncStatus === "error" && (
+                        <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-500">error</Badge>
+                      )}
+                      {syncStatus === "ok" && down > 0 && (
+                        <Badge variant="outline" className="text-[10px] border-red-500/50 text-red-500" data-testid={`mk-down-badge-${d.id}`}>
+                          <AlertTriangle className="w-3 h-3 mr-1" /> {down} caída{down === 1 ? "" : "s"}
+                        </Badge>
+                      )}
+                      {syncStatus === "ok" && down === 0 && (
+                        <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500">
+                          {d.interfaces_count || 0} ok
+                        </Badge>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">nunca</span>
+                  )}
+                </TableCell>
+                <TableCell>
                   {(d.management_modes || []).length === 0 && <span className="text-muted-foreground text-xs">—</span>}
                   {(d.management_modes || []).map((m) => (
                     <Badge key={m} variant="outline" className="mr-1 uppercase text-[10px]">{m}</Badge>
                   ))}
                 </TableCell>
-                <TableCell className="text-xs font-mono">{(d.created_at || "").slice(0, 10)}</TableCell>
                 <TableCell className="text-right">
+                  <Button
+                    size="sm" variant="outline"
+                    onClick={() => setInterfacesFor(d)}
+                    data-testid={`mk-interfaces-${d.id}`}
+                    className="mr-1"
+                    disabled={!restConfigured}
+                    title={restConfigured ? "Ver / sincronizar interfaces" : "Configura URL REST + usuario/pass API"}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 mr-1" /> Interfaces
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => setTesting(d)} data-testid={`mk-test-${d.id}`} className="mr-1">
                     <Zap className="w-3.5 h-3.5 mr-1" /> Probar
                   </Button>
@@ -422,7 +500,7 @@ export default function Mikrotik() {
                   </Button>
                 </TableCell>
               </TableRow>
-            ))}
+            );})}
           </TableBody>
         </Table>
       </div>
@@ -439,6 +517,12 @@ export default function Mikrotik() {
         device={testing}
         open={!!testing}
         onOpenChange={(o) => { if (!o) setTesting(null); }}
+      />
+
+      <MikrotikInterfacesDialog
+        device={interfacesFor}
+        open={!!interfacesFor}
+        onOpenChange={(o) => { if (!o) { setInterfacesFor(null); load(); } }}
       />
     </div>
   );
