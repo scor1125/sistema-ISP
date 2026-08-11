@@ -2393,26 +2393,108 @@ async def week_summary(anchor: Optional[str] = None,
 # ---------- Energía de respaldo (Growatt ShinePhone) ----------
 from growatt import get_estado_cached, read_growatt_estado  # noqa: E402
 
-@api.get("/energia/estado")
-async def energia_estado(force: bool = False, _: dict = Depends(get_current_user)):
-    """Estado en tiempo real del sistema de almacenamiento (SOC / consumo / potencia carga-descarga).
+class EnergyPlantIn(BaseModel):
+    name: str
+    plant_id: str
+    device_sn: Optional[str] = ""
+    color: Optional[str] = "#22c55e"
+    order: Optional[int] = 0
 
-    Cachea 4 min en Mongo — la UI polea cada 5 min, así que evitamos hits duplicados.
-    Pasar ?force=true fuerza una lectura fresca a Growatt.
+class EnergyPlantUpdate(BaseModel):
+    name: Optional[str] = None
+    plant_id: Optional[str] = None
+    device_sn: Optional[str] = None
+    color: Optional[str] = None
+    order: Optional[int] = None
+
+async def _seed_default_plant():
+    """One-time seed: if no plants exist and env has GROWATT_PLANT_ID, create it."""
+    count = await db.energy_plants.count_documents({})
+    if count == 0 and os.environ.get("GROWATT_PLANT_ID"):
+        await db.energy_plants.insert_one({
+            "id": new_id(),
+            "name": "Principal",
+            "plant_id": os.environ["GROWATT_PLANT_ID"],
+            "device_sn": os.environ.get("GROWATT_DEVICE_SN") or "",
+            "color": "#22c55e",
+            "order": 0,
+            "created_at": now_iso(),
+        })
+
+@api.get("/energia/plants")
+async def list_energy_plants(_: dict = Depends(get_current_user)):
+    await _seed_default_plant()
+    items = await db.energy_plants.find({}, {"_id": 0}).sort("order", 1).to_list(50)
+    return items
+
+@api.post("/energia/plants")
+async def create_energy_plant(payload: EnergyPlantIn,
+                              _: dict = Depends(require_roles("owner","admin"))):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    await db.energy_plants.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.patch("/energia/plants/{pid}")
+async def update_energy_plant(pid: str, payload: EnergyPlantUpdate,
+                              _: dict = Depends(require_roles("owner","admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.energy_plants.update_one({"id": pid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Planta no encontrada")
+    return await db.energy_plants.find_one({"id": pid}, {"_id": 0})
+
+@api.delete("/energia/plants/{pid}")
+async def delete_energy_plant(pid: str, _: dict = Depends(require_roles("owner","admin"))):
+    r = await db.energy_plants.delete_one({"id": pid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Planta no encontrada")
+    return {"ok": True}
+
+@api.get("/energia/estado")
+async def energia_estado(plant: Optional[str] = None, force: bool = False,
+                         _: dict = Depends(get_current_user)):
+    """Estado en tiempo real del sistema de almacenamiento.
+
+    Si ``plant`` está presente, se usa como el ID interno de la planta guardado
+    en ``energy_plants`` (no el plant_id de Growatt). Sin este parámetro se usa
+    la planta por defecto (``GROWATT_PLANT_ID`` en el .env).
     """
+    plant_id = None
+    device_sn = None
+    plant_meta = None
+    if plant:
+        plant_meta = await db.energy_plants.find_one({"id": plant}, {"_id": 0})
+        if not plant_meta:
+            raise HTTPException(404, "Planta no encontrada")
+        plant_id = plant_meta.get("plant_id")
+        device_sn = plant_meta.get("device_sn") or None
     try:
         if force:
             api_key = os.environ.get("GROWATT_API_KEY")
-            plant_id = os.environ.get("GROWATT_PLANT_ID")
             base_url = os.environ.get("GROWATT_BASE_URL") or "https://openapi.growatt.com/v1"
-            device_sn = os.environ.get("GROWATT_DEVICE_SN") or None
-            if not api_key or not plant_id:
-                raise RuntimeError("Growatt no configurado en backend/.env")
-            state = await read_growatt_estado(api_key, plant_id, base_url, device_sn)
-            await db.energia_estado.replace_one({"_id": "current"}, {"_id": "current", **state}, upsert=True)
+            pid = plant_id or os.environ.get("GROWATT_PLANT_ID")
+            sn = device_sn if device_sn is not None else (os.environ.get("GROWATT_DEVICE_SN") or None)
+            if not api_key or not pid:
+                raise RuntimeError("Growatt no configurado")
+            state = await read_growatt_estado(api_key, pid, base_url, sn)
+            state["plant_id"] = pid
+            await db.energia_estado.replace_one(
+                {"_id": f"current-{pid}"}, {"_id": f"current-{pid}", **state}, upsert=True
+            )
             state["cached"] = False
-            return state
-        return await get_estado_cached(db)
+        else:
+            state = await get_estado_cached(db, plant_id=plant_id, device_sn=device_sn)
+        if plant_meta:
+            state["plant_name"] = plant_meta.get("name")
+            state["plant_color"] = plant_meta.get("color")
+            state["plant_ref"] = plant_meta.get("id")
+        return state
     except Exception as e:
         logger.exception("Growatt fetch failed")
         raise HTTPException(502, f"No se pudo leer Growatt: {e}")

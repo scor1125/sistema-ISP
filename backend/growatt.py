@@ -106,18 +106,25 @@ async def read_growatt_estado(
     }
 
 
-async def get_estado_cached(db, ttl_seconds: int = 240) -> dict:
-    """Read Growatt but keep a Mongo-side cache so 2 clients don't double-poll."""
+async def get_estado_cached(db, plant_id: Optional[str] = None,
+                            device_sn: Optional[str] = None,
+                            ttl_seconds: int = 240) -> dict:
+    """Read Growatt but keep a Mongo-side cache so 2 clients don't double-poll.
+
+    ``plant_id`` / ``device_sn`` override the env defaults so a single deployment
+    can serve several plants (office, home, ...).
+    """
     api_key = os.environ.get("GROWATT_API_KEY")
-    plant_id = os.environ.get("GROWATT_PLANT_ID")
     base_url = os.environ.get("GROWATT_BASE_URL") or "https://openapi.growatt.com/v1"
-    device_sn = os.environ.get("GROWATT_DEVICE_SN") or None
+    pid = plant_id or os.environ.get("GROWATT_PLANT_ID")
+    sn = device_sn if device_sn is not None else (os.environ.get("GROWATT_DEVICE_SN") or None)
 
-    if not api_key or not plant_id:
-        raise RuntimeError("Growatt no configurado: falta GROWATT_API_KEY o GROWATT_PLANT_ID en el backend/.env")
+    if not api_key or not pid:
+        raise RuntimeError("Growatt no configurado: falta GROWATT_API_KEY o plant_id")
 
+    cache_key = f"current-{pid}"
     now = datetime.now(timezone.utc)
-    cached = await db.energia_estado.find_one({"_id": "current"})
+    cached = await db.energia_estado.find_one({"_id": cache_key})
     if cached:
         try:
             cached_at = datetime.fromisoformat(cached["updated_at"].replace("Z", "+00:00"))
@@ -128,10 +135,11 @@ async def get_estado_cached(db, ttl_seconds: int = 240) -> dict:
         except Exception:
             pass
 
-    state = await read_growatt_estado(api_key, plant_id, base_url, device_sn)
+    state = await read_growatt_estado(api_key, pid, base_url, sn)
+    state["plant_id"] = pid
     await db.energia_estado.replace_one(
-        {"_id": "current"},
-        {"_id": "current", **state},
+        {"_id": cache_key},
+        {"_id": cache_key, **state},
         upsert=True,
     )
     state["cached"] = False
