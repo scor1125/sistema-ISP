@@ -3166,6 +3166,345 @@ async def tuya_delete_device(device_id: str,
     except TuyaError as e:
         raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
 
+
+# ---- Grupos de dispositivos (zonas: Oficina, Casa, Taller...) ----
+class TuyaGroupIn(BaseModel):
+    name: str
+    color: Optional[str] = "#38bdf8"
+    device_ids: List[str] = []
+    notes: Optional[str] = ""
+
+
+class TuyaGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    device_ids: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+@api.get("/tuya/groups")
+async def tuya_list_groups(_: dict = Depends(get_current_user)):
+    items = await db.tuya_groups.find({}, {"_id": 0}).sort("name", 1).to_list(200)
+    return items
+
+
+@api.post("/tuya/groups")
+async def tuya_create_group(payload: TuyaGroupIn,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    await db.tuya_groups.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/tuya/groups/{gid}")
+async def tuya_update_group(gid: str, payload: TuyaGroupUpdate,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.tuya_groups.update_one({"id": gid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Grupo no encontrado")
+    return await db.tuya_groups.find_one({"id": gid}, {"_id": 0})
+
+
+@api.delete("/tuya/groups/{gid}")
+async def tuya_delete_group(gid: str,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    r = await db.tuya_groups.delete_one({"id": gid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Grupo no encontrado")
+    return {"ok": True}
+
+
+@api.post("/tuya/groups/{gid}/commands")
+async def tuya_group_commands(gid: str, payload: TuyaCommandsIn,
+                              _: dict = Depends(get_current_user)):
+    """Envía los mismos comandos a todos los dispositivos del grupo en paralelo."""
+    group = await db.tuya_groups.find_one({"id": gid}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Grupo no encontrado")
+    device_ids = group.get("device_ids") or []
+    if not device_ids:
+        raise HTTPException(400, "El grupo no tiene dispositivos vinculados")
+    cli = await _tuya_client()
+    cmds = [c.dict() for c in payload.commands]
+
+    async def _send(did):
+        try:
+            await cli.send_commands(did, cmds)
+            return {"device_id": did, "ok": True}
+        except TuyaError as e:
+            return {"device_id": did, "ok": False, "error": f"Tuya {e.code}: {e.msg}"}
+        except Exception as e:
+            return {"device_id": did, "ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    results = await asyncio.gather(*[_send(d) for d in device_ids])
+    ok_count = sum(1 for r in results if r["ok"])
+    return {
+        "group_id": gid,
+        "total": len(results),
+        "ok": ok_count,
+        "failed": len(results) - ok_count,
+        "results": results,
+    }
+
+
+# ---- Escenarios: comandos agendados por hora + días ----
+class TuyaSceneTarget(BaseModel):
+    kind: Literal["all", "group", "devices"] = "all"
+    group_id: Optional[str] = None
+    device_ids: Optional[List[str]] = None
+
+
+class TuyaSceneIn(BaseModel):
+    name: str
+    time: str  # "HH:MM"
+    days: List[int] = [0, 1, 2, 3, 4, 5, 6]  # 0=domingo, 6=sábado
+    enabled: bool = True
+    target: TuyaSceneTarget = TuyaSceneTarget()
+    commands: List[TuyaCommand]
+    icon: Optional[str] = "sun"
+    color: Optional[str] = "#f59e0b"
+
+
+class TuyaSceneUpdate(BaseModel):
+    name: Optional[str] = None
+    time: Optional[str] = None
+    days: Optional[List[int]] = None
+    enabled: Optional[bool] = None
+    target: Optional[TuyaSceneTarget] = None
+    commands: Optional[List[TuyaCommand]] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+
+
+def _valid_hhmm(t: str) -> bool:
+    try:
+        h, m = t.split(":")
+        return 0 <= int(h) <= 23 and 0 <= int(m) <= 59
+    except Exception:
+        return False
+
+
+@api.get("/tuya/scenes")
+async def tuya_list_scenes(_: dict = Depends(get_current_user)):
+    items = await db.tuya_scenes.find({}, {"_id": 0}).sort("time", 1).to_list(200)
+    return items
+
+
+@api.post("/tuya/scenes")
+async def tuya_create_scene(payload: TuyaSceneIn,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    if not _valid_hhmm(payload.time):
+        raise HTTPException(400, "Hora inválida, usa formato HH:MM (24h)")
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    doc["last_run_date"] = ""
+    doc["last_run_at"] = None
+    doc["last_run_status"] = ""
+    await db.tuya_scenes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/tuya/scenes/{sid}")
+async def tuya_update_scene(sid: str, payload: TuyaSceneUpdate,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if "time" in update and not _valid_hhmm(update["time"]):
+        raise HTTPException(400, "Hora inválida, usa formato HH:MM (24h)")
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.tuya_scenes.update_one({"id": sid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Escena no encontrada")
+    return await db.tuya_scenes.find_one({"id": sid}, {"_id": 0})
+
+
+@api.delete("/tuya/scenes/{sid}")
+async def tuya_delete_scene(sid: str,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    r = await db.tuya_scenes.delete_one({"id": sid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Escena no encontrada")
+    return {"ok": True}
+
+
+async def _resolve_scene_targets(scene: dict) -> List[str]:
+    """Return the device_ids that a scene affects."""
+    target = scene.get("target") or {}
+    kind = target.get("kind") or "all"
+    if kind == "devices":
+        return target.get("device_ids") or []
+    if kind == "group":
+        gid = target.get("group_id")
+        if not gid: return []
+        g = await db.tuya_groups.find_one({"id": gid}, {"_id": 0, "device_ids": 1})
+        return (g or {}).get("device_ids") or []
+    # kind == "all"
+    try:
+        cli = await _tuya_client()
+        devs = await cli.list_devices()
+        return [d.get("id") for d in devs if d.get("id")]
+    except Exception:
+        return []
+
+
+async def _fire_scene(scene: dict) -> dict:
+    """Execute a scene: fan-out commands to all target devices."""
+    ids = await _resolve_scene_targets(scene)
+    if not ids:
+        return {"scene_id": scene["id"], "total": 0, "ok": 0, "failed": 0,
+                "error": "sin dispositivos objetivo"}
+    cli = await _tuya_client()
+    cmds = scene.get("commands") or []
+
+    async def _send(did):
+        try:
+            await cli.send_commands(did, cmds)
+            return True
+        except Exception as e:
+            logger.warning("[scene %s] device %s failed: %s", scene["id"], did, e)
+            return False
+
+    results = await asyncio.gather(*[_send(d) for d in ids])
+    ok_count = sum(1 for r in results if r)
+    return {
+        "scene_id": scene["id"],
+        "total": len(results),
+        "ok": ok_count,
+        "failed": len(results) - ok_count,
+    }
+
+
+@api.post("/tuya/scenes/{sid}/run")
+async def tuya_run_scene(sid: str, _: dict = Depends(get_current_user)):
+    scene = await db.tuya_scenes.find_one({"id": sid}, {"_id": 0})
+    if not scene:
+        raise HTTPException(404, "Escena no encontrada")
+    try:
+        result = await _fire_scene(scene)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+    await db.tuya_scenes.update_one({"id": sid}, {"$set": {
+        "last_run_at": now_iso(),
+        "last_run_status": "ok" if result["failed"] == 0 else "partial",
+        "last_run_result": result,
+    }})
+    return result
+
+
+@api.post("/cron/tuya-scenes")
+async def cron_tuya_scenes(request: Request):
+    """Evaluates all enabled scenes and fires any whose time has arrived today.
+
+    Cadence: every 5 min (see /app/.emergent/crons.yml). Uses `last_run_date`
+    (YYYY-MM-DD in America/Mexico_City) as an idempotency guard so a scene runs
+    at most once per day even if the cron fires multiple times.
+    """
+    import hmac as _hmac
+    from zoneinfo import ZoneInfo
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:] if auth.lower().startswith("bearer ") else ""
+    if not secret or not token or not _hmac.compare_digest(token, secret):
+        raise HTTPException(401, "Unauthorized cron webhook")
+    tz = ZoneInfo("America/Mexico_City")
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+    now_hhmm = now.strftime("%H:%M")
+    # 0=Mon..6=Sun in Python; we use 0=Sun..6=Sat in our schema → shift
+    py_weekday = now.weekday()
+    scene_day = (py_weekday + 1) % 7  # 0=Sun
+
+    fired = []
+    scenes = await db.tuya_scenes.find({"enabled": True}, {"_id": 0}).to_list(500)
+    for s in scenes:
+        if scene_day not in (s.get("days") or []):
+            continue
+        if s.get("last_run_date") == today_str:
+            continue
+        if not s.get("time") or s["time"] > now_hhmm:
+            continue
+        # Fire!
+        try:
+            result = await _fire_scene(s)
+            status = "ok" if result["failed"] == 0 else "partial"
+            await db.tuya_scenes.update_one({"id": s["id"]}, {"$set": {
+                "last_run_date": today_str,
+                "last_run_at": now_iso(),
+                "last_run_status": status,
+                "last_run_result": result,
+            }})
+            fired.append({"scene_id": s["id"], "name": s["name"], "status": status,
+                          "ok": result["ok"], "total": result["total"]})
+            logger.info("[cron tuya-scenes] fired '%s' → %d/%d ok",
+                        s["name"], result["ok"], result["total"])
+        except Exception as e:
+            await db.tuya_scenes.update_one({"id": s["id"]}, {"$set": {
+                "last_run_date": today_str,
+                "last_run_at": now_iso(),
+                "last_run_status": "error",
+                "last_run_error": str(e)[:200],
+            }})
+            fired.append({"scene_id": s["id"], "name": s["name"], "status": "error",
+                          "error": str(e)[:200]})
+            logger.exception("[cron tuya-scenes] scene %s failed", s["name"])
+
+    return {"ok": True, "now": now.isoformat(), "fired": fired,
+            "evaluated": len(scenes)}
+
+
+async def _seed_tuya_scenes():
+    """One-time seed of the two example scenes requested by the user."""
+    count = await db.tuya_scenes.count_documents({})
+    if count > 0:
+        return
+    await db.tuya_scenes.insert_many([
+        {
+            "id": new_id(),
+            "name": "Todos apagados a las 11pm",
+            "time": "23:00",
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "enabled": True,
+            "target": {"kind": "all", "group_id": None, "device_ids": None},
+            "commands": [{"code": "switch", "value": False}],
+            "icon": "moon", "color": "#6366f1",
+            "created_at": now_iso(),
+            "last_run_date": "",
+        },
+        {
+            "id": new_id(),
+            "name": "Enfriar oficina a las 8am",
+            "time": "08:00",
+            "days": [1, 2, 3, 4, 5],  # Lun..Vie
+            "enabled": True,
+            "target": {"kind": "group", "group_id": None, "device_ids": None},
+            "commands": [
+                {"code": "switch", "value": True},
+                {"code": "mode", "value": "cold"},
+                {"code": "temp_set", "value": 22},
+            ],
+            "icon": "sun", "color": "#f59e0b",
+            "created_at": now_iso(),
+            "last_run_date": "",
+        },
+    ])
+
+
+@app.on_event("startup")
+async def _startup_tuya_seed():
+    await _seed_tuya_scenes()
+
 # ---------- Mount ----------
 app.include_router(api)
 

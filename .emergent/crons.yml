@@ -13,3 +13,10 @@ crons:
     endpoint: "{{BASE_URL}}/api/cron/send-reminders"
     method: POST
     enabled: true
+
+  - name: tuya-scenes
+    description: "Evalúa escenas Smart Life / Tuya cada 5 minutos y dispara comandos programados (ej: 'Todos apagados a las 11pm')."
+    cron: "*/5 * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/tuya-scenes"
+    method: POST
+    enabled: true

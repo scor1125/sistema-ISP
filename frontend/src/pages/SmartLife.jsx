@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -14,9 +15,10 @@ import {
 import {
   AirVent, RefreshCw, Wifi, WifiOff, Snowflake, Sun, Wind, Zap,
   Settings2, Pencil, Trash2, Plus, Minus, Power, KeyRound, CheckCircle2,
-  AlertTriangle, Save, ShieldCheck, ShieldAlert, ExternalLink,
+  AlertTriangle, Save, ShieldCheck, ShieldAlert, ExternalLink, Home, Clock,
 } from "lucide-react";
 import { toast } from "sonner";
+import { GroupsTab, ScenesTab } from "@/components/tuya/TuyaTabs";
 
 const REGION_LABELS = {
   us: "🇲🇽 América (US) — openapi.tuyaus.com",
@@ -423,9 +425,12 @@ function DeviceCard({ device, onCommand, onRename, onDelete }) {
 export default function SmartLife() {
   const [config, setConfig] = useState(null);
   const [devices, setDevices] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [scenes, setScenes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
+  const [tab, setTab] = useState("devices");
 
   const loadConfig = useCallback(async () => {
     try {
@@ -450,12 +455,28 @@ export default function SmartLife() {
     } finally { setLoading(false); }
   }, []);
 
+  const loadGroups = useCallback(async () => {
+    try {
+      const { data } = await api.get("/tuya/groups");
+      setGroups(data);
+    } catch (e) { /* silent — groups is best-effort */ }
+  }, []);
+
+  const loadScenes = useCallback(async () => {
+    try {
+      const { data } = await api.get("/tuya/scenes");
+      setScenes(data);
+    } catch (e) { /* silent */ }
+  }, []);
+
   useEffect(() => {
     (async () => {
       const c = await loadConfig();
       if (c?.configured) await loadDevices();
+      // scenes/groups load regardless of Tuya config (they're stored locally)
+      await Promise.all([loadGroups(), loadScenes()]);
     })();
-  }, [loadConfig, loadDevices]);
+  }, [loadConfig, loadDevices, loadGroups, loadScenes]);
 
   const sendCommand = async (deviceId, commands) => {
     try {
@@ -544,24 +565,46 @@ export default function SmartLife() {
         </div>
       )}
 
-      {/* Devices grid */}
-      {devices.length === 0 && !loading && config?.configured && !error && (
-        <div className="rounded-md border border-border bg-muted/20 p-6 text-center text-muted-foreground text-sm">
-          No hay dispositivos en tu proyecto Tuya todavía. Agrega A/Cs desde la app Smart Life y luego presiona <span className="font-medium">Refrescar</span>.
-        </div>
-      )}
+      <Tabs value={tab} onValueChange={setTab} className="mt-2">
+        <TabsList data-testid="tuya-tabs">
+          <TabsTrigger value="devices" data-testid="tuya-tab-devices">
+            <AirVent className="w-4 h-4 mr-1" /> Dispositivos ({devices.length})
+          </TabsTrigger>
+          <TabsTrigger value="groups" data-testid="tuya-tab-groups">
+            <Home className="w-4 h-4 mr-1" /> Grupos ({groups.length})
+          </TabsTrigger>
+          <TabsTrigger value="scenes" data-testid="tuya-tab-scenes">
+            <Clock className="w-4 h-4 mr-1" /> Escenas ({scenes.length})
+          </TabsTrigger>
+        </TabsList>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {devices.map((d) => (
-          <DeviceCard
-            key={d.id}
-            device={d}
-            onCommand={sendCommand}
-            onRename={renameDevice}
-            onDelete={deleteDevice}
-          />
-        ))}
-      </div>
+        <TabsContent value="devices" className="space-y-3">
+          {devices.length === 0 && !loading && config?.configured && !error && (
+            <div className="rounded-md border border-border bg-muted/20 p-6 text-center text-muted-foreground text-sm">
+              No hay dispositivos en tu proyecto Tuya todavía. Agrega A/Cs desde la app Smart Life y luego presiona <span className="font-medium">Refrescar</span>.
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {devices.map((d) => (
+              <DeviceCard
+                key={d.id}
+                device={d}
+                onCommand={sendCommand}
+                onRename={renameDevice}
+                onDelete={deleteDevice}
+              />
+            ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="groups">
+          <GroupsTab devices={devices} groups={groups} onReload={loadGroups} />
+        </TabsContent>
+
+        <TabsContent value="scenes">
+          <ScenesTab devices={devices} groups={groups} scenes={scenes} onReload={loadScenes} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
