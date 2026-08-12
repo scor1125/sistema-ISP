@@ -2783,7 +2783,6 @@ async def week_summary(anchor: Optional[str] = None,
 
 # ---------- Energía de respaldo (Growatt ShinePhone) ----------
 from growatt import get_estado_cached, read_growatt_estado  # noqa: E402
-
 class EnergyPlantIn(BaseModel):
     name: str
     plant_id: str
@@ -2985,6 +2984,187 @@ async def _startup():
 @app.on_event("shutdown")
 async def _shutdown():
     client.close()
+
+# ---------- Tuya / Smart Life IoT integration ----------
+from tuya import TuyaClient, TuyaError, REGION_ENDPOINTS  # noqa: E402
+
+
+class TuyaConfigIn(BaseModel):
+    access_id: Optional[str] = None
+    access_secret: Optional[str] = None
+    region: Optional[Literal["us", "eu", "cn", "in", "we", "ue"]] = None
+    project_code: Optional[str] = None
+
+
+class TuyaRenameIn(BaseModel):
+    name: str
+
+
+class TuyaCommand(BaseModel):
+    code: str
+    value: Any
+
+
+class TuyaCommandsIn(BaseModel):
+    commands: List[TuyaCommand]
+
+
+async def _tuya_config_doc() -> dict:
+    doc = await db.tuya_config.find_one({"key": "singleton"}, {"_id": 0}) or {}
+    return doc.get("value", {}) if isinstance(doc, dict) else {}
+
+
+async def _tuya_client() -> TuyaClient:
+    cfg = await _tuya_config_doc()
+    if not cfg.get("access_id") or not cfg.get("access_secret"):
+        raise HTTPException(400, "Tuya no está configurado. Guarda Access ID y Access Secret en /smart-life.")
+    return TuyaClient(
+        access_id=cfg["access_id"],
+        access_secret=cfg["access_secret"],
+        region=cfg.get("region", "us"),
+        project_code=cfg.get("project_code", ""),
+        db=db,
+    )
+
+
+def _mask_secret(s: str) -> str:
+    if not s: return ""
+    if len(s) <= 8: return "*" * len(s)
+    return s[:4] + "*" * (len(s) - 8) + s[-4:]
+
+
+@api.get("/tuya/config")
+async def tuya_get_config(_: dict = Depends(require_roles("owner", "admin"))):
+    cfg = await _tuya_config_doc()
+    return {
+        "access_id": cfg.get("access_id", ""),
+        "access_secret_masked": _mask_secret(cfg.get("access_secret", "")),
+        "has_secret": bool(cfg.get("access_secret")),
+        "region": cfg.get("region", "us"),
+        "project_code": cfg.get("project_code", ""),
+        "regions": list(REGION_ENDPOINTS.keys()),
+        "endpoint": REGION_ENDPOINTS.get(cfg.get("region", "us")),
+        "configured": bool(cfg.get("access_id") and cfg.get("access_secret")),
+        "updated_at": cfg.get("updated_at"),
+    }
+
+
+@api.patch("/tuya/config")
+async def tuya_save_config(payload: TuyaConfigIn,
+                           _: dict = Depends(require_roles("owner", "admin"))):
+    current = await _tuya_config_doc()
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    # Preserve secret if the user sends an empty/masked value
+    if "access_secret" in update and (not update["access_secret"] or "*" in update["access_secret"]):
+        update.pop("access_secret")
+    merged = {**current, **update, "updated_at": now_iso()}
+    await db.tuya_config.update_one({"key": "singleton"},
+                                    {"$set": {"value": merged}},
+                                    upsert=True)
+    return {
+        "ok": True,
+        "region": merged.get("region", "us"),
+        "endpoint": REGION_ENDPOINTS.get(merged.get("region", "us")),
+        "configured": bool(merged.get("access_id") and merged.get("access_secret")),
+    }
+
+
+@api.post("/tuya/test-auth")
+async def tuya_test_auth(_: dict = Depends(require_roles("owner", "admin"))):
+    """Force a token refresh to validate the stored credentials."""
+    try:
+        cli = await _tuya_client()
+        return await cli.test_auth()
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+
+
+@api.get("/tuya/devices")
+async def tuya_list_devices(_: dict = Depends(get_current_user)):
+    """List all devices under this Tuya project, augmented with current status."""
+    try:
+        cli = await _tuya_client()
+        devs = await cli.list_devices()
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+    # For each device, try to fetch status (best effort)
+    out = []
+    for d in devs:
+        did = d.get("id") or d.get("device_id") or d.get("dev_id")
+        if not did:
+            continue
+        status_map: dict = {}
+        try:
+            status_list = await cli.get_status(did)
+            for s in status_list:
+                if isinstance(s, dict) and "code" in s:
+                    status_map[s["code"]] = s.get("value")
+        except TuyaError as e:
+            logger.warning("Tuya status failed for %s: %s", did, e)
+        out.append({
+            "id": did,
+            "name": d.get("name") or d.get("custom_name") or did,
+            "product_name": d.get("product_name") or d.get("productName") or "",
+            "category": d.get("category") or "",
+            "icon": d.get("icon") or "",
+            "online": bool(d.get("online")),
+            "ip": d.get("ip") or "",
+            "time_zone": d.get("time_zone") or "",
+            "active_time": d.get("active_time"),
+            "update_time": d.get("update_time"),
+            "status": status_map,
+        })
+    return out
+
+
+@api.get("/tuya/devices/{device_id}/status")
+async def tuya_device_status(device_id: str, _: dict = Depends(get_current_user)):
+    try:
+        cli = await _tuya_client()
+        return await cli.get_status(device_id)
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+
+
+@api.post("/tuya/devices/{device_id}/commands")
+async def tuya_send_commands(device_id: str, payload: TuyaCommandsIn,
+                             _: dict = Depends(get_current_user)):
+    try:
+        cli = await _tuya_client()
+        ok = await cli.send_commands(device_id, [c.dict() for c in payload.commands])
+        return {"ok": bool(ok), "device_id": device_id, "commands": [c.dict() for c in payload.commands]}
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+
+
+@api.patch("/tuya/devices/{device_id}")
+async def tuya_rename_device(device_id: str, payload: TuyaRenameIn,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    if not payload.name.strip():
+        raise HTTPException(400, "Nombre requerido")
+    try:
+        cli = await _tuya_client()
+        await cli.rename_device(device_id, payload.name.strip())
+        return {"ok": True, "device_id": device_id, "name": payload.name.strip()}
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+
+
+@api.delete("/tuya/devices/{device_id}")
+async def tuya_delete_device(device_id: str,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    try:
+        cli = await _tuya_client()
+        await cli.delete_device(device_id)
+        return {"ok": True, "device_id": device_id}
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
 
 # ---------- Mount ----------
 app.include_router(api)
