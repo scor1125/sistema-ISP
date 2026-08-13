@@ -26,3 +26,8 @@ python-multipart>=0.0.9
 jq>=1.6.0
 typer>=0.9.0
 emergentintegrations==0.2.0
+pyasn1==0.6.0
+pyasn1_modules==0.4.2
+pysmi-lextudio==1.4.3
+pysnmp-lextudio==6.3.0
+pysnmpcrypto==0.0.4

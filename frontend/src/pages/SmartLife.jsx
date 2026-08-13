@@ -16,9 +16,11 @@ import {
   AirVent, RefreshCw, Wifi, WifiOff, Snowflake, Sun, Wind, Zap,
   Settings2, Pencil, Trash2, Plus, Minus, Power, KeyRound, CheckCircle2,
   AlertTriangle, Save, ShieldCheck, ShieldAlert, ExternalLink, Home, Clock,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { GroupsTab, ScenesTab } from "@/components/tuya/TuyaTabs";
+import AssistantTab from "@/components/tuya/AssistantTab";
 
 const REGION_LABELS = {
   us: "🇲🇽 América (US) — openapi.tuyaus.com",
@@ -576,6 +578,9 @@ export default function SmartLife() {
           <TabsTrigger value="scenes" data-testid="tuya-tab-scenes">
             <Clock className="w-4 h-4 mr-1" /> Escenas ({scenes.length})
           </TabsTrigger>
+          <TabsTrigger value="assistant" data-testid="tuya-tab-assistant">
+            <Sparkles className="w-4 h-4 mr-1" /> Asistente
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="devices" className="space-y-3">
@@ -603,6 +608,10 @@ export default function SmartLife() {
 
         <TabsContent value="scenes">
           <ScenesTab devices={devices} groups={groups} scenes={scenes} onReload={loadScenes} />
+        </TabsContent>
+
+        <TabsContent value="assistant">
+          <AssistantTab />
         </TabsContent>
       </Tabs>
     </div>

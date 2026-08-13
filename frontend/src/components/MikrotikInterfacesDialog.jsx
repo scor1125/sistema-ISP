@@ -84,7 +84,7 @@ export default function MikrotikInterfacesDialog({ device, open, onOpenChange })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, device?.id]);
 
-  const interfaces = state?.interfaces || [];
+  const interfaces = useMemo(() => state?.interfaces || [], [state?.interfaces]);
   const filtered = useMemo(() => {
     const nq = norm(q);
     if (!nq) return interfaces;

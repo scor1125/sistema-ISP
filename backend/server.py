@@ -471,6 +471,14 @@ class DeviceIn(BaseModel):
     # --- REST API (Mikrotik RouterOS v7+) ---
     rest_api_url: Optional[str] = ""       # e.g. https://10.100.0.2  (no trailing /)
     rest_verify_ssl: Optional[bool] = False  # RouterOS usa cert self-signed por default
+    # --- OLT SNMP (VSol EPON/GPON, Huawei, ZTE, etc.) ---
+    snmp_enabled: Optional[bool] = False
+    snmp_community: Optional[str] = "public"
+    snmp_version: Optional[Literal["2c", "v3"]] = "2c"
+    snmp_port: Optional[int] = 161
+    snmp_timeout: Optional[int] = 3
+    olt_vendor: Optional[Literal["vsol_epon", "vsol_gpon", "huawei", "zte", "fiberhome", "cdata", "bdcom", "custom"]] = "vsol_epon"
+    snmp_oids_override: Optional[dict] = None  # advanced: override default OID map
 
 class VpnConnectionIn(BaseModel):
     name: str
@@ -3504,6 +3512,181 @@ async def _seed_tuya_scenes():
 @app.on_event("startup")
 async def _startup_tuya_seed():
     await _seed_tuya_scenes()
+
+# ---------- Smart Life · asistente conversacional (LLM function calling) ----------
+from tuya_chat import run_turn as tuya_chat_run_turn, reset_chat as tuya_chat_reset  # noqa: E402
+
+
+class TuyaChatIn(BaseModel):
+    session_id: str
+    message: str
+
+
+@api.post("/tuya/chat")
+async def tuya_chat_endpoint(payload: TuyaChatIn,
+                             current: dict = Depends(get_current_user)):
+    """Envía un mensaje al asistente Smart Life. Puede ejecutar herramientas Tuya."""
+    if not payload.message.strip():
+        raise HTTPException(400, "message vacío")
+    session_key = f"{current['id']}:{payload.session_id}"
+
+    # Persist user message
+    now_str = now_iso()
+    await db.tuya_chat_messages.insert_one({
+        "id": new_id(),
+        "session_id": session_key,
+        "role": "user",
+        "content": payload.message,
+        "created_at": now_str,
+    })
+
+    try:
+        result = await tuya_chat_run_turn(session_key, payload.message, db, new_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("tuya_chat failed")
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+
+    # Persist assistant response
+    await db.tuya_chat_messages.insert_one({
+        "id": new_id(),
+        "session_id": session_key,
+        "role": "assistant",
+        "content": result["text"],
+        "tool_calls": result["tool_calls"],
+        "created_at": now_iso(),
+    })
+    return result
+
+
+@api.get("/tuya/chat/history")
+async def tuya_chat_history(session_id: str,
+                            current: dict = Depends(get_current_user)):
+    session_key = f"{current['id']}:{session_id}"
+    items = await db.tuya_chat_messages.find(
+        {"session_id": session_key}, {"_id": 0, "session_id": 0}
+    ).sort("created_at", 1).to_list(200)
+    return items
+
+
+@api.post("/tuya/chat/reset")
+async def tuya_chat_reset_endpoint(session_id: str,
+                                   current: dict = Depends(get_current_user)):
+    session_key = f"{current['id']}:{session_id}"
+    tuya_chat_reset(session_key)
+    await db.tuya_chat_messages.delete_many({"session_id": session_key})
+    return {"ok": True}
+
+
+# ---------- OLT · SNMP integration (VSol, Huawei, ZTE...) ----------
+from olt import read_onus as olt_read_onus, snmp_test as olt_snmp_test, OLTError  # noqa: E402
+
+
+@api.post("/devices/{olt_id}/snmp-test")
+async def olt_snmp_test_endpoint(olt_id: str, _: dict = Depends(require_roles("owner", "admin"))):
+    """Prueba rápida de conectividad SNMP (lee sysDescr + sysName + ifNumber)."""
+    d = await db.devices.find_one({"id": olt_id, "kind": "olt"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "OLT no encontrada")
+    if not d.get("host"):
+        raise HTTPException(400, "La OLT no tiene host/IP configurado")
+    community = d.get("snmp_community") or "public"
+    port = int(d.get("snmp_port") or 161)
+    version = d.get("snmp_version") or "2c"
+    timeout = int(d.get("snmp_timeout") or 3)
+    result = await olt_snmp_test(d["host"], community=community, port=port,
+                                  version=version, timeout=timeout)
+    # Persist last test
+    await db.devices.update_one({"id": olt_id}, {"$set": {
+        "last_snmp_test_at": now_iso(),
+        "last_snmp_test": result,
+    }})
+    return result
+
+
+@api.post("/devices/{olt_id}/onu-sync")
+async def olt_onu_sync(olt_id: str, _: dict = Depends(require_roles("owner", "admin"))):
+    """Sincroniza ONUs desde la OLT vía SNMP y guarda snapshot en `olt_onus`."""
+    d = await db.devices.find_one({"id": olt_id, "kind": "olt"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "OLT no encontrada")
+    if not d.get("snmp_enabled"):
+        raise HTTPException(400, "SNMP no está habilitado en esta OLT. Edítala primero.")
+    started = now_iso()
+    try:
+        result = await olt_read_onus(
+            d["host"],
+            vendor=d.get("olt_vendor") or "vsol_epon",
+            community=d.get("snmp_community") or "public",
+            port=int(d.get("snmp_port") or 161),
+            version=d.get("snmp_version") or "2c",
+            timeout=int(d.get("snmp_timeout") or 3),
+            oids_override=d.get("snmp_oids_override"),
+        )
+    except OLTError as e:
+        await db.devices.update_one({"id": olt_id}, {"$set": {
+            "last_sync_at": started,
+            "last_sync_status": "error",
+            "last_sync_error": str(e)[:300],
+        }})
+        raise HTTPException(424, str(e))
+
+    onus = result.get("onus") or []
+    for onu in onus:
+        row = {**onu, "device_id": olt_id, "synced_at": started}
+        await db.olt_onus.update_one(
+            {"device_id": olt_id, "index": onu["index"]},
+            {"$set": row},
+            upsert=True,
+        )
+    # Purge stale
+    if onus:
+        keep_idx = [o["index"] for o in onus]
+        await db.olt_onus.delete_many({"device_id": olt_id, "index": {"$nin": keep_idx}})
+
+    online_count = sum(1 for o in onus if o["status"] == "online")
+    offline_count = sum(1 for o in onus if o["status"] == "offline")
+    await db.devices.update_one({"id": olt_id}, {"$set": {
+        "last_sync_at": started,
+        "last_sync_status": "ok",
+        "last_sync_error": "",
+        "onus_count": len(onus),
+        "onus_online": online_count,
+        "onus_offline": offline_count,
+        "sys_descr": result.get("sys_descr"),
+    }})
+    return {
+        "device_id": olt_id,
+        "synced_at": started,
+        "sys_descr": result.get("sys_descr"),
+        "onus_count": len(onus),
+        "onus_online": online_count,
+        "onus_offline": offline_count,
+        "raw_counts": result.get("raw_counts"),
+        "onus": onus,
+    }
+
+
+@api.get("/devices/{olt_id}/onus")
+async def olt_get_onus(olt_id: str, _: dict = Depends(get_current_user)):
+    d = await db.devices.find_one({"id": olt_id, "kind": "olt"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "OLT no encontrada")
+    items = await db.olt_onus.find(
+        {"device_id": olt_id}, {"_id": 0}
+    ).sort("index", 1).to_list(2000)
+    return {
+        "device_id": olt_id,
+        "last_sync_at": d.get("last_sync_at"),
+        "last_sync_status": d.get("last_sync_status"),
+        "last_sync_error": d.get("last_sync_error"),
+        "onus_count": d.get("onus_count", len(items)),
+        "onus_online": d.get("onus_online", 0),
+        "onus_offline": d.get("onus_offline", 0),
+        "sys_descr": d.get("sys_descr"),
+        "onus": items,
+    }
 
 # ---------- Mount ----------
 app.include_router(api)
