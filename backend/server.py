@@ -3175,6 +3175,68 @@ async def tuya_delete_device(device_id: str,
         raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
 
 
+class TuyaAddByIdIn(BaseModel):
+    device_id: str
+
+
+class TuyaPairingTokenIn(BaseModel):
+    uid: Optional[str] = None
+
+
+@api.post("/tuya/devices/add")
+async def tuya_add_by_id(payload: TuyaAddByIdIn,
+                        _: dict = Depends(require_roles("owner", "admin"))):
+    """Valida que un device_id exista en el project Tuya y devuelve su
+    metadata. Si existe, aparecerá automáticamente en `list_devices` al hacer
+    refresh; útil para verificar que la vinculación con Smart Life quedó bien.
+    """
+    did = (payload.device_id or "").strip()
+    if not did:
+        raise HTTPException(400, "device_id vacío")
+    try:
+        cli = await _tuya_client()
+        info = await cli.device_exists(did)
+    except TuyaError as e:
+        # 1106 = permission denied (usualmente = device no pertenece al project)
+        if e.code == 1106:
+            raise HTTPException(404, f"El device_id '{did}' no está en tu Tuya Cloud Project. Verifica que el dispositivo esté vinculado a tu app Smart Life y que ese app account esté ligado al project.")
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+    return {
+        "ok": True,
+        "device_id": did,
+        "name": info.get("name") or info.get("custom_name") or did,
+        "product_name": info.get("product_name") or "",
+        "category": info.get("category") or "",
+        "online": bool(info.get("online")),
+        "raw": info,
+    }
+
+
+@api.post("/tuya/pairing-token")
+async def tuya_pairing_token(payload: TuyaPairingTokenIn,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    """Genera un token de pairing (Cloud Access Token) — el usuario lo ingresa
+    en Smart Life app para añadir el dispositivo directamente a este project.
+
+    Flujo:
+      1. Este endpoint llama Tuya y devuelve `{token, expire_time, region}`.
+      2. En Smart Life app: Perfil → Escanear → introduce el token o QR.
+      3. Al terminar el pairing, el dispositivo aparece en `/api/tuya/devices`.
+    """
+    try:
+        cli = await _tuya_client()
+        result = await cli.create_pairing_token(uid=payload.uid)
+    except TuyaError as e:
+        raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
+    return {
+        "ok": True,
+        "token": result.get("token") if isinstance(result, dict) else None,
+        "expire_time": (result.get("expire_time") if isinstance(result, dict) else None),
+        "region": (result.get("region") if isinstance(result, dict) else None),
+        "raw": result,
+    }
+
+
 # ---- Grupos de dispositivos (zonas: Oficina, Casa, Taller...) ----
 class TuyaGroupIn(BaseModel):
     name: str

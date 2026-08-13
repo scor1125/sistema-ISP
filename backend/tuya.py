@@ -268,3 +268,17 @@ class TuyaClient:
     async def delete_device(self, device_id: str) -> bool:
         result = await self._request("DELETE", f"/v1.0/iot-03/devices/{device_id}")
         return bool(result)
+
+    async def create_pairing_token(self, uid: Optional[str] = None) -> Dict[str, Any]:
+        """Genera un token de pairing (10 min de validez) que el usuario ingresa
+        en la app Smart Life para vincular un dispositivo directamente a este
+        Cloud Project. Endpoint: POST /v1.3/iot-03/access/register-tokens.
+        """
+        body: Dict[str, Any] = {}
+        if uid:
+            body["uid"] = uid
+        return await self._request("POST", "/v1.3/iot-03/access/register-tokens", body=body)
+
+    async def device_exists(self, device_id: str) -> Dict[str, Any]:
+        """Verifica que un device_id exista en este project y devuelve su metadata."""
+        return await self._request("GET", f"/v1.1/iot-03/devices/{device_id}")

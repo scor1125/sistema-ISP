@@ -21,6 +21,7 @@ import {
 import { toast } from "sonner";
 import { GroupsTab, ScenesTab } from "@/components/tuya/TuyaTabs";
 import AssistantTab from "@/components/tuya/AssistantTab";
+import AddDeviceDialog from "@/components/tuya/AddDeviceDialog";
 
 const REGION_LABELS = {
   us: "🇲🇽 América (US) — openapi.tuyaus.com",
@@ -433,6 +434,7 @@ export default function SmartLife() {
   const [error, setError] = useState(null);
   const [showConfig, setShowConfig] = useState(false);
   const [tab, setTab] = useState("devices");
+  const [addOpen, setAddOpen] = useState(false);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -584,9 +586,22 @@ export default function SmartLife() {
         </TabsList>
 
         <TabsContent value="devices" className="space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="text-sm text-muted-foreground">
+              Aires acondicionados y dispositivos IoT vinculados a tu Cloud Project.
+            </div>
+            <Button
+              onClick={() => setAddOpen(true)}
+              className="ml-auto"
+              disabled={!config?.configured}
+              data-testid="tuya-add-device-btn"
+            >
+              <Plus className="w-4 h-4 mr-1" /> Añadir dispositivo
+            </Button>
+          </div>
           {devices.length === 0 && !loading && config?.configured && !error && (
             <div className="rounded-md border border-border bg-muted/20 p-6 text-center text-muted-foreground text-sm">
-              No hay dispositivos en tu proyecto Tuya todavía. Agrega A/Cs desde la app Smart Life y luego presiona <span className="font-medium">Refrescar</span>.
+              No hay dispositivos en tu proyecto Tuya todavía. Presiona <span className="font-medium">Añadir dispositivo</span> para vincular por Device ID o generar un token de pairing en la app Smart Life.
             </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -614,6 +629,12 @@ export default function SmartLife() {
           <AssistantTab />
         </TabsContent>
       </Tabs>
+
+      <AddDeviceDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onAdded={loadDevices}
+      />
     </div>
   );
 }

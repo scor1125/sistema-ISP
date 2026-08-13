@@ -2,33 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Jupiter Elegance — luxury tech typography */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;0,900;1,500&family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import 'leaflet/dist/leaflet.css';
 
 @layer base {
   :root {
-    --background: 240 10% 4%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 6%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 8%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 210 100% 55%;
+    /* Light — Ivory & Antique Gold */
+    --background: 40 45% 98%;         /* #FDFBF7 warm ivory */
+    --foreground: 220 55% 11%;        /* #0B132B deep navy */
+    --card: 0 0% 100%;
+    --card-foreground: 220 55% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 55% 11%;
+    --primary: 42 68% 46%;            /* #C59B27 antique gold */
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 6% 12%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 6% 12%;
-    --muted-foreground: 240 5% 65%;
-    --accent: 240 6% 14%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 74% 52%;
+    --secondary: 40 25% 95%;
+    --secondary-foreground: 220 55% 11%;
+    --muted: 40 20% 92%;
+    --muted-foreground: 220 15% 45%;
+    --accent: 42 45% 88%;
+    --accent-foreground: 220 55% 11%;
+    --destructive: 355 65% 37%;       /* #9B2226 elegant red */
     --destructive-foreground: 0 0% 100%;
-    --border: 240 10% 15%;
-    --input: 240 10% 15%;
-    --ring: 210 100% 55%;
-    --radius: 0.5rem;
-    --success: 142 71% 45%;
-    --warning: 43 85% 55%;
+    --border: 40 25% 88%;
+    --input: 40 25% 88%;
+    --ring: 42 68% 46%;
+    --radius: 0.75rem;
+    --success: 155 40% 30%;
+    --warning: 42 74% 38%;
+    --info: 200 100% 36%;
+  }
+  .dark, :root:not(.light) {
+    /* Dark — Deep Space Blue & Antique Gold (default) */
+    --background: 220 40% 6%;         /* #0A0E17 space midnight */
+    --foreground: 210 20% 98%;        /* #F8F9FA off-white */
+    --card: 224 45% 12%;              /* #121A2F celestial surface */
+    --card-foreground: 210 20% 98%;
+    --popover: 224 45% 12%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 46 65% 52%;            /* #D4AF37 antique gold */
+    --primary-foreground: 220 40% 6%;
+    --secondary: 220 35% 15%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 220 30% 15%;
+    --muted-foreground: 215 15% 62%;  /* #8D99AE */
+    --accent: 224 40% 18%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 355 72% 40%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 217 37% 22%;            /* #2A3B5C */
+    --input: 217 37% 22%;
+    --ring: 46 65% 52%;
+    --success: 155 40% 42%;
+    --warning: 43 68% 45%;
+    --info: 190 74% 60%;
   }
 }
 
@@ -44,18 +72,59 @@ html, body, #root {
 
 body {
   margin: 0;
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-weight: 400;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'ss01', 'cv11';
 }
 
-h1, h2, h3, h4, .font-display {
+h1, h2, h3, .font-display {
+  font-family: 'Playfair Display', Georgia, serif;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+}
+
+.font-heading {
+  font-family: 'Playfair Display', Georgia, serif;
+  letter-spacing: -0.015em;
+}
+
+.font-body {
   font-family: 'Manrope', system-ui, sans-serif;
-  letter-spacing: -0.02em;
 }
 
 .font-mono, code, kbd {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Elegant text-only star field on the app backdrop */
+.bg-celestial {
+  background:
+    radial-gradient(circle at 15% 12%, hsl(46 65% 52% / 0.05), transparent 45%),
+    radial-gradient(circle at 88% 78%, hsl(200 74% 60% / 0.04), transparent 40%),
+    radial-gradient(circle at 50% 100%, hsl(224 45% 20% / 0.35), transparent 55%);
+}
+
+/* Subtle noise/grain overlay for depth */
+.bg-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/></svg>");
+  background-size: 200px 200px;
+  mix-blend-mode: overlay;
+  z-index: 0;
+}
+
+/* Glass card — reserved surface for elevated content */
+.glass-card {
+  background: hsl(var(--card) / 0.7);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid hsl(var(--border) / 0.5);
 }
 
 @layer base {
@@ -63,22 +132,31 @@ h1, h2, h3, h4, .font-display {
   body { @apply bg-background text-foreground; }
 }
 
-/* subtle grid backdrop */
+/* subtle grid backdrop — kept for the map/nav backdrop */
 .bg-grid {
   background-image:
-    linear-gradient(hsl(240 10% 10% / 0.6) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(240 10% 10% / 0.6) 1px, transparent 1px);
+    linear-gradient(hsl(var(--border) / 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--border) / 0.35) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 
-.leaflet-container {
-  background: hsl(240 10% 8%);
-  border-radius: 8px;
+/* Elegant gold rule under section titles */
+.gold-rule::after {
+  content: "";
+  display: block;
+  width: 42px;
+  height: 2px;
+  margin-top: 8px;
+  background: linear-gradient(90deg, hsl(var(--primary)), transparent);
+  border-radius: 2px;
 }
 
-/* Keep the leaflet map firmly below any Radix Dialog/Popover portals.
-   Leaflet's default panes and controls range from 200 to 1000, which
-   used to overlap our modal when opening 'Nueva NAP' from the map view. */
+.leaflet-container {
+  background: hsl(var(--card));
+  border-radius: 12px;
+}
+
+/* Keep the leaflet map firmly below any Radix Dialog/Popover portals. */
 .leaflet-pane,
 .leaflet-top,
 .leaflet-bottom,
@@ -86,8 +164,21 @@ h1, h2, h3, h4, .font-display {
   z-index: 40 !important;
 }
 
-/* Custom scrollbar */
+/* Elegant scrollbar */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: hsl(240 10% 6%); }
-::-webkit-scrollbar-thumb { background: hsl(240 10% 18%); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: hsl(240 10% 24%); }
+::-webkit-scrollbar-track { background: hsl(var(--background)); }
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / 0.6); }
+
+/* Selection styled to gold */
+::selection { background: hsl(var(--primary) / 0.35); color: hsl(var(--foreground)); }
+
+/* Focus rings on interactive elements */
+button:focus-visible, [role="button"]:focus-visible, a:focus-visible {
+  outline: 2px solid hsl(var(--primary) / 0.6);
+  outline-offset: 2px;
+  border-radius: calc(var(--radius) - 2px);
+}
