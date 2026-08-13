@@ -209,32 +209,81 @@ class TuyaClient:
     async def list_devices(self, page_size: int = 100) -> List[Dict[str, Any]]:
         """List all devices under this project.
 
-        Uses the v1.3 project-scoped endpoint. Returns Tuya's raw device dicts,
-        each containing at least: id, name, product_name, category, online, ip,
-        time_zone, active_time, update_time.
+        Strategy (Tuya requires source_id when calling /v1.3/iot-03/devices with
+        source_type=tuyaUser). We:
+          1. List linked app-account users via /v1.0/iot-01/associated-users/users
+          2. For each uid, fetch their devices via /v1.0/users/{uid}/devices
+          3. Deduplicate by device_id
+          4. Fall back to /v1.0/iot-01/associated-users/devices if step 1 returns none
         """
-        # v1.3 endpoint (project-scoped, most stable)
-        path = "/v1.3/iot-03/devices"
-        query = {"page_size": page_size, "source_type": "tuyaUser"}
+        all_devices: Dict[str, Dict[str, Any]] = {}
+
+        # Step 1 — get uids of linked app users
+        uids: List[str] = []
         try:
-            result = await self._request("GET", path, query=query)
+            users_res = await self._request(
+                "GET", "/v1.0/iot-01/associated-users/users",
+                query={"page_no": 1, "page_size": 50},
+            )
+            users = []
+            if isinstance(users_res, list):
+                users = users_res
+            elif isinstance(users_res, dict):
+                users = users_res.get("list") or users_res.get("users") or users_res.get("records") or []
+            for u in users:
+                if not isinstance(u, dict):
+                    continue
+                uid = u.get("uid") or u.get("user_id") or u.get("id")
+                if uid:
+                    uids.append(str(uid))
         except TuyaError as e:
-            # Some accounts only expose v1.0 — fall back to /users list
-            if e.code in (1106, 28841105, 2007):
-                # fall back to the legacy user devices path
-                path = "/v1.0/iot-01/associated-users/devices"
-                result = await self._request("GET", path, query={"size": page_size})
-            else:
-                raise
-        # normalize: result may be {"list": [...], "total": ...} or a bare list
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            for key in ("list", "devices", "records"):
-                v = result.get(key)
-                if isinstance(v, list):
-                    return v
-        return []
+            logger.warning("associated-users/users failed: %s", e)
+
+        # Step 2 — fetch devices per uid
+        for uid in uids:
+            try:
+                devs = await self._request(
+                    "GET", f"/v1.0/users/{uid}/devices",
+                    query={"page_no": 1, "page_size": page_size},
+                )
+                items = []
+                if isinstance(devs, list):
+                    items = devs
+                elif isinstance(devs, dict):
+                    items = devs.get("list") or devs.get("devices") or devs.get("records") or []
+                for d in items:
+                    if not isinstance(d, dict):
+                        continue
+                    did = d.get("id") or d.get("device_id") or d.get("dev_id")
+                    if did:
+                        all_devices.setdefault(did, d)
+            except TuyaError as e:
+                logger.warning("users/%s/devices failed: %s", uid, e)
+
+        if all_devices:
+            return list(all_devices.values())
+
+        # Step 3 — fallback: /v1.0/iot-01/associated-users/devices
+        try:
+            fallback = await self._request(
+                "GET", "/v1.0/iot-01/associated-users/devices",
+                query={"size": page_size},
+            )
+            items = []
+            if isinstance(fallback, list):
+                items = fallback
+            elif isinstance(fallback, dict):
+                items = fallback.get("list") or fallback.get("devices") or fallback.get("records") or []
+            for d in items:
+                if not isinstance(d, dict):
+                    continue
+                did = d.get("id") or d.get("device_id") or d.get("dev_id")
+                if did:
+                    all_devices.setdefault(did, d)
+        except TuyaError as e:
+            logger.warning("associated-users/devices fallback failed: %s", e)
+
+        return list(all_devices.values())
 
     async def get_device(self, device_id: str) -> Dict[str, Any]:
         """Return device metadata (name, product, online, model, category)."""

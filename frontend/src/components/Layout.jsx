@@ -68,14 +68,14 @@ function SidebarBody({ collapsed, onNavigate, brand }) {
   const groupedNav = useMemo(() => GROUPED_NAV, []);
   return (
     <>
-      <div className={`h-14 flex items-center border-b border-border/60 ${collapsed ? "justify-center px-2" : "px-4 gap-3"}`}>
+      <div className={`h-12 flex items-center border-b border-border/50 ${collapsed ? "justify-center px-2" : "px-3 gap-2.5"}`}>
         {brand}
       </div>
-      <nav className="flex-1 overflow-y-auto py-4">
+      <nav className="flex-1 overflow-y-auto py-2">
         {groupedNav.map(([g, items]) => (
-          <div key={g} className="mb-4">
+          <div key={g} className="mb-2">
             {!collapsed && (
-              <div className="px-5 mb-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground/70 font-mono gold-rule">
+              <div className="px-4 mb-1 text-[9px] uppercase tracking-[0.22em] text-muted-foreground/60 font-mono gold-rule">
                 {g}
               </div>
             )}
@@ -87,14 +87,14 @@ function SidebarBody({ collapsed, onNavigate, brand }) {
                 title={collapsed ? label : undefined}
                 data-testid={`nav-${to.replace('/', '') || 'dashboard'}`}
                 className={({ isActive }) =>
-                  `group mx-2 my-0.5 flex items-center rounded-lg text-sm transition-all duration-200
-                  ${collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2.5"}
+                  `group mx-1.5 my-0.5 flex items-center rounded-md text-[13px] transition-colors duration-150
+                  ${collapsed ? "justify-center px-2 py-1.5" : "gap-2.5 px-2.5 py-1.5"}
                   ${isActive
-                    ? 'bg-primary/12 text-primary border border-primary/25 shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.05)]'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50 border border-transparent'}`
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/40'}`
                 }
               >
-                <Icon className="w-4 h-4 shrink-0 transition-transform group-hover:scale-110" />
+                <Icon className="w-3.5 h-3.5 shrink-0" />
                 {!collapsed && <span className="truncate">{label}</span>}
               </NavLink>
             ))}
@@ -182,19 +182,19 @@ export default function Layout() {
         onClick={() => canEditLogo && logoFileRef.current?.click()}
         disabled={!canEditLogo}
         title={canEditLogo ? "Cambiar logo (recomendado 64 × 64 px)" : "Solo dueño/administrador puede cambiar el logo"}
-        className={`relative w-9 h-9 rounded-lg overflow-hidden shrink-0 group ring-1 ring-primary/25 ${canEditLogo ? "hover:ring-primary/60 cursor-pointer" : "cursor-default"}`}
+        className={`relative w-7 h-7 rounded-md overflow-hidden shrink-0 group ring-1 ring-primary/20 ${canEditLogo ? "hover:ring-primary/50 cursor-pointer" : "cursor-default"}`}
         data-testid="brand-logo-btn"
       >
         {logoUrl ? (
-          <img src={logoUrl} alt={businessName} className="w-9 h-9 object-contain bg-card" data-testid="brand-logo" />
+          <img src={logoUrl} alt={businessName} className="w-7 h-7 object-contain bg-card" data-testid="brand-logo" />
         ) : (
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/25 to-primary/5 grid place-items-center">
-            <Wifi className="w-4 h-4 text-primary" />
+          <div className="w-7 h-7 rounded-md bg-gradient-to-br from-primary/25 to-primary/5 grid place-items-center">
+            <Wifi className="w-3.5 h-3.5 text-primary" />
           </div>
         )}
         {canEditLogo && (
           <span className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 grid place-items-center transition-opacity">
-            <Camera className="w-3.5 h-3.5 text-white" />
+            <Camera className="w-3 h-3 text-white" />
           </span>
         )}
         {uploadingLogo && (
@@ -203,10 +203,10 @@ export default function Layout() {
       </button>
       {!collapsed && (
         <div className="flex-1 min-w-0" data-testid="brand-name">
-          <div className="font-heading text-lg leading-none tracking-tight text-foreground truncate">
+          <div className="font-heading text-sm leading-none tracking-tight text-foreground truncate">
             {businessName.split(" ")[0] || "EnlaceHR"}
           </div>
-          <div className="text-[10px] uppercase tracking-[0.28em] text-primary/80 font-mono mt-0.5 truncate">
+          <div className="text-[9px] uppercase tracking-[0.24em] text-primary/70 font-mono mt-0.5 truncate">
             {businessName.split(" ").slice(1).join(" ") || "ISP"}
           </div>
         </div>
@@ -215,11 +215,11 @@ export default function Layout() {
         <button
           type="button"
           onClick={toggle}
-          className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors hidden md:inline-flex"
+          className="p-1 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors hidden md:inline-flex"
           title="Comprimir menú"
           data-testid="sidebar-collapse-btn"
         >
-          <ChevronsLeft className="w-4 h-4" />
+          <ChevronsLeft className="w-3.5 h-3.5" />
         </button>
       )}
     </>
@@ -262,7 +262,7 @@ export default function Layout() {
       {/* Main column */}
       <div className="flex-1 flex flex-col min-w-0 relative z-10">
         <header
-          className="sticky top-0 z-30 border-b border-border/60 bg-background/85 backdrop-blur-xl flex items-center px-3 sm:px-5 gap-2 sm:gap-3 h-14"
+          className="sticky top-0 z-30 border-b border-border/50 bg-background/85 backdrop-blur-xl flex items-center px-3 sm:px-4 gap-2 sm:gap-3 h-12"
           data-testid="app-header"
         >
           {/* Mobile hamburger */}
@@ -357,7 +357,7 @@ export default function Layout() {
             </div>
           </div>
         </header>
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden">
+        <main className="flex-1 p-3 sm:p-4 lg:p-6 overflow-x-hidden">
           <Outlet />
         </main>
         <Toaster position="top-right" richColors />
