@@ -8,7 +8,7 @@ import {
   Radio, Router, PackagePlus, Map as MapIcon,
   ListTodo, LogOut, Wifi, Boxes, ChevronsLeft, ChevronsRight,
   Camera, HandCoins, Calculator, HardHat, BatteryCharging,
-  AirVent, Menu, ChevronDown,
+  AirVent, Menu, ChevronDown, Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,7 @@ const NAV = [
   { to: "/pagos-revisar", label: "Pagos a revisar", icon: HandCoins, group: "Operación" },
   { to: "/energia", label: "Energía de respaldo", icon: BatteryCharging, group: "Operación" },
   { to: "/smart-life", label: "Smart Life", icon: AirVent, group: "Operación" },
+  { to: "/inventario", label: "Inventario", icon: Package, group: "Operación" },
   { to: "/promesas", label: "Promesas de pagos", icon: HandCoins, group: "Operación" },
   { to: "/arqueos", label: "Arqueo de caja", icon: Calculator, group: "Operación" },
   { to: "/whatsapp", label: "WhatsApp", icon: MessageCircle, group: "Operación" },

@@ -26,6 +26,7 @@ import Recordatorios from "@/pages/Recordatorios";
 import PagosRevisar from "@/pages/PagosRevisar";
 import EnergiaRespaldo from "@/pages/EnergiaRespaldo";
 import SmartLife from "@/pages/SmartLife";
+import Inventario from "@/pages/Inventario";
 import ClientPortal from "@/pages/ClientPortal";
 import Settings from "@/pages/Settings";
 import MyPendings from "@/pages/MyPendings";
@@ -88,6 +89,7 @@ function App() {
             <Route path="/pagos-revisar" element={<PagosRevisar />} />
             <Route path="/energia" element={<EnergiaRespaldo />} />
             <Route path="/smart-life" element={<SmartLife />} />
+            <Route path="/inventario" element={<Inventario />} />
             <Route path="/configuracion" element={<Settings />} />
           </Route>
         </Routes>

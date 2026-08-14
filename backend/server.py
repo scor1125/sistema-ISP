@@ -10,7 +10,7 @@ import uuid
 import jwt
 import bcrypt
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Any, Literal
+from typing import Optional, List, Any, Literal, Dict
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -3985,6 +3985,220 @@ async def olt_get_onus(olt_id: str, _: dict = Depends(get_current_user)):
         "sys_descr": d.get("sys_descr"),
         "onus": items,
     }
+
+# ---------- Inventario (Productos + Ventas retail) ----------
+class InventoryProductIn(BaseModel):
+    name: str
+    price: float = Field(ge=0)
+    stock: int = Field(ge=0, default=0)
+    min_stock: int = Field(ge=0, default=5)
+    sku: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+class InventoryProductUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    stock: Optional[int] = None
+    min_stock: Optional[int] = None
+    sku: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SaleItemIn(BaseModel):
+    product_id: str
+    quantity: int = Field(gt=0)
+
+
+class SaleIn(BaseModel):
+    client_id: Optional[str] = None
+    client_name_override: Optional[str] = ""  # for walk-in / anonymous
+    items: List[SaleItemIn]
+    payment_method: Literal["cash", "transfer", "card", "other"] = "cash"
+    notes: Optional[str] = ""
+
+
+@api.get("/inventory/products")
+async def inv_list_products(_: dict = Depends(get_current_user)):
+    items = await db.inventory_products.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
+    return items
+
+
+@api.post("/inventory/products")
+async def inv_create_product(p: InventoryProductIn,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    doc = p.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    await db.inventory_products.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/inventory/products/{pid}")
+async def inv_update_product(pid: str, p: InventoryProductUpdate,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    update = {k: v for k, v in p.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.inventory_products.update_one({"id": pid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Producto no encontrado")
+    doc = await db.inventory_products.find_one({"id": pid}, {"_id": 0})
+    return doc
+
+
+@api.delete("/inventory/products/{pid}")
+async def inv_delete_product(pid: str,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    r = await db.inventory_products.delete_one({"id": pid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Producto no encontrado")
+    return {"ok": True}
+
+
+@api.get("/inventory/customers")
+async def inv_list_customers(_: dict = Depends(get_current_user)):
+    """Lightweight client list (id, name, phone, email) reused from `clients`
+    collection so the Nueva Venta form pickers stay in sync."""
+    items = await db.clients.find(
+        {}, {"_id": 0, "id": 1, "full_name": 1, "phone": 1, "email": 1, "community": 1}
+    ).sort("full_name", 1).to_list(5000)
+    return items
+
+
+@api.get("/inventory/sales")
+async def inv_list_sales(client_id: Optional[str] = None,
+                         limit: int = 500,
+                         _: dict = Depends(get_current_user)):
+    q: Dict[str, Any] = {}
+    if client_id:
+        q["client_id"] = client_id
+    items = await db.inventory_sales.find(q, {"_id": 0}).sort("created_at", -1).to_list(int(limit))
+    return items
+
+
+@api.post("/inventory/sales")
+async def inv_create_sale(s: SaleIn, user: dict = Depends(get_current_user)):
+    if not s.items:
+        raise HTTPException(400, "La venta debe tener al menos un producto")
+
+    # 1) Resolve customer (optional)
+    client_name = (s.client_name_override or "").strip()
+    if s.client_id:
+        c = await db.clients.find_one({"id": s.client_id}, {"_id": 0, "full_name": 1})
+        if not c:
+            raise HTTPException(404, f"Cliente {s.client_id} no encontrado")
+        client_name = c.get("full_name") or client_name
+    if not client_name:
+        client_name = "Cliente ocasional"
+
+    # 2) Validate all products + stock BEFORE mutating anything
+    prod_ids = [it.product_id for it in s.items]
+    products = await db.inventory_products.find(
+        {"id": {"$in": prod_ids}}, {"_id": 0}
+    ).to_list(len(prod_ids))
+    by_id = {p["id"]: p for p in products}
+
+    # aggregate requested qty per product (in case same product appears twice)
+    requested: Dict[str, int] = {}
+    for it in s.items:
+        requested[it.product_id] = requested.get(it.product_id, 0) + int(it.quantity)
+
+    for pid, qty in requested.items():
+        if pid not in by_id:
+            raise HTTPException(404, f"Producto {pid} no encontrado")
+        if int(by_id[pid].get("stock") or 0) < qty:
+            raise HTTPException(
+                400,
+                f"Stock insuficiente para '{by_id[pid]['name']}': disponible {by_id[pid].get('stock', 0)}, solicitado {qty}"
+            )
+
+    # 3) Build sale line items (snapshot price + name so history stays stable)
+    line_items: List[Dict[str, Any]] = []
+    total = 0.0
+    for it in s.items:
+        p = by_id[it.product_id]
+        unit_price = float(p.get("price") or 0)
+        subtotal = round(unit_price * int(it.quantity), 2)
+        line_items.append({
+            "product_id": it.product_id,
+            "product_name": p["name"],
+            "sku": p.get("sku") or "",
+            "unit_price": unit_price,
+            "quantity": int(it.quantity),
+            "subtotal": subtotal,
+        })
+        total += subtotal
+    total = round(total, 2)
+
+    # 4) Decrement stock atomically per product (guard against races with $expr)
+    started = now_iso()
+    applied: List[Dict[str, Any]] = []  # for rollback
+    try:
+        for pid, qty in requested.items():
+            r = await db.inventory_products.update_one(
+                {"id": pid, "stock": {"$gte": qty}},
+                {"$inc": {"stock": -qty}, "$set": {"updated_at": started}},
+            )
+            if r.modified_count != 1:
+                raise HTTPException(
+                    400, f"Stock cambió durante la venta para {by_id[pid]['name']}"
+                )
+            applied.append({"id": pid, "qty": qty})
+    except HTTPException:
+        # Rollback previously applied decrements
+        for a in applied:
+            await db.inventory_products.update_one(
+                {"id": a["id"]}, {"$inc": {"stock": a["qty"]}}
+            )
+        raise
+
+    # 5) Persist sale
+    sale_doc = {
+        "id": new_id(),
+        "client_id": s.client_id,
+        "client_name": client_name,
+        "items": line_items,
+        "total": total,
+        "payment_method": s.payment_method,
+        "notes": s.notes or "",
+        "created_at": started,
+        "created_by_id": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email") or "",
+    }
+    await db.inventory_sales.insert_one(sale_doc)
+    sale_doc.pop("_id", None)
+    return sale_doc
+
+
+@api.get("/inventory/stats")
+async def inv_stats(_: dict = Depends(get_current_user)):
+    prods = await db.inventory_products.find({}, {"_id": 0, "stock": 1, "price": 1, "min_stock": 1}).to_list(5000)
+    total_products = len(prods)
+    total_units = sum(int(p.get("stock") or 0) for p in prods)
+    total_value = round(sum(float(p.get("price") or 0) * int(p.get("stock") or 0) for p in prods), 2)
+    low_stock = sum(
+        1 for p in prods
+        if int(p.get("stock") or 0) <= int(p.get("min_stock") or 5)
+    )
+    # sales totals
+    total_sales_agg = await db.inventory_sales.aggregate([
+        {"$group": {"_id": None, "count": {"$sum": 1}, "revenue": {"$sum": "$total"}}}
+    ]).to_list(1)
+    total_sales = int(total_sales_agg[0]["count"]) if total_sales_agg else 0
+    total_revenue = round(float(total_sales_agg[0]["revenue"]) if total_sales_agg else 0.0, 2)
+    return {
+        "total_products": total_products,
+        "total_units": total_units,
+        "total_value": total_value,
+        "low_stock": low_stock,
+        "total_sales": total_sales,
+        "total_revenue": total_revenue,
+    }
+
 
 # ---------- Mount ----------
 app.include_router(api)
