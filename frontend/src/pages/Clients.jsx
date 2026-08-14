@@ -236,7 +236,7 @@ export default function Clients() {
     (filters.to ? 1 : 0);
 
   const fields = [
-    { name: "full_name", label: "Nombre completo", required: true, full: true },
+    { name: "full_name", label: "Nombre completo", required: true },
     { name: "phone", label: "Teléfono" },
     { name: "community", label: "Lugar", type: "select",
       placeholder: lugares.length ? "Selecciona un lugar" : "Registra lugares en el módulo Lugares",
