@@ -3146,7 +3146,72 @@ async def tuya_send_commands(device_id: str, payload: TuyaCommandsIn,
     try:
         cli = await _tuya_client()
         ok = await cli.send_commands(device_id, [c.dict() for c in payload.commands])
-        return {"ok": bool(ok), "device_id": device_id, "commands": [c.dict() for c in payload.commands]}
+    except TuyaError as e:
+        # On 2008 (command not supported), fetch the device's real DP codes to
+        # help the user pick a supported one.
+        supported = None
+        if e.code == 2008:
+            try:
+                fns = await cli.get_functions(device_id)
+                supported = fns.get("functions") if isinstance(fns, dict) else fns
+                logger.info("Tuya functions fetched for %s: %s", device_id,
+                            [f.get('code') for f in (supported or []) if isinstance(f, dict)])
+            except Exception as ex:
+                logger.warning("Tuya get_functions failed for %s: %s", device_id, ex)
+        detail = f"Tuya {e.code}: {e.msg}"
+        if supported:
+            codes = [f.get("code") for f in (supported or []) if isinstance(f, dict) and f.get("code")]
+            if codes:
+                detail += f" · Códigos soportados: {', '.join(codes[:12])}"
+        # Add category-specific hint
+        try:
+            info = await cli.device_exists(device_id)
+            cat = (info or {}).get("category", "")
+            if cat == "infrared_ac":
+                detail += " · Este es un A/C controlado por IR bridge. Los códigos DP estándar suelen NO aplicarse porque el bridge necesita el endpoint /v2.0/infrareds/{ir_id}/air-conditioners/{remote_id}/command."
+        except Exception:
+            pass
+        raise HTTPException(424, detail)
+
+    # If Tuya API returned success=true but result=false, the command was
+    # accepted at the envelope level but not applied by the device — this
+    # happens frequently for infrared_ac devices where the DP code is wrong.
+    # Fetch functions so the user can see what codes are supported.
+    if not ok:
+        supported_codes: List[str] = []
+        try:
+            fns = await cli.get_functions(device_id)
+            fn_list = fns.get("functions") if isinstance(fns, dict) else fns
+            if isinstance(fn_list, list):
+                for f in fn_list:
+                    if isinstance(f, dict) and f.get("code"):
+                        supported_codes.append(f["code"])
+        except Exception:
+            pass
+        # For infrared_ac category we cannot fire via /commands — need /v2.0/infrareds/*
+        hint = ""
+        try:
+            info = await cli.device_exists(device_id)
+            cat = (info or {}).get("category", "")
+            if cat == "infrared_ac":
+                hint = " · Este dispositivo es un A/C controlado por control IR (categoría infrared_ac). La API /commands estándar suele NO funcionar con IR; requiere el endpoint /v2.0/infrareds/{ir_id}/air-conditioners/{remote_id}/command con códigos específicos (PowerOn/PowerOff/M/T/F)."
+        except Exception:
+            pass
+        detail = "El dispositivo no aceptó el comando."
+        if supported_codes:
+            detail += f" · Códigos DP soportados: {', '.join(supported_codes[:12])}"
+        detail += hint
+        raise HTTPException(424, detail)
+
+    return {"ok": True, "device_id": device_id, "commands": [c.dict() for c in payload.commands]}
+
+
+@api.get("/tuya/devices/{device_id}/functions")
+async def tuya_device_functions(device_id: str, _: dict = Depends(get_current_user)):
+    """Devuelve los DP codes que el dispositivo específico soporta."""
+    try:
+        cli = await _tuya_client()
+        return await cli.get_functions(device_id)
     except TuyaError as e:
         raise HTTPException(424, f"Tuya {e.code}: {e.msg}")
 
@@ -3643,6 +3708,177 @@ async def tuya_chat_reset_endpoint(session_id: str,
 
 # ---------- OLT · SNMP integration (VSol, Huawei, ZTE...) ----------
 from olt import read_onus as olt_read_onus, snmp_test as olt_snmp_test, OLTError  # noqa: E402
+
+# ---------- Mikrotik RouterOS API (routeros_api port 8728) ----------
+from mikrotik_ros import connect_and_test as ros_test_connect, MikrotikRosError  # noqa: E402
+from mikrotik_dynamic import (  # noqa: E402
+    get_config as mk_dyn_get,
+    get_public_config as mk_dyn_public,
+    upsert_config as mk_dyn_upsert,
+    record_test_result as mk_dyn_record,
+)
+
+
+# ---------- Mikrotik dinámico (CGNAT / Proton VPN Port Forwarding) ----------
+class MikrotikDynamicPatch(BaseModel):
+    host: Optional[str] = None
+    port: Optional[int] = None
+    user: Optional[str] = None
+    password: Optional[str] = None
+    use_ssl: Optional[bool] = None
+
+
+class RouterIpWebhookIn(BaseModel):
+    current_ip: str
+    current_port: int
+
+
+@api.get("/mikrotik/dynamic")
+async def mikrotik_dynamic_get(_: dict = Depends(require_roles("owner", "admin"))):
+    """Devuelve la config viva del router dinámico (Proton VPN Port Forwarding).
+
+    El password nunca se expone en claro — solo un `password_masked` + flag
+    `has_password`. Los valores viven en `db.mikrotik_dynamic` (singleton) y
+    caen a las variables de entorno `MIKROTIK_*` si la DB está vacía.
+    """
+    return await mk_dyn_public(db)
+
+
+@api.patch("/mikrotik/dynamic")
+async def mikrotik_dynamic_patch(payload: MikrotikDynamicPatch,
+                                 _: dict = Depends(require_roles("owner", "admin"))):
+    """Actualización manual desde la UI. Solo modifica los campos enviados."""
+    patch = {k: v for k, v in payload.dict().items() if v is not None}
+    if not patch:
+        raise HTTPException(400, "Nada que actualizar")
+    await mk_dyn_upsert(db, patch, source="manual")
+    return await mk_dyn_public(db)
+
+
+@api.post("/mikrotik/dynamic/test")
+async def mikrotik_dynamic_test(_: dict = Depends(require_roles("owner", "admin"))):
+    """Corre `/system/resource/print` contra el router dinámico usando la
+    config viva. Devuelve modelo (`board_name`) y uso de CPU (`cpu_load`)
+    entre otros campos, y persiste el resultado del último test."""
+    cfg = await mk_dyn_get(db)
+    host = (cfg.get("host") or "").strip()
+    user = (cfg.get("user") or "").strip()
+    pwd = cfg.get("password") or ""
+    port = int(cfg.get("port") or 8728)
+    use_ssl = bool(cfg.get("use_ssl", False))
+    if not host:
+        raise HTTPException(400, "Falta MIKROTIK_HOST (IP pública/DNS de Proton VPN)")
+    if not user or not pwd:
+        raise HTTPException(400, "Falta usuario o contraseña de la API Mikrotik")
+    try:
+        result = await ros_test_connect(
+            host, port=port, user=user, password=pwd,
+            use_ssl=use_ssl, timeout=8,
+        )
+    except MikrotikRosError as e:
+        await mk_dyn_record(db, ok=False, error=str(e))
+        raise HTTPException(424, str(e))
+    snap = {k: v for k, v in result.items() if k != "raw"}
+    await mk_dyn_record(db, ok=True, snapshot=snap)
+    return {
+        "ok": True,
+        "host": host,
+        "port": port,
+        "identity": result.get("identity"),
+        "board_name": result.get("board_name"),
+        "version": result.get("version"),
+        "uptime": result.get("uptime"),
+        "cpu_load": result.get("cpu_load"),
+        "cpu_count": result.get("cpu_count"),
+        "free_memory": result.get("free_memory"),
+        "total_memory": result.get("total_memory"),
+        "architecture": result.get("architecture"),
+        "platform": result.get("platform"),
+    }
+
+
+@api.post("/update-router-ip")
+async def update_router_ip_webhook(payload: RouterIpWebhookIn, request: Request):
+    """Webhook público (protegido por `WEBHOOK_CRON_SECRET`) que recibe la
+    IP + puerto actuales asignados por Proton VPN cada vez que el túnel se
+    reinicia. Guarda los valores en la DB para que la conexión al router no
+    se pierda al rotar el port forwarding.
+
+    Autenticación (dos formas, elige una):
+      - Header `X-Webhook-Secret: <WEBHOOK_CRON_SECRET>`
+      - Header `Authorization: Bearer <WEBHOOK_CRON_SECRET>`
+
+    Body JSON esperado: {"current_ip": "1.2.3.4", "current_port": "45678"}
+    """
+    import hmac
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    provided = (request.headers.get("x-webhook-secret") or "").strip()
+    if not provided:
+        auth = request.headers.get("authorization") or ""
+        provided = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    if not secret or not provided or not hmac.compare_digest(provided, secret):
+        raise HTTPException(401, "Unauthorized webhook — falta X-Webhook-Secret válido")
+
+    ip = (payload.current_ip or "").strip()
+    port = int(payload.current_port)
+    if not ip:
+        raise HTTPException(400, "current_ip vacío")
+    if not (1 <= port <= 65535):
+        raise HTTPException(400, "current_port fuera de rango")
+
+    updated = await mk_dyn_upsert(db, {"host": ip, "port": port}, source="webhook")
+    return {
+        "ok": True,
+        "host": updated.get("host"),
+        "port": int(updated.get("port") or 8728),
+        "last_updated_at": updated.get("last_updated_at"),
+        "source": updated.get("last_updated_source"),
+    }
+
+
+
+@api.post("/devices/{device_id}/ros-test")
+async def mikrotik_ros_test(device_id: str,
+                            _: dict = Depends(require_roles("owner", "admin"))):
+    """Conecta al Mikrotik usando la librería `routeros_api` (puerto 8728) y
+    corre `/system/resource/print` para verificar la conexión. Devuelve
+    version, uptime, cpu-load, memoria y demás datos del router."""
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+    host = d.get("host") or ""
+    if not host or host == "-":
+        raise HTTPException(400, "El router no tiene host/IP configurado")
+    user = d.get("api_user") or ""
+    pwd = d.get("api_password") or ""
+    if not user or not pwd:
+        raise HTTPException(400, "Configura usuario y contraseña API en la edición del router")
+    port = int(d.get("api_port") or 8728)
+    use_ssl = bool(d.get("api_use_ssl", False))
+
+    started = now_iso()
+    try:
+        result = await ros_test_connect(
+            host, port=port, user=user, password=pwd,
+            use_ssl=use_ssl, timeout=8,
+        )
+    except MikrotikRosError as e:
+        await db.devices.update_one({"id": device_id}, {"$set": {
+            "last_ros_test_at": started,
+            "last_ros_test_ok": False,
+            "last_ros_test_error": str(e)[:300],
+        }})
+        raise HTTPException(424, str(e))
+
+    # Persist a compact snapshot (drop `raw` for storage economy)
+    snapshot = {k: v for k, v in result.items() if k != "raw"}
+    await db.devices.update_one({"id": device_id}, {"$set": {
+        "last_ros_test_at": started,
+        "last_ros_test_ok": True,
+        "last_ros_test_error": "",
+        "ros_info": snapshot,
+    }})
+    return {"tested_at": started, **result}
 
 
 @api.post("/devices/{olt_id}/snmp-test")

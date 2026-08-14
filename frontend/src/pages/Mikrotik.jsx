@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import MikrotikTestDialog from "@/components/MikrotikTestDialog";
 import MikrotikInterfacesDialog from "@/components/MikrotikInterfacesDialog";
 import ServerInfoPanel from "@/components/ServerInfoPanel";
+import MikrotikDynamicPanel from "@/components/MikrotikDynamicPanel";
 
 const rand = (n = 10) => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -357,6 +358,7 @@ export default function Mikrotik() {
   const [testing, setTesting] = useState(null);
   const [interfacesFor, setInterfacesFor] = useState(null);
   const [q, setQ] = useState("");
+  const [rosBusy, setRosBusy] = useState({});
 
   const load = async () => {
     const [d, s] = await Promise.all([api.get("/devices"), api.get("/vpn/server-info")]);
@@ -378,6 +380,20 @@ export default function Mikrotik() {
     if (!window.confirm("¿Eliminar este Mikrotik?")) return;
     try { await api.delete(`/devices/${id}`); toast.success("Eliminado"); load(); }
     catch (e) { toast.error(formatApiError(e)); }
+  };
+
+  const rosTest = async (d) => {
+    if (rosBusy[d.id]) return;
+    setRosBusy((s) => ({ ...s, [d.id]: true }));
+    try {
+      const { data } = await api.post(`/devices/${d.id}/ros-test`);
+      toast.success(
+        `RouterOS OK · ${data.identity || d.name} · v${data.version || "?"} · uptime ${data.uptime || "?"} · CPU ${data.cpu_load ?? "?"}%`,
+        { duration: 8000 }
+      );
+      load();
+    } catch (e) { toast.error(formatApiError(e), { duration: 8000 }); }
+    finally { setRosBusy((s) => ({ ...s, [d.id]: false })); }
   };
 
   return (
@@ -407,6 +423,8 @@ export default function Mikrotik() {
           </DropdownMenu>
         }
       />
+
+      <MikrotikDynamicPanel />
 
       <SearchBar value={q} onChange={setQ} placeholder="Buscar Mikrotik por nombre, protocolo o modo…"
         hint={`${filtered.length} / ${devices.length}`} testId="mk-search" />
@@ -488,6 +506,17 @@ export default function Mikrotik() {
                     title={restConfigured ? "Ver / sincronizar interfaces" : "Configura URL REST + usuario/pass API"}
                   >
                     <RefreshCw className="w-3.5 h-3.5 mr-1" /> Interfaces
+                  </Button>
+                  <Button
+                    size="sm" variant="outline"
+                    onClick={() => rosTest(d)}
+                    disabled={!d.api_enabled || !d.api_user || rosBusy[d.id]}
+                    data-testid={`mk-ros-${d.id}`}
+                    className="mr-1"
+                    title={d.api_enabled ? "Probar RouterOS API (puerto 8728)" : "Habilita API + usuario/pass"}
+                  >
+                    <Zap className={`w-3.5 h-3.5 mr-1 ${rosBusy[d.id] ? "animate-pulse" : ""}`} />
+                    {rosBusy[d.id] ? "Probando…" : "RouterOS API"}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setTesting(d)} data-testid={`mk-test-${d.id}`} className="mr-1">
                     <Zap className="w-3.5 h-3.5 mr-1" /> Probar

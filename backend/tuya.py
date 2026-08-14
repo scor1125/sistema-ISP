@@ -303,11 +303,67 @@ class TuyaClient:
           - temp_set (int, °C)
           - mode (str: "cold" | "hot" | "wet" | "wind" | "auto")
           - fan_speed_enum (str: "low" | "mid" | "high" | "auto")
+
+        Uses `/v1.0/devices/{id}/commands` (works for both regular and IR-bridged
+        devices like infrared_ac). Falls back to `/v1.0/iot-03/devices/{id}/commands`
+        if the first path returns 2008. Then retries with common DP-code aliases.
         """
         body = {"commands": commands}
-        result = await self._request("POST", f"/v1.0/iot-03/devices/{device_id}/commands", body=body)
-        # Tuya returns `true` on success (bare bool)
-        return bool(result)
+        path_primary = f"/v1.0/devices/{device_id}/commands"
+        path_iot03 = f"/v1.0/iot-03/devices/{device_id}/commands"
+
+        # 1. Try primary endpoint (works for IR AC bridges + most cloud devices)
+        try:
+            result = await self._request("POST", path_primary, body=body)
+            return bool(result)
+        except TuyaError as e:
+            if e.code != 2008:
+                raise
+            original = e
+
+        # 2. Fall back to iot-03 endpoint (some newer devices only accept this)
+        try:
+            result = await self._request("POST", path_iot03, body=body)
+            logger.info("Tuya: %s recovered via /v1.0/iot-03/devices/*/commands", device_id)
+            return bool(result)
+        except TuyaError as e:
+            if e.code != 2008:
+                raise
+
+        # 3. Retry with common DP-code aliases
+        aliases = {
+            "switch":         ["power", "switch_1", "switch_led"],
+            "switch_1":       ["switch", "power"],
+            "temp_set":       ["temp", "temperature_set", "temp_value"],
+            "temp":           ["temp_set"],
+            "mode":           ["work_mode", "mode_enum"],
+            "fan_speed_enum": ["fan", "fan_speed", "wind_speed"],
+            "fan_speed":      ["fan", "fan_speed_enum", "wind_speed"],
+            "fan":            ["fan_speed_enum", "fan_speed"],
+        }
+        tried = [c["code"] for c in commands]
+        for alt in aliases.get(commands[0]["code"], []):
+            if alt in tried:
+                continue
+            alt_cmds = [{"code": alt, "value": c["value"]} if c["code"] == commands[0]["code"] else c
+                        for c in commands]
+            for path in (path_primary, path_iot03):
+                try:
+                    result = await self._request("POST", path, body={"commands": alt_cmds})
+                    logger.info("Tuya recovered on %s with alias %s → %s via %s",
+                                device_id, commands[0]["code"], alt, path)
+                    return bool(result)
+                except TuyaError as e2:
+                    if e2.code != 2008:
+                        raise
+            tried.append(alt)
+
+        # All retries failed — re-raise the original 2008
+        raise original
+
+    async def get_functions(self, device_id: str) -> Dict[str, Any]:
+        """List the DP codes / functions this specific device supports."""
+        return await self._request("GET", f"/v1.0/devices/{device_id}/functions")
 
     async def rename_device(self, device_id: str, name: str) -> bool:
         body = {"name": name}
