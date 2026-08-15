@@ -481,6 +481,8 @@ class DeviceIn(BaseModel):
     api_enabled: Optional[bool] = False
     api_user: Optional[str] = ""
     api_password: Optional[str] = ""
+    api_port: Optional[int] = 8728
+    api_use_ssl: Optional[bool] = False
     management_modes: Optional[List[Literal["ppp","queues"]]] = []
     interfaces: Optional[List[str]] = None  # e.g., ["ether1","bridge","pppoe-out1"]
     # --- REST API (Mikrotik RouterOS v7+) ---
