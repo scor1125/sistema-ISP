@@ -4379,16 +4379,25 @@ async def test_map_config(payload: MapConfigIn,
         result["message"] = "API key válida · Google respondió correctamente."
         result["hint"] = "Recuerda habilitar 'Maps JavaScript API' + billing en tu proyecto."
     elif status_code == "REQUEST_DENIED":
-        result["ok"] = False
-        result["message"] = f"Google rechazó la key: {err_msg or 'REQUEST_DENIED'}"
-        if "not authorized" in err_msg.lower() or "not been used" in err_msg.lower():
-            result["hint"] = "Habilita la API en Google Cloud Console → APIs & Services → Library."
-        elif "referer" in err_msg.lower() or "referrer" in err_msg.lower():
-            result["hint"] = "La key tiene restricción de referrer. Añade este dominio."
-        elif "billing" in err_msg.lower():
-            result["hint"] = "El proyecto no tiene billing habilitado."
+        # Special case: the key IS valid but restricted to HTTP referrers,
+        # which is the RECOMMENDED production configuration. From a browser
+        # this key will work; only server-side (no Referer header) calls fail.
+        if "referer restrictions cannot be used" in err_msg.lower() \
+                or ("referer" in err_msg.lower() and "restriction" in err_msg.lower()):
+            result["ok"] = True
+            result["message"] = "API key válida con restricciones de referrer (recomendado)."
+            result["hint"] = ("La key sólo funciona desde el navegador. Asegúrate de que "
+                              "tu dominio (customer-net-ops.preview.emergentagent.com y "
+                              "jupiterisp.net) esté en la lista de referrers permitidos.")
         else:
-            result["hint"] = "Revisa restricciones de la key en Google Cloud Console."
+            result["ok"] = False
+            result["message"] = f"Google rechazó la key: {err_msg or 'REQUEST_DENIED'}"
+            if "not authorized" in err_msg.lower() or "not been used" in err_msg.lower():
+                result["hint"] = "Habilita la API en Google Cloud Console → APIs & Services → Library."
+            elif "billing" in err_msg.lower():
+                result["hint"] = "El proyecto no tiene billing habilitado."
+            else:
+                result["hint"] = "Revisa restricciones de la key en Google Cloud Console."
     elif status_code == "OVER_QUERY_LIMIT":
         result["message"] = "Cuota diaria excedida en el proyecto."
     elif status_code == "INVALID_REQUEST":
