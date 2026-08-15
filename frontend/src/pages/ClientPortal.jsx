@@ -11,6 +11,7 @@ import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from "rec
 import {
   Wifi, WifiOff, LogOut, Upload, CheckCircle2, CreditCard,
   Activity, Signal, Calendar, Phone, LogIn as LogInIcon,
+  Eye, EyeOff, MessageCircle,
 } from "lucide-react";
 
 const PORTAL_API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -42,11 +43,20 @@ const STATUS_MAP = {
 /* --------------- LOGIN --------------- */
 function PortalLogin({ onLoggedIn }) {
   const [pin, setPin] = useState("");
+  const [showPin, setShowPin] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // WhatsApp support: number where clients request their PIN
+  const SUPPORT_WA_DISPLAY = "9321299469";
+  // Use full international format (MX +52) for wa.me deep link
+  const SUPPORT_WA_INTL = "529321299469";
+  const supportWaUrl = `https://wa.me/${SUPPORT_WA_INTL}?text=${encodeURIComponent(
+    "Hola, soy cliente de EnlaceHR ISP. Podrían enviarme mi PIN de 8 dígitos para el portal, por favor."
+  )}`;
 
   const submit = async (e) => {
     e.preventDefault();
-    if (pin.trim().length < 4) { toast.error("Ingresa tu PIN"); return; }
+    if (pin.trim().length !== 8) { toast.error("El PIN debe tener 8 dígitos"); return; }
     setLoading(true);
     try {
       const { data } = await portalApi.post("/portal/login", { pin: pin.trim() });
@@ -70,30 +80,53 @@ function PortalLogin({ onLoggedIn }) {
           </div>
         </div>
         <h1 className="text-2xl font-bold text-white mb-1">Bienvenido</h1>
-        <p className="text-sm text-slate-400 mb-5">Ingresa tu PIN de 6 dígitos para acceder a tu servicio.</p>
+        <p className="text-sm text-slate-400 mb-5">Ingresa tu PIN de 8 dígitos para acceder a tu servicio.</p>
         <form onSubmit={submit} className="space-y-3">
           <div>
-            <Label className="text-slate-300 text-xs uppercase tracking-widest font-mono">PIN de 6 dígitos</Label>
-            <Input
-              data-testid="portal-pin"
-              autoFocus
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ""))}
-              type="password"
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="••••••"
-              className="mt-1 bg-slate-950/50 border-slate-700 text-white tracking-widest text-center font-mono text-2xl h-14"
-              required
-            />
+            <Label className="text-slate-300 text-xs uppercase tracking-widest font-mono">PIN de 8 dígitos</Label>
+            <div className="relative mt-1">
+              <Input
+                data-testid="portal-pin"
+                autoFocus
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))}
+                type={showPin ? "text" : "password"}
+                inputMode="numeric"
+                maxLength={8}
+                placeholder="••••••••"
+                className="bg-slate-950/50 border-slate-700 text-white tracking-widest text-center font-mono text-2xl h-14 pr-12"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPin((v) => !v)}
+                aria-label={showPin ? "Ocultar PIN" : "Mostrar PIN"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-slate-200 rounded"
+                data-testid="portal-pin-toggle"
+              >
+                {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
-          <Button type="submit" disabled={loading || pin.length < 4} data-testid="portal-login-btn" className="w-full bg-gradient-to-r from-amber-500 to-rose-500 hover:opacity-90 text-white font-semibold h-11">
+          <Button type="submit" disabled={loading || pin.length !== 8} data-testid="portal-login-btn" className="w-full bg-gradient-to-r from-amber-500 to-rose-500 hover:opacity-90 text-white font-semibold h-11">
             <LogInIcon className="w-4 h-4 mr-2" />
             {loading ? "Ingresando…" : "Ingresar"}
           </Button>
         </form>
-        <p className="text-[11px] text-slate-500 mt-4 text-center">
-          ¿No tienes tu PIN? Contacta a soporte por WhatsApp.
+
+        {/* WhatsApp support — deep link to WhatsApp Web */}
+        <a
+          href={supportWaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="portal-wa-support"
+          className="mt-6 flex items-center justify-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 font-medium h-11 transition-colors"
+        >
+          <MessageCircle className="w-4 h-4" />
+          <span className="font-mono">Solicita tu PIN por WhatsApp: {SUPPORT_WA_DISPLAY}</span>
+        </a>
+        <p className="text-[11px] text-slate-500 mt-2 text-center">
+          Se abrirá WhatsApp Web con un mensaje pre-llenado.
         </p>
 
         <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-center">

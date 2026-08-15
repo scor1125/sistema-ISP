@@ -13,6 +13,7 @@ import PromisesPage from "@/pages/PromisesPage";
 import Leads from "@/pages/Leads";
 import Extras from "@/pages/Extras";
 import NapMap from "@/pages/NapMap";
+import MapaRed from "@/pages/MapaRed";
 import WhatsApp from "@/pages/WhatsApp";
 import OLT from "@/pages/OLT";
 import Mikrotik from "@/pages/Mikrotik";
@@ -73,7 +74,8 @@ function App() {
             <Route path="/arqueos" element={<Arqueos />} />
             <Route path="/leads" element={<Leads />} />
             <Route path="/extras" element={<Extras />} />
-            <Route path="/mapa" element={<NapMap />} />
+            <Route path="/mapa" element={<MapaRed />} />
+            <Route path="/mapa-clasico" element={<NapMap />} />
             <Route path="/olt" element={<OLT />} />
             <Route path="/onus" element={<OnusStatus />} />
             <Route path="/mikrotik" element={<Mikrotik />} />

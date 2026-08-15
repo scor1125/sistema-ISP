@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil, MessageCircle, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp, KeyRound, Copy } from "lucide-react";
+import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
@@ -323,44 +323,20 @@ export default function Clients() {
       } else {
         const { data } = await api.post("/clients", payload);
         if (data?.portal_pin) {
-          const portalUrl = `${window.location.origin}/portal`;
-          toast.success(
-            `Cliente creado · PIN ${data.portal_pin}`,
-            {
-              description: `Compártele: ${portalUrl} (tel: ${data.phone || ""} · PIN: ${data.portal_pin})`,
-              duration: 15000,
-              action: {
-                label: "Copiar PIN",
-                onClick: () => { navigator.clipboard.writeText(data.portal_pin); toast("PIN copiado"); },
-              },
-            }
-          );
+          toast.success(`Cliente creado · PIN ${data.portal_pin}`, {
+            description: "El PIN también aparece al presionar el cliente.",
+            duration: 12000,
+            action: {
+              label: "Copiar PIN",
+              onClick: () => { navigator.clipboard.writeText(data.portal_pin); toast("PIN copiado"); },
+            },
+          });
         } else {
           toast.success("Cliente creado");
         }
       }
       setEditing(null); await load();
     } catch (e) { toast.error(formatApiError(e)); throw e; }
-  };
-
-  const regeneratePin = async (c) => {
-    try {
-      const { data } = await api.post(`/clients/${c.id}/regenerate-pin`);
-      const portalUrl = `${window.location.origin}/portal`;
-      toast.success(`PIN nuevo: ${data.portal_pin}`, {
-        description: `${c.full_name} · ${portalUrl} · tel: ${data.phone || c.phone || ""}`,
-        duration: 15000,
-        action: {
-          label: "Copiar todo",
-          onClick: () => {
-            navigator.clipboard.writeText(
-              `EnlaceHR ISP · Portal cliente\n${portalUrl}\nTeléfono: ${data.phone || c.phone || ""}\nPIN: ${data.portal_pin}`
-            );
-            toast("Copiado");
-          },
-        },
-      });
-    } catch (e) { toast.error(formatApiError(e)); }
   };
 
   const remove = async (id) => {
@@ -581,9 +557,7 @@ export default function Clients() {
                       <div className="flex justify-end gap-1">
                         <Button size="icon" variant="ghost" title="Tráfico en vivo" onClick={() => setDetail(c)} data-testid={`traffic-${c.id}`}><Activity className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" title="Registrar pago" onClick={() => navigate(`/pagos?client=${c.id}`)}><DollarSign className="w-4 h-4" /></Button>
-                        <Button size="icon" variant="ghost" title="WhatsApp" onClick={() => navigate(`/whatsapp?client=${c.id}`)}><MessageCircle className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" onClick={() => { setEditing(c); setOpen(true); }} data-testid={`edit-${c.id}`}><Pencil className="w-4 h-4" /></Button>
-                        <Button size="icon" variant="ghost" onClick={() => regeneratePin(c)} data-testid={`portal-pin-${c.id}`} title="Generar PIN único para el portal del cliente"><KeyRound className="w-4 h-4 text-amber-400" /></Button>
                         <Button size="icon" variant="ghost" onClick={() => remove(c.id)} data-testid={`delete-${c.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                       </div>
                     </TableCell>

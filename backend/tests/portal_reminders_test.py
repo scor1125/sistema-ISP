@@ -162,29 +162,3 @@ class TestReminders:
         msgs = owner_session.get(f"{BASE_URL}/api/whatsapp/messages",
                                  params={"phone": test_client["phone"]}).json()
         assert any("saludo de test" in m["body"] for m in msgs)
-
-    def test_regenerate_pin(self, owner_session):
-        # Use an isolated client so this test doesn't clobber the module-scoped
-        # `test_client` fixture used by portal upload tests.
-        phone = "+5299966" + uuid.uuid4().hex[:6]
-        c = owner_session.post(f"{BASE_URL}/api/clients", json={
-            "full_name": f"TEST_RegenPin_{uuid.uuid4().hex[:5]}",
-            "phone": phone, "payment_day": 5,
-        })
-        assert c.status_code == 200
-        cid = c.json()["id"]
-        old_pin = c.json()["portal_pin"]
-        try:
-            r = owner_session.post(f"{BASE_URL}/api/clients/{cid}/regenerate-pin")
-            assert r.status_code == 200
-            new_pin = r.json()["portal_pin"]
-            assert new_pin and len(new_pin) == 6
-            assert new_pin != old_pin
-            # Old PIN no longer works
-            r2 = requests.post(f"{BASE_URL}/api/portal/login", json={"phone": phone, "pin": old_pin})
-            assert r2.status_code == 401
-            # New PIN works
-            r3 = requests.post(f"{BASE_URL}/api/portal/login", json={"phone": phone, "pin": new_pin})
-            assert r3.status_code == 200
-        finally:
-            owner_session.delete(f"{BASE_URL}/api/clients/{cid}")

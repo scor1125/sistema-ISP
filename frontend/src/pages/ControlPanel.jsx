@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { PageHeader, Kpi } from "@/components/Common";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Users, UserX, Sparkles, DollarSign, Router as RouterIcon, Radio, Calendar } from "lucide-react";
+import PaymentsTimeline from "@/components/PaymentsTimeline";
 
 const AXIS = "hsl(240 5% 55%)";
 const GRID = "hsl(240 10% 15%)";
@@ -21,7 +21,6 @@ export default function ControlPanel() {
   }, []);
 
   const monthly = d?.monthly_revenue || [];
-  const recent = d?.recent_payments || [];
   const mikrotiks = d?.mikrotiks || [];
   const olts = d?.olts || [];
 
@@ -58,32 +57,7 @@ export default function ControlPanel() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-md border border-border bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Ingresos recientes por día, hora y responsable</div>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Fecha</TableHead><TableHead>Hora</TableHead><TableHead>Cliente</TableHead>
-              <TableHead>Monto</TableHead><TableHead>Método</TableHead><TableHead>Registrado por</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {recent.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-6">Sin ingresos aún.</TableCell></TableRow>}
-            {recent.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell className="font-mono text-xs">{(p.created_at || "").slice(0, 10)}</TableCell>
-                <TableCell className="font-mono text-xs">{(p.created_at || "").slice(11, 16)}</TableCell>
-                <TableCell>{p.client_name}</TableCell>
-                <TableCell className="font-mono">${p.amount}</TableCell>
-                <TableCell><Badge variant="outline">{p.method}</Badge></TableCell>
-                <TableCell>{p.created_by_name || "—"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </section>
+      <PaymentsTimeline />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
         <DevicesCard title="Mikrotiks en línea" icon={RouterIcon} devices={mikrotiks} />

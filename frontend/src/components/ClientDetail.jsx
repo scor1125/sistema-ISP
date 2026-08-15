@@ -4,8 +4,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { Wifi, WifiOff, Gauge, Activity, MessageCircle, DollarSign, Router } from "lucide-react";
+import { Wifi, WifiOff, Gauge, Activity, DollarSign, Router, KeyRound, Copy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 const AXIS = "hsl(240 5% 55%)";
 const GRID = "hsl(240 10% 15%)";
@@ -89,6 +90,37 @@ export default function ClientDetail({ client, open, onOpenChange }) {
           </div>
         </SheetHeader>
 
+        {/* PIN card — big, prominent, non-editable, unique per client */}
+        <div className="mt-4 rounded-md border-2 border-primary/40 bg-primary/5 p-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-primary" />
+              <div className="text-xs uppercase tracking-widest text-primary font-mono">PIN</div>
+            </div>
+            <Button
+              size="sm" variant="ghost"
+              onClick={() => {
+                if (!client.portal_pin) return;
+                navigator.clipboard.writeText(String(client.portal_pin));
+                toast.success("PIN copiado");
+              }}
+              disabled={!client.portal_pin}
+              data-testid={`client-detail-copy-pin-${client.id}`}
+            >
+              <Copy className="w-3.5 h-3.5 mr-1" /> Copiar
+            </Button>
+          </div>
+          <div
+            className="mt-2 font-mono text-3xl sm:text-4xl tracking-[0.3em] text-foreground text-center select-all"
+            data-testid={`client-detail-pin-${client.id}`}
+          >
+            {client.portal_pin || <span className="text-muted-foreground text-lg">sin generar</span>}
+          </div>
+          <div className="mt-2 text-[11px] text-muted-foreground text-center font-mono">
+            PIN único de 8 dígitos · no modificable
+          </div>
+        </div>
+
         {/* KPI row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           <Kpi icon={Wifi} label="RX ahora" value={current ? `${current.rx} Mbps` : "…"} tone="info" />
@@ -137,9 +169,6 @@ export default function ClientDetail({ client, open, onOpenChange }) {
         <div className="mt-6 flex gap-2 flex-wrap">
           <Button size="sm" onClick={() => navigate(`/pagos?client=${client.id}`)}>
             <DollarSign className="w-4 h-4 mr-1" /> Registrar pago
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => navigate(`/whatsapp?client=${client.id}`)}>
-            <MessageCircle className="w-4 h-4 mr-1" /> Abrir WhatsApp
           </Button>
         </div>
       </SheetContent>

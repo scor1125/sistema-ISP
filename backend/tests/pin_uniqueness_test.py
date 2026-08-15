@@ -39,28 +39,10 @@ class TestPinUniqueness:
                 created.append(r.json())
             pins = [c["portal_pin"] for c in created]
             assert len(set(pins)) == len(pins), f"Duplicate PINs generated: {pins}"
+            # All PINs must be exactly 8 digits
+            for p in pins:
+                assert isinstance(p, str) and len(p) == 8 and p.isdigit(), \
+                    f"PIN {p!r} is not an 8-digit string"
         finally:
             for c in created:
                 owner_session.delete(f"{BASE_URL}/api/clients/{c['id']}")
-
-    def test_regenerate_pin_never_collides_with_others(self, owner_session):
-        """When regenerating a client's PIN it must not equal any other client's PIN."""
-        a = owner_session.post(f"{BASE_URL}/api/clients", json={
-            "full_name": f"TEST_PinRegenA_{uuid.uuid4().hex[:5]}",
-            "phone": f"+52{uuid.uuid4().int % 10**10:010d}",
-            "payment_day": 5,
-        }).json()
-        b = owner_session.post(f"{BASE_URL}/api/clients", json={
-            "full_name": f"TEST_PinRegenB_{uuid.uuid4().hex[:5]}",
-            "phone": f"+52{uuid.uuid4().int % 10**10:010d}",
-            "payment_day": 5,
-        }).json()
-        try:
-            for _ in range(3):
-                r = owner_session.post(f"{BASE_URL}/api/clients/{a['id']}/regenerate-pin")
-                assert r.status_code == 200
-                new_pin = r.json()["portal_pin"]
-                assert new_pin != b["portal_pin"], "Regenerated PIN clashes with another client"
-        finally:
-            owner_session.delete(f"{BASE_URL}/api/clients/{a['id']}")
-            owner_session.delete(f"{BASE_URL}/api/clients/{b['id']}")

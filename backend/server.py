@@ -86,14 +86,30 @@ async def get_portal_client(request: Request) -> dict:
         raise HTTPException(401, "Cliente ya no existe")
     return client
 
-async def generate_portal_pin(max_attempts: int = 20) -> str:
-    """Generate a 6-digit PIN that is guaranteed unique across all existing
-    client portal PINs (verified against bcrypt hashes). Ensures no two
-    clients ever share the same portal login PIN."""
+async def generate_portal_pin(max_attempts: int = 50) -> str:
+    """Generate an 8-digit portal PIN unique across all existing clients.
+
+    We check uniqueness against both the new plain-text `portal_pin` field
+    (fast, indexed) and the legacy bcrypt `portal_pin_hash` field so we never
+    hand out a colliding PIN during the transition period.
+    """
     import secrets
+
+    # Preload existing plain PINs for O(1) collision check
+    existing: set[str] = set()
+    async for doc in db.clients.find(
+        {"portal_pin": {"$exists": True, "$ne": None}},
+        {"portal_pin": 1, "_id": 0},
+    ):
+        p = doc.get("portal_pin")
+        if p:
+            existing.add(str(p))
+
     for _ in range(max_attempts):
-        pin = f"{secrets.randbelow(1_000_000):06d}"
-        # Verify uniqueness — scan existing hashes and reject if any matches
+        pin = f"{secrets.randbelow(10**8):08d}"
+        if pin in existing:
+            continue
+        # Also cross-check against any legacy bcrypt hashes still around
         collision = False
         async for doc in db.clients.find({"portal_pin_hash": {"$exists": True}}, {"portal_pin_hash": 1, "_id": 0}):
             h = doc.get("portal_pin_hash")
@@ -102,7 +118,6 @@ async def generate_portal_pin(max_attempts: int = 20) -> str:
                 break
         if not collision:
             return pin
-    # Fallback (extremely unlikely): raise so admin knows to expand namespace
     raise HTTPException(500, "No se pudo generar un PIN único; contacta soporte.")
 
 async def _enforce_time_restrictions(user: dict):
@@ -1438,26 +1453,15 @@ async def create_client(payload: ClientIn, _: dict = Depends(require_permission(
     doc["next_due_date"] = _next_due_date(doc["payment_day"])
     doc["last_seen"] = None
     doc["onu_power_dbm"] = None
-    # Autogenerate PIN for the client portal (6-digit). Store hashed; also
-    # return the plaintext once so admin can share it with the client.
+    # Autogenerate 8-digit unique PIN for the client portal. Stored in plain
+    # so admins can display it in the CRM (portal PIN is not a secret from
+    # the ISP itself — it's an account identifier for the customer). Not
+    # modifiable via the UI.
     pin_plain = await generate_portal_pin()
-    doc["portal_pin_hash"] = hash_password(pin_plain)
+    doc["portal_pin"] = pin_plain
     await db.clients.insert_one(doc)
     doc.pop("_id", None)
-    doc.pop("portal_pin_hash", None)
-    doc["portal_pin"] = pin_plain
     return doc
-
-@api.post("/clients/{cid}/regenerate-pin")
-async def regenerate_portal_pin(cid: str, _: dict = Depends(require_roles("owner","admin"))):
-    client = await db.clients.find_one({"id": cid}, {"_id": 0, "id": 1, "phone": 1})
-    if not client:
-        raise HTTPException(404, "Cliente no encontrado")
-    pin = await generate_portal_pin()
-    await db.clients.update_one({"id": cid}, {"$set": {
-        "portal_pin_hash": hash_password(pin), "updated_at": now_iso(),
-    }})
-    return {"portal_pin": pin, "phone": client.get("phone", "")}
 
 @api.patch("/clients/{cid}")
 async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(require_permission("clients", "write"))):
@@ -2309,20 +2313,15 @@ def _sanitize_client_portal(c: dict) -> dict:
 async def portal_login(payload: PortalLoginIn, response: Response):
     if not payload.pin:
         raise HTTPException(400, "El PIN es obligatorio")
+    pin_input = str(payload.pin).strip()
 
-    client = None
-    # Fast path — if phone was provided (legacy clients), narrow the search.
-    if payload.phone:
-        phone = payload.phone.strip()
-        candidate = await db.clients.find_one({"phone": phone})
-        if candidate and candidate.get("portal_pin_hash") \
-                and verify_password(payload.pin, candidate["portal_pin_hash"]):
-            client = candidate
+    # Fast path: match against the plain 8-digit `portal_pin` (unique index)
+    client = await db.clients.find_one({"portal_pin": pin_input})
 
-    # Otherwise (or if phone lookup failed) scan clients since PINs are unique.
+    # Legacy fallback for any doc still on bcrypt-only PIN
     if not client:
         async for doc in db.clients.find({"portal_pin_hash": {"$exists": True}}):
-            if verify_password(payload.pin, doc.get("portal_pin_hash", "")):
+            if verify_password(pin_input, doc.get("portal_pin_hash", "")):
                 client = doc
                 break
 
@@ -2955,13 +2954,47 @@ async def list_cron_runs(_: dict = Depends(require_roles("owner","admin"))):
     return items
 
 # ---------- Startup (seed) ----------
+async def _backfill_portal_pins():
+    """One-time migration: assign 8-digit unique `portal_pin` to every client
+    that doesn't have one yet (was on legacy 6-digit bcrypt scheme or never
+    got one). Also drops the legacy `portal_pin_hash` field once replaced."""
+    import secrets
+    existing: set[str] = set()
+    async for doc in db.clients.find(
+        {"portal_pin": {"$exists": True, "$ne": None}},
+        {"portal_pin": 1, "_id": 0},
+    ):
+        p = doc.get("portal_pin")
+        if p:
+            existing.add(str(p))
+
+    async for c in db.clients.find(
+        {"$or": [{"portal_pin": {"$exists": False}}, {"portal_pin": None}, {"portal_pin": ""}]},
+        {"_id": 0, "id": 1},
+    ):
+        for _ in range(50):
+            pin = f"{secrets.randbelow(10**8):08d}"
+            if pin in existing:
+                continue
+            existing.add(pin)
+            await db.clients.update_one(
+                {"id": c["id"]},
+                {"$set": {"portal_pin": pin}, "$unset": {"portal_pin_hash": ""}},
+            )
+            break
+
+
 async def seed():
     await db.users.create_index("email", unique=True)
     await db.clients.create_index("status")
+    await db.clients.create_index("portal_pin", unique=True, sparse=True)
     await db.payments.create_index("client_id")
     await db.whatsapp_funnels.create_index("id", unique=True)
     await db.whatsapp_conversations.create_index("phone", unique=True)
     await db.whatsapp.create_index("provider_message_id", sparse=True)
+
+    # Backfill any missing portal PINs (idempotent).
+    await _backfill_portal_pins()
 
     # Seed default WhatsApp funnels once
     existing_funnel_count = await db.whatsapp_funnels.count_documents({})
@@ -4198,6 +4231,64 @@ async def inv_stats(_: dict = Depends(get_current_user)):
         "total_sales": total_sales,
         "total_revenue": total_revenue,
     }
+
+
+# ---------- Map cables (fiber runs traced on the service map) ----------
+class CableIn(BaseModel):
+    tipo: Literal["troncal", "distribucion"]
+    path: List[Dict[str, float]]  # [{lat, lng}, ...]
+    length_m: float = 0
+    notes: Optional[str] = ""
+    color: Optional[str] = None
+    weight: Optional[int] = None
+
+
+class CableUpdate(BaseModel):
+    tipo: Optional[Literal["troncal", "distribucion"]] = None
+    path: Optional[List[Dict[str, float]]] = None
+    length_m: Optional[float] = None
+    notes: Optional[str] = None
+    color: Optional[str] = None
+    weight: Optional[int] = None
+
+
+@api.get("/map/cables")
+async def list_cables(_: dict = Depends(get_current_user)):
+    items = await db.map_cables.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return items
+
+
+@api.post("/map/cables")
+async def create_cable(payload: CableIn, _: dict = Depends(require_roles("owner", "admin"))):
+    doc = payload.dict()
+    if not doc["path"] or len(doc["path"]) < 2:
+        raise HTTPException(400, "El cable debe tener al menos 2 puntos")
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    await db.map_cables.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/map/cables/{cid}")
+async def update_cable(cid: str, payload: CableUpdate, _: dict = Depends(require_roles("owner", "admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.map_cables.update_one({"id": cid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Cable no encontrado")
+    return await db.map_cables.find_one({"id": cid}, {"_id": 0})
+
+
+@api.delete("/map/cables/{cid}")
+async def delete_cable(cid: str, _: dict = Depends(require_roles("owner", "admin"))):
+    r = await db.map_cables.delete_one({"id": cid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Cable no encontrado")
+    return {"ok": True}
 
 
 # ---------- Mount ----------
