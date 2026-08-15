@@ -13,11 +13,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   Boxes, Radio, Cable, Ruler, Download, Trash2, MapPin, Copy,
-  MousePointer2, Waypoints, Server, Signal, Zap,
+  MousePointer2, Waypoints, Server, Signal, Zap, Settings2, KeyRound,
+  CheckCircle2, XCircle, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 
-const GOOGLE_MAPS_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
+const GOOGLE_MAPS_KEY_ENV = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 
 /* Estilos de cables — deben aplicarse en tiempo real al terminar el trazo */
 const CABLE_STYLES = {
@@ -25,21 +26,25 @@ const CABLE_STYLES = {
   distribucion: { color: "#ef4444", weight: 4, label: "Distribución" },
 };
 
-// Cargador idempotente del script de Google Maps con drawing + geometry
+// Cargador idempotente del script de Google Maps con drawing + geometry.
+// Acepta la key como parámetro para permitir reconfiguración desde la UI.
 let _mapsPromise = null;
-function loadGoogleMaps() {
+let _mapsPromiseKey = null;
+function loadGoogleMaps(apiKey) {
+  const key = apiKey || GOOGLE_MAPS_KEY_ENV;
   if (window.google?.maps?.drawing && window.google?.maps?.geometry) {
     return Promise.resolve(window.google);
   }
-  if (_mapsPromise) return _mapsPromise;
+  if (_mapsPromise && _mapsPromiseKey === key) return _mapsPromise;
+  _mapsPromiseKey = key;
   _mapsPromise = new Promise((resolve, reject) => {
-    if (!GOOGLE_MAPS_KEY) {
-      reject(new Error("Falta REACT_APP_GOOGLE_MAPS_API_KEY en .env"));
+    if (!key) {
+      reject(new Error("Falta la API key de Google Maps"));
       return;
     }
     const s = document.createElement("script");
     s.src =
-      `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_KEY}` +
+      `https://maps.googleapis.com/maps/api/js?key=${key}` +
       `&libraries=drawing,geometry&v=weekly`;
     s.async = true;
     s.defer = true;
@@ -174,7 +179,7 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
 /* ============================================================
    PANEL LATERAL con estilo consola de telecomunicaciones
    ============================================================ */
-function TelecomSidebar({ olts, naps, cables, totalM, onExport, onDeleteCable, onDeleteNap, mode, setMode, drawingVertexCount, onFinishPolyline, onCancelPolyline }) {
+function TelecomSidebar({ olts, naps, cables, totalM, onExport, onDeleteCable, onDeleteNap, mode, setMode, drawingVertexCount, onFinishPolyline, onCancelPolyline, onOpenConfig }) {
   return (
     <aside
       className="w-full lg:w-[320px] shrink-0 flex flex-col text-slate-200 border border-slate-700 rounded-md overflow-hidden"
@@ -182,11 +187,21 @@ function TelecomSidebar({ olts, naps, cables, totalM, onExport, onDeleteCable, o
       data-testid="mapa-sidebar"
     >
       {/* Header */}
-      <div className="px-3 py-2.5 border-b border-slate-600 bg-black/20">
-        <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-emerald-400 flex items-center gap-1">
-          <Signal className="w-3 h-3" /> Consola FTTH · Red
+      <div className="px-3 py-2.5 border-b border-slate-600 bg-black/20 flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-emerald-400 flex items-center gap-1">
+            <Signal className="w-3 h-3" /> Consola FTTH · Red
+          </div>
+          <div className="text-sm font-mono mt-0.5">Plano en tiempo real</div>
         </div>
-        <div className="text-sm font-mono mt-0.5">Plano en tiempo real</div>
+        <button
+          onClick={onOpenConfig}
+          className="p-1.5 rounded hover:bg-slate-700/60 text-slate-300 hover:text-emerald-300"
+          title="Configurar Google Maps API"
+          data-testid="map-cfg-open-btn"
+        >
+          <Settings2 className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Herramientas */}
@@ -408,6 +423,139 @@ function JsonExportDialog({ open, onOpenChange, data }) {
 }
 
 /* ============================================================
+   DIÁLOGO CONFIG · API key Google Maps + prueba de conexión
+   ============================================================ */
+function MapConfigDialog({ open, onOpenChange, current, onSaved }) {
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setApiKey(current?.api_key || "");
+      setTestResult(null);
+    }
+  }, [open, current]);
+
+  const runTest = async () => {
+    if (!apiKey.trim()) return toast.error("Ingresa una API key primero");
+    setTesting(true); setTestResult(null);
+    try {
+      const { data } = await api.post("/map/config/test", { api_key: apiKey.trim() });
+      setTestResult(data);
+      if (data.ok) toast.success("API key válida");
+      else toast.error(data.message || "Prueba fallida");
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally { setTesting(false); }
+  };
+
+  const save = async () => {
+    if (!apiKey.trim()) return toast.error("La API key no puede estar vacía");
+    setSaving(true);
+    try {
+      await api.patch("/map/config", { api_key: apiKey.trim() });
+      toast.success("API key guardada · recargando mapa…");
+      onSaved?.(apiKey.trim());
+      onOpenChange(false);
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-primary" /> Configurar Google Maps
+          </DialogTitle>
+          <DialogDescription>
+            Pega tu API key de <a className="underline text-primary"
+              href="https://console.cloud.google.com/apis/credentials"
+              target="_blank" rel="noopener noreferrer">Google Cloud Console</a>.
+            Recuerda habilitar <b>Maps JavaScript API</b> + <b>Geocoding API</b> + billing y añadir este dominio
+            a las restricciones de referrer.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">API key</Label>
+            <div className="relative mt-1">
+              <Input
+                data-testid="map-cfg-key"
+                type={showKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="AIzaSy…"
+                className="font-mono pr-20"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono uppercase text-muted-foreground hover:text-foreground"
+                data-testid="map-cfg-toggle-key"
+              >
+                {showKey ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+            {current?.api_key_masked && !apiKey && (
+              <div className="text-[11px] text-muted-foreground font-mono mt-1">
+                Actual: {current.api_key_masked}
+              </div>
+            )}
+          </div>
+
+          {/* Test result panel */}
+          {testResult && (
+            <div className={`rounded-md border p-3 text-sm ${
+              testResult.ok
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+                : "border-red-500/40 bg-red-500/10 text-red-500"
+            }`}>
+              <div className="flex items-center gap-2 font-semibold">
+                {testResult.ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                {testResult.message}
+              </div>
+              {testResult.hint && (
+                <div className="text-xs mt-1 text-muted-foreground">{testResult.hint}</div>
+              )}
+              {testResult.status && (
+                <div className="text-[10px] font-mono mt-1 opacity-70">Google status: {testResult.status}</div>
+              )}
+            </div>
+          )}
+
+          {current?.last_tested_at && !testResult && (
+            <div className="rounded-md border border-border bg-muted/30 p-2 text-[11px] font-mono flex items-center gap-2">
+              {current.last_tested_ok
+                ? <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                : <XCircle className="w-3 h-3 text-red-500" />}
+              Último test: {new Date(current.last_tested_at).toLocaleString()}
+              {!current.last_tested_ok && current.last_tested_error && (
+                <span className="text-red-400 truncate">· {current.last_tested_error}</span>
+              )}
+            </div>
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={runTest} disabled={testing || !apiKey.trim()}
+            data-testid="map-cfg-test">
+            {testing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Signal className="w-4 h-4 mr-1" />}
+            {testing ? "Probando…" : "Probar conexión"}
+          </Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={save} disabled={saving || !apiKey.trim()} data-testid="map-cfg-save">
+            {saving ? "Guardando…" : "Guardar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ============================================================
    PÁGINA
    ============================================================ */
 export default function MapaRed() {
@@ -426,6 +574,9 @@ export default function MapaRed() {
   const [cables, setCables] = useState([]);
   const [mode, setModeState] = useState("pan");
   const [drawingVertexCount, setDrawingVertexCount] = useState(0);
+  const [mapConfig, setMapConfig] = useState(null); // { api_key, api_key_masked, has_key, ... }
+  const [configOpen, setConfigOpen] = useState(false);
+  const [scriptReloadNonce, setScriptReloadNonce] = useState(0);
 
   const setMode = useCallback((m) => {
     modeRef.current = m;
@@ -444,19 +595,20 @@ export default function MapaRed() {
   // ---- Data loading ----
   const reload = useCallback(async () => {
     try {
-      const [napsRes, cablesRes, oltsRes] = await Promise.all([
+      const [napsRes, cablesRes, oltsRes, cfgRes] = await Promise.all([
         api.get("/nap-boxes"),
         api.get("/map/cables"),
         api.get("/devices").catch(() => ({ data: [] })),
+        api.get("/map/config").catch(() => ({ data: null })),
       ]);
       setNaps(napsRes.data);
       setCables(cablesRes.data);
-      // Filter for OLT-type devices that have coordinates
       const oltList = (oltsRes.data || []).filter(
         (d) => (d.type === "olt" || d.kind === "olt" || d.name?.toLowerCase().includes("olt"))
               && d.lat != null && d.lng != null
       );
       setOlts(oltList);
+      if (cfgRes.data) setMapConfig(cfgRes.data);
     } catch (e) {
       toast.error(formatApiError(e));
     }
@@ -466,7 +618,11 @@ export default function MapaRed() {
   // ---- Google Maps init ----
   useEffect(() => {
     let cancelled = false;
-    loadGoogleMaps().then((google) => {
+    // Prefer the key stored in DB (updatable from UI). Falls back to env var
+    // so the initial page load still works before the user opens the config.
+    const activeKey = mapConfig?.api_key || GOOGLE_MAPS_KEY_ENV;
+    if (!activeKey) return; // Wait for mapConfig fetch — user must configure first
+    loadGoogleMaps(activeKey).then((google) => {
       if (cancelled) return;
       if (!containerRef.current) {
         setTimeout(() => {
@@ -881,9 +1037,18 @@ export default function MapaRed() {
         subtitle="Traza tu red FTTH sobre Google Maps con herramientas de dibujo. Cada trazo mide su longitud en metros y todo se guarda en tiempo real para exportar a la IA."
       />
 
-      {!GOOGLE_MAPS_KEY && (
-        <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-500 mb-3">
-          Falta <code className="font-mono">REACT_APP_GOOGLE_MAPS_API_KEY</code> en <code>/app/frontend/.env</code>.
+      {!GOOGLE_MAPS_KEY_ENV && !mapConfig?.has_key && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm mb-3 flex items-start gap-3">
+          <KeyRound className="w-4 h-4 text-amber-500 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold text-amber-500">API key de Google Maps no configurada</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              Haz clic en el ícono <Settings2 className="w-3 h-3 inline" /> del panel para pegar tu key y probar la conexión.
+            </div>
+          </div>
+          <Button size="sm" onClick={() => setConfigOpen(true)} data-testid="map-cfg-open-empty">
+            <Settings2 className="w-3.5 h-3.5 mr-1" /> Configurar
+          </Button>
         </div>
       )}
 
@@ -955,6 +1120,22 @@ export default function MapaRed() {
         open={exportOpen}
         onOpenChange={setExportOpen}
         data={exportPayload}
+      />
+      <MapConfigDialog
+        open={configOpen}
+        onOpenChange={setConfigOpen}
+        current={mapConfig}
+        onSaved={(newKey) => {
+          // Force reload of Google Maps script with new key
+          _mapsPromise = null;
+          _mapsPromiseKey = null;
+          if (window.google) delete window.google;
+          setMapError(null);
+          setReady(false);
+          setMapConfig((c) => ({ ...(c || {}), api_key: newKey, has_key: true, api_key_masked: newKey.slice(0,4)+"•••"+newKey.slice(-4) }));
+          setScriptReloadNonce((n) => n + 1);
+          reload();
+        }}
       />
     </div>
   );

@@ -4291,6 +4291,124 @@ async def delete_cable(cid: str, _: dict = Depends(require_roles("owner", "admin
     return {"ok": True}
 
 
+# ---------- Map config (Google Maps API key configurable desde UI) ----------
+class MapConfigIn(BaseModel):
+    api_key: Optional[str] = None
+    center_lat: Optional[float] = None
+    center_lng: Optional[float] = None
+    zoom: Optional[int] = None
+
+
+def _mask_key(k: Optional[str]) -> str:
+    if not k:
+        return ""
+    if len(k) <= 8:
+        return "•" * len(k)
+    return k[:4] + "•" * (len(k) - 8) + k[-4:]
+
+
+@api.get("/map/config")
+async def get_map_config(_: dict = Depends(get_current_user)):
+    """Returns the current map config. `api_key` is exposed in full because the
+    frontend must load the Google Maps JS script with it (public-by-design;
+    referrer restrictions in Google Cloud Console are the actual protection)."""
+    doc = await db.map_config.find_one({"_singleton": "map_config"}, {"_id": 0}) or {}
+    return {
+        "api_key": doc.get("api_key") or "",
+        "api_key_masked": _mask_key(doc.get("api_key")),
+        "has_key": bool(doc.get("api_key")),
+        "center_lat": doc.get("center_lat"),
+        "center_lng": doc.get("center_lng"),
+        "zoom": doc.get("zoom"),
+        "last_tested_ok": doc.get("last_tested_ok"),
+        "last_tested_at": doc.get("last_tested_at"),
+        "last_tested_error": doc.get("last_tested_error"),
+    }
+
+
+@api.patch("/map/config")
+async def patch_map_config(payload: MapConfigIn,
+                           _: dict = Depends(require_roles("owner", "admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    if "api_key" in update:
+        update["api_key"] = update["api_key"].strip()
+    update["updated_at"] = now_iso()
+    await db.map_config.update_one(
+        {"_singleton": "map_config"},
+        {"$set": update, "$setOnInsert": {"_singleton": "map_config"}},
+        upsert=True,
+    )
+    return await get_map_config()
+
+
+@api.post("/map/config/test")
+async def test_map_config(payload: MapConfigIn,
+                          _: dict = Depends(require_roles("owner", "admin"))):
+    """Validates a Google Maps API key against Google's servers by hitting the
+    Geocoding API. Returns success/failure with a helpful message. Note: this
+    only proves the key is valid — the Maps JavaScript API must still be
+    enabled separately (surfaced via `gm_authFailure` in the browser)."""
+    key = (payload.api_key or "").strip()
+    if not key:
+        # If nothing supplied, use the stored key
+        stored = await db.map_config.find_one({"_singleton": "map_config"}, {"_id": 0}) or {}
+        key = stored.get("api_key") or ""
+    if not key:
+        raise HTTPException(400, "Ingresa una API key para probar")
+
+    import httpx
+    result = {"ok": False, "message": "", "status": None, "hint": ""}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as hc:
+            r = await hc.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={"address": "Ciudad de México", "key": key},
+            )
+            data = r.json() if r.content else {}
+    except Exception as e:
+        raise HTTPException(502, f"No se pudo contactar a Google: {e}")
+
+    status_code = data.get("status") or "UNKNOWN"
+    result["status"] = status_code
+    err_msg = data.get("error_message") or ""
+
+    if status_code == "OK":
+        result["ok"] = True
+        result["message"] = "API key válida · Google respondió correctamente."
+        result["hint"] = "Recuerda habilitar 'Maps JavaScript API' + billing en tu proyecto."
+    elif status_code == "REQUEST_DENIED":
+        result["ok"] = False
+        result["message"] = f"Google rechazó la key: {err_msg or 'REQUEST_DENIED'}"
+        if "not authorized" in err_msg.lower() or "not been used" in err_msg.lower():
+            result["hint"] = "Habilita la API en Google Cloud Console → APIs & Services → Library."
+        elif "referer" in err_msg.lower() or "referrer" in err_msg.lower():
+            result["hint"] = "La key tiene restricción de referrer. Añade este dominio."
+        elif "billing" in err_msg.lower():
+            result["hint"] = "El proyecto no tiene billing habilitado."
+        else:
+            result["hint"] = "Revisa restricciones de la key en Google Cloud Console."
+    elif status_code == "OVER_QUERY_LIMIT":
+        result["message"] = "Cuota diaria excedida en el proyecto."
+    elif status_code == "INVALID_REQUEST":
+        result["message"] = "Solicitud inválida — probablemente el formato de la key esté mal."
+    else:
+        result["message"] = f"Estado inesperado: {status_code}. {err_msg}"
+
+    # Persist last test outcome
+    await db.map_config.update_one(
+        {"_singleton": "map_config"},
+        {"$set": {
+            "last_tested_at": now_iso(),
+            "last_tested_ok": bool(result["ok"]),
+            "last_tested_error": result["message"] if not result["ok"] else "",
+        }, "$setOnInsert": {"_singleton": "map_config"}},
+        upsert=True,
+    )
+    return result
+
+
 # ---------- Mount ----------
 app.include_router(api)
 
