@@ -307,15 +307,17 @@ class NapBoxIn(BaseModel):
     name: str
     lat: float
     lng: float
-    port_type: Literal["1x8","1x16"] = "1x16"
+    port_type: Literal["1x2","1x4","1x8","1x16","1x32"] = "1x16"
     capacity: int = 16
+    used_ports: Optional[int] = 0
+    color: Optional[str] = "#ef4444"
     address: Optional[str] = ""
     notes: Optional[str] = ""
 
     @model_validator(mode="after")
     def _derive_capacity(self):
-        # capacity is always derived from port_type so the DB stays consistent
-        self.capacity = 8 if self.port_type == "1x8" else 16
+        cap_map = {"1x2": 2, "1x4": 4, "1x8": 8, "1x16": 16, "1x32": 32}
+        self.capacity = cap_map.get(self.port_type, 16)
         return self
 
 class ClientIn(BaseModel):
@@ -4237,21 +4239,86 @@ async def inv_stats(_: dict = Depends(get_current_user)):
 
 # ---------- Map cables (fiber runs traced on the service map) ----------
 class CableIn(BaseModel):
-    tipo: Literal["troncal", "distribucion"]
+    tipo: Literal["troncal", "distribucion", "drop"]
     path: List[Dict[str, float]]  # [{lat, lng}, ...]
     length_m: float = 0
+    fibers_count: Optional[int] = 12  # 6, 8, 12 or 24 fiber strands (TIA-598)
     notes: Optional[str] = ""
     color: Optional[str] = None
     weight: Optional[int] = None
+    from_node_id: Optional[str] = None  # optional splice/nap/olt at the start
+    to_node_id: Optional[str] = None    # optional splice/nap/olt at the end
 
 
 class CableUpdate(BaseModel):
-    tipo: Optional[Literal["troncal", "distribucion"]] = None
+    tipo: Optional[Literal["troncal", "distribucion", "drop"]] = None
     path: Optional[List[Dict[str, float]]] = None
     length_m: Optional[float] = None
+    fibers_count: Optional[int] = None
     notes: Optional[str] = None
     color: Optional[str] = None
     weight: Optional[int] = None
+    from_node_id: Optional[str] = None
+    to_node_id: Optional[str] = None
+
+
+# ---------- Map generic nodes (splice boxes, poles, reserves, etc.) ----------
+class MapNodeIn(BaseModel):
+    type: Literal["splice", "pole", "reserve", "olt_map", "datacenter", "problem"]
+    name: str
+    lat: float
+    lng: float
+    color: Optional[str] = None
+    notes: Optional[str] = ""
+    # Type-specific fields (loose bag)
+    data: Optional[Dict[str, Any]] = None
+
+
+class MapNodeUpdate(BaseModel):
+    type: Optional[str] = None
+    name: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    color: Optional[str] = None
+    notes: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+
+
+@api.get("/map/nodes")
+async def list_map_nodes(_: dict = Depends(get_current_user)):
+    items = await db.map_nodes.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return items
+
+
+@api.post("/map/nodes")
+async def create_map_node(payload: MapNodeIn, _: dict = Depends(require_roles("owner", "admin"))):
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    await db.map_nodes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.patch("/map/nodes/{nid}")
+async def update_map_node(nid: str, payload: MapNodeUpdate, _: dict = Depends(require_roles("owner", "admin"))):
+    update = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update:
+        raise HTTPException(400, "Nada que actualizar")
+    update["updated_at"] = now_iso()
+    r = await db.map_nodes.update_one({"id": nid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Nodo no encontrado")
+    return await db.map_nodes.find_one({"id": nid}, {"_id": 0})
+
+
+@api.delete("/map/nodes/{nid}")
+async def delete_map_node(nid: str, _: dict = Depends(require_roles("owner", "admin"))):
+    r = await db.map_nodes.delete_one({"id": nid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Nodo no encontrado")
+    return {"ok": True}
 
 
 @api.get("/map/cables")
