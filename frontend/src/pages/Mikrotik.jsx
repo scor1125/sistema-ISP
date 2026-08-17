@@ -39,6 +39,18 @@ set api disabled=no port=8728 address=10.8.0.1/32 comment="API para Sincronizaci
 # 3) Crear usuario para el CRM
 /user group add name=group-api policy=read,write,api,test,sensitive
 /user add name="admin-emergent" password="prueba12345678" group=group-api
+
+# ------------------------------------------------------------
+# OPCIONAL · Habilitar API-SSL (puerto 8729)
+# Sólo si vas a marcar "Usar API-SSL" en el CRM. El CRM ya ignora
+# certificados autofirmados (verify_ssl=False), NO necesitas
+# certificado válido de Let's Encrypt.
+# ------------------------------------------------------------
+/certificate
+add name=mikrotik-api common-name=mikrotik-api key-usage=digital-signature,key-cert-sign,tls-server days-valid=3650
+sign mikrotik-api
+/ip service
+set api-ssl disabled=no port=8729 certificate=mikrotik-api address=10.8.0.1/32
 `;
 
 /* ============================================================
@@ -133,6 +145,7 @@ function MikrotikDialog({ open, onOpenChange, initial, onSaved }) {
     api_user: "admin-emergent",
     api_password: "",
     api_use_ssl: false,
+    api_verify_ssl: false,
     location: "",
     notes: "",
   });
@@ -146,19 +159,21 @@ function MikrotikDialog({ open, onOpenChange, initial, onSaved }) {
         host: initial.host || "",
         api_port: initial.api_port || 8728,
         api_user: initial.api_user || "admin-emergent",
-        api_password: "", // never prefill password
+        api_password: "",
         api_use_ssl: !!initial.api_use_ssl,
+        api_verify_ssl: !!initial.api_verify_ssl,
         location: initial.location || "",
         notes: initial.notes || "",
       });
     } else {
       setF({
         name: "",
-        host: "10.8.0.2", // typical SSTP client tunnel address
+        host: "10.8.0.2",
         api_port: 8728,
         api_user: "admin-emergent",
         api_password: "prueba12345678",
         api_use_ssl: false,
+        api_verify_ssl: false,
         location: "",
         notes: "",
       });
@@ -180,6 +195,7 @@ function MikrotikDialog({ open, onOpenChange, initial, onSaved }) {
         api_port: Number(f.api_port) || 8728,
         api_user: f.api_user.trim(),
         api_use_ssl: !!f.api_use_ssl,
+        api_verify_ssl: !!f.api_verify_ssl,
         api_enabled: true,
         location: f.location.trim(),
         notes: f.notes.trim(),
@@ -258,10 +274,25 @@ function MikrotikDialog({ open, onOpenChange, initial, onSaved }) {
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={f.api_use_ssl}
-              onChange={(e) => setF({ ...f, api_use_ssl: e.target.checked })}
+              onChange={(e) => setF({ ...f, api_use_ssl: e.target.checked, api_port: e.target.checked ? 8729 : 8728 })}
               data-testid="mk-ssl" />
             Usar API-SSL (puerto 8729)
           </label>
+          {f.api_use_ssl && (
+            <label className="flex items-start gap-2 text-sm cursor-pointer ml-6 rounded-md border border-border p-2 bg-muted/30">
+              <input type="checkbox" checked={f.api_verify_ssl}
+                onChange={(e) => setF({ ...f, api_verify_ssl: e.target.checked })}
+                data-testid="mk-verify-ssl" className="mt-0.5" />
+              <div>
+                <div className="font-medium">Verificar certificado SSL</div>
+                <div className="text-[11px] text-muted-foreground">
+                  <b>Desmarcado (recomendado)</b>: acepta el certificado autofirmado del Mikrotik. Ideal para redes internas / túneles.
+                  <br />
+                  <b>Marcado</b>: exige un cert válido (Let's Encrypt, CA pública). Solo si expones API-SSL con dominio real.
+                </div>
+              </div>
+            </label>
+          )}
           <div>
             <Label className="text-xs">Ubicación (opcional)</Label>
             <Input value={f.location}

@@ -485,6 +485,7 @@ class DeviceIn(BaseModel):
     api_password: Optional[str] = ""
     api_port: Optional[int] = 8728
     api_use_ssl: Optional[bool] = False
+    api_verify_ssl: Optional[bool] = False  # False = ignora certs autofirmados
     management_modes: Optional[List[Literal["ppp","queues"]]] = []
     interfaces: Optional[List[str]] = None  # e.g., ["ether1","bridge","pppoe-out1"]
     # --- REST API (Mikrotik RouterOS v7+) ---
@@ -3892,12 +3893,13 @@ async def mikrotik_ros_test(device_id: str,
         raise HTTPException(400, "Configura usuario y contraseña API en la edición del router")
     port = int(d.get("api_port") or 8728)
     use_ssl = bool(d.get("api_use_ssl", False))
+    verify_ssl = bool(d.get("api_verify_ssl", False))
 
     started = now_iso()
     try:
         result = await ros_test_connect(
             host, port=port, user=user, password=pwd,
-            use_ssl=use_ssl, timeout=8,
+            use_ssl=use_ssl, verify_ssl=verify_ssl, timeout=8,
         )
     except MikrotikRosError as e:
         await db.devices.update_one({"id": device_id}, {"$set": {

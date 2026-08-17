@@ -33,7 +33,8 @@ class MikrotikRosError(Exception):
 
 
 def _connect_sync(host: str, port: int, user: str, password: str,
-                  use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+                  use_ssl: bool = False, timeout: int = 8,
+                  verify_ssl: bool = False) -> Dict[str, Any]:
     """Blocking RouterOS API call — run inside `asyncio.to_thread`."""
     conn = None
     try:
@@ -44,8 +45,8 @@ def _connect_sync(host: str, port: int, user: str, password: str,
             port=port,
             use_ssl=use_ssl,
             plaintext_login=True,
-            ssl_verify=False,
-            ssl_verify_hostname=False,
+            ssl_verify=verify_ssl,
+            ssl_verify_hostname=verify_ssl,
         )
         try:
             pool.socket_timeout = timeout
@@ -89,6 +90,16 @@ def _connect_sync(host: str, port: int, user: str, password: str,
             "raw": info,
         }
     except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        # Hint the user about likely causes for SSL handshake errors
+        emsg = str(e).lower()
+        if any(k in emsg for k in ("ssl", "handshake", "unexpected_eof", "wrong_version")):
+            raise MikrotikRosError(
+                f"Handshake SSL falló contra {host}:{port}. "
+                f"Causa típica: la API-SSL NO está habilitada en el router, o el puerto es incorrecto. "
+                f"Solución: en el Mikrotik ejecuta `/ip service enable api-ssl` y crea un certificado "
+                f"(ver 'Cómo vincular un Mikrotik' en la guía). "
+                f"Nota: el CRM ya ignora certificados autofirmados por default (verify_ssl=False)."
+            ) from e
         raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {e}") from e
     except routeros_api.exceptions.RouterOsApiCommunicationError as e:
         # Includes login failures ("invalid user name or password")
@@ -106,10 +117,12 @@ def _connect_sync(host: str, port: int, user: str, password: str,
 
 async def connect_and_test(host: str, *, port: int = DEFAULT_API_PORT,
                             user: str, password: str,
-                            use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+                            use_ssl: bool = False, timeout: int = 8,
+                            verify_ssl: bool = False) -> Dict[str, Any]:
     """Async wrapper — runs the blocking RouterOS API test in a thread."""
     if not host or not user or not password:
         raise MikrotikRosError("Faltan host, usuario o contraseña API")
     return await asyncio.to_thread(
-        _connect_sync, host, int(port), user, password, use_ssl, int(timeout)
+        _connect_sync, host, int(port), user, password,
+        use_ssl, int(timeout), bool(verify_ssl),
     )
