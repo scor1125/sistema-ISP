@@ -374,9 +374,18 @@ export function ScenesTab({ devices, groups, scenes, onReload }) {
     setBusy((b) => ({ ...b, [s.id]: true }));
     try {
       const { data } = await api.post(`/tuya/scenes/${s.id}/run`);
-      if (data.error) toast.error(data.error);
-      else if (data.failed > 0) toast.warning(`${data.ok}/${data.total} ok · ${data.failed} fallaron`);
-      else toast.success(`Escena ejecutada · ${data.ok}/${data.total} dispositivos`);
+      const firstErr = data.results?.find((r) => !r.ok)?.error;
+      const errMsg = data.error || firstErr;
+      if (errMsg && data.ok === 0) {
+        toast.error(`Escena falló · ${errMsg}`, { duration: 15000 });
+      } else if (data.failed > 0) {
+        toast.warning(
+          `${data.ok}/${data.total} ok · ${data.failed} fallaron${firstErr ? ` · ${firstErr}` : ""}`,
+          { duration: 15000 },
+        );
+      } else {
+        toast.success(`Escena ejecutada · ${data.ok}/${data.total} dispositivos`);
+      }
       onReload();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setBusy((b) => ({ ...b, [s.id]: false })); }

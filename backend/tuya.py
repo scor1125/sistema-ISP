@@ -294,72 +294,265 @@ class TuyaClient:
         result = await self._request("GET", f"/v1.0/iot-03/devices/{device_id}/status")
         return result if isinstance(result, list) else []
 
+    # DP-code aliases used to remap unsupported codes to whatever the device
+    # actually exposes via /functions. Ordered from most likely to least likely.
+    _ALIASES: Dict[str, List[str]] = {
+        "switch":         ["power", "switch_1", "switch_led"],
+        "switch_1":       ["switch", "power"],
+        "temp_set":       ["temp", "temperature_set", "temp_value"],
+        "temp":           ["temp_set", "temperature_set", "temp_value"],
+        "mode":           ["work_mode", "mode_enum"],
+        "fan_speed_enum": ["fan", "fan_speed", "wind_speed"],
+        "fan_speed":      ["fan", "fan_speed_enum", "wind_speed"],
+        "fan":            ["fan_speed_enum", "fan_speed"],
+    }
+
+    # Cached supported DP codes per device id (avoid re-fetching /functions on
+    # every command). Populated lazily on first 1109/2008 error.
+    _fn_cache: Dict[str, set] = {}
+
+    # Device metadata cache (category + gateway_id used for IR AC routing).
+    _meta_cache: Dict[str, Dict[str, Any]] = {}
+
+    # ---- IR (infrared_ac) mappings for the scene endpoint ---------------------
+    # Our internal enums → Tuya IR AC scene integer values.
+    _IR_MODE_MAP = {
+        "cold": 0, "cool": 0,
+        "hot": 1, "heat": 1,
+        "auto": 2,
+        "wind": 3, "fan": 3, "wind_dry": 3,
+        "wet": 4, "dry": 4, "dehumidification": 4,
+    }
+    _IR_WIND_MAP = {
+        "auto": 0,
+        "low": 1, "1": 1,
+        "mid": 2, "medium": 2, "2": 2,
+        "high": 3, "3": 3, "4": 3,
+    }
+
+    async def _device_meta(self, device_id: str) -> Dict[str, Any]:
+        """Return (cached) device metadata — used to route IR ACs to the
+        special /v2.0/infrareds/… endpoint instead of the /commands path."""
+        if device_id in self._meta_cache:
+            return self._meta_cache[device_id]
+        try:
+            meta = await self.get_device(device_id) or {}
+        except Exception as e:
+            logger.warning("Tuya get_device meta failed for %s: %s", device_id, e)
+            meta = {}
+        self._meta_cache[device_id] = meta
+        return meta
+
+    def _to_ir_body(self, commands: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Translate generic DP commands into an IR AC scene body.
+
+        Output keys (Tuya IR AC scene endpoint):
+          - power  0=off 1=on   (mandatory)
+          - mode   0=cool 1=heat 2=auto 3=fan 4=dry
+          - temp   16..30 °C
+          - wind   0=auto 1=low 2=med 3=high
+        """
+        body: Dict[str, Any] = {}
+        power_set = False
+        for c in commands:
+            code = c["code"]
+            val = c["value"]
+            if code in ("switch", "switch_1", "power"):
+                body["power"] = 1 if bool(val) else 0
+                power_set = True
+            elif code in ("temp_set", "temp", "temperature_set", "temp_value"):
+                try:
+                    body["temp"] = int(val)
+                except (TypeError, ValueError):
+                    pass
+            elif code in ("mode", "work_mode", "mode_enum"):
+                m = self._IR_MODE_MAP.get(str(val).lower())
+                if m is not None:
+                    body["mode"] = m
+            elif code in ("fan_speed_enum", "fan_speed", "fan", "wind_speed"):
+                w = self._IR_WIND_MAP.get(str(val).lower())
+                if w is not None:
+                    body["wind"] = w
+        # 'power' is mandatory for the scene endpoint. If the batch only carries
+        # setpoint changes (e.g. temp), assume the user wants the A/C ON.
+        if not power_set:
+            body["power"] = 1
+        return body
+
+    async def _send_ir_ac(self, gateway_id: str, remote_id: str,
+                          commands: List[Dict[str, Any]]) -> bool:
+        """Send commands to an A/C via its IR bridge using the scene endpoint."""
+        body = self._to_ir_body(commands)
+        path = (f"/v2.0/infrareds/{gateway_id}/air-conditioners/"
+                f"{remote_id}/scenes/command")
+        logger.info("Tuya IR AC: gateway=%s remote=%s body=%s",
+                    gateway_id, remote_id, body)
+        # Tuya's IR scene endpoint returns success=true with an empty result
+        # on success — treat any non-error response as OK.
+        try:
+            await self._request("POST", path, body=body)
+            return True
+        except TuyaError as e:
+            # 28841101 → the Cloud Project has not subscribed to the "Universal
+            # Infrared" API service. Enrich the message with actionable steps.
+            if e.code == 28841101:
+                raise TuyaError(
+                    e.code,
+                    "El proyecto Tuya Cloud no tiene habilitada la API "
+                    "\"Universal Infrared\" (necesaria para A/Cs por IR). "
+                    "Entra a iot.tuya.com → Cloud → Development → tu Proyecto → "
+                    "Service API → Add → busca \"Industry Basic Service\" o "
+                    "\"IR Control Hub\" y suscríbete (es gratis). Luego intenta "
+                    "de nuevo.",
+                )
+            # If power=1 fails because A/C had no baseline scene, retry with the
+            # PowerOn single-command endpoint as a last resort.
+            if e.code in (2007, 2008) and body.get("power") == 1:
+                single_path = (f"/v2.0/infrareds/{gateway_id}/air-conditioners/"
+                               f"{remote_id}/command")
+                try:
+                    await self._request("POST", single_path,
+                                        body={"code": "PowerOn", "value": "PowerOn"})
+                    return True
+                except TuyaError:
+                    pass
+            if e.code in (2007, 2008) and body.get("power") == 0:
+                single_path = (f"/v2.0/infrareds/{gateway_id}/air-conditioners/"
+                               f"{remote_id}/command")
+                try:
+                    await self._request("POST", single_path,
+                                        body={"code": "PowerOff", "value": "PowerOff"})
+                    return True
+                except TuyaError:
+                    pass
+            raise
+
+    async def _supported_codes(self, device_id: str) -> set:
+        """Return the set of DP codes this device advertises via /functions."""
+        if device_id in self._fn_cache:
+            return self._fn_cache[device_id]
+        try:
+            fns = await self.get_functions(device_id)
+            fn_list = fns.get("functions") if isinstance(fns, dict) else fns
+            codes = {f.get("code") for f in (fn_list or [])
+                     if isinstance(f, dict) and f.get("code")}
+            self._fn_cache[device_id] = codes
+            return codes
+        except Exception as e:
+            logger.warning("Tuya get_functions failed for %s: %s", device_id, e)
+            self._fn_cache[device_id] = set()
+            return set()
+
+    def _remap_batch(self, commands: List[Dict[str, Any]],
+                     supported: set) -> Optional[List[Dict[str, Any]]]:
+        """Rewrite each command's code to one supported by the device.
+
+        Returns the remapped batch, or None if nothing had to change (i.e.
+        the caller should NOT retry — the codes were already correct)."""
+        if not supported:
+            return None
+        remapped = []
+        changed = False
+        for c in commands:
+            code = c["code"]
+            if code in supported:
+                remapped.append(c)
+                continue
+            alt = next((a for a in self._ALIASES.get(code, []) if a in supported), None)
+            if alt:
+                remapped.append({"code": alt, "value": c["value"]})
+                changed = True
+            else:
+                # Nothing matches — keep the original so Tuya returns a
+                # coherent error for the caller.
+                remapped.append(c)
+        return remapped if changed else None
+
     async def send_commands(self, device_id: str, commands: List[Dict[str, Any]]) -> bool:
         """Send one or more commands to a device.
 
         Each command: `{"code": "<dp_code>", "value": <bool|int|str>}`
         Common A/C codes:
           - switch (bool)
-          - temp_set (int, °C)
+          - temp_set / temp (int, °C)
           - mode (str: "cold" | "hot" | "wet" | "wind" | "auto")
-          - fan_speed_enum (str: "low" | "mid" | "high" | "auto")
+          - fan_speed_enum / fan (str: "low" | "mid" | "high" | "auto")
 
-        Uses `/v1.0/devices/{id}/commands` (works for both regular and IR-bridged
-        devices like infrared_ac). Falls back to `/v1.0/iot-03/devices/{id}/commands`
-        if the first path returns 2008. Then retries with common DP-code aliases.
+        Strategy:
+          1. POST /v1.0/devices/{id}/commands  (original codes)
+          2. POST /v1.0/iot-03/devices/{id}/commands  (original codes)
+          3. Fetch the device's real DP codes via /functions and remap the
+             entire batch (e.g. temp_set → temp, fan_speed_enum → fan for
+             infrared_ac categories), then retry on both endpoints.
+
+        Errors that trigger the fallback: 1108/1109 (param invalid) and 2008
+        (command not supported).
         """
+        # 0. Route IR A/Cs (category=infrared_ac) to the dedicated IR endpoint.
+        # The generic /commands path returns 1109 for infrared_ac devices because
+        # they don't accept raw DP codes — Tuya requires
+        # /v2.0/infrareds/{gateway_id}/air-conditioners/{remote_id}/scenes/command.
+        meta = await self._device_meta(device_id)
+        if (meta.get("category") or "").lower() == "infrared_ac":
+            gateway_id = meta.get("gateway_id") or meta.get("owner_id")
+            if gateway_id:
+                return await self._send_ir_ac(gateway_id, device_id, commands)
+            logger.warning("Tuya: infrared_ac %s has no gateway_id — falling "
+                           "back to /commands (will likely fail)", device_id)
+
         body = {"commands": commands}
         path_primary = f"/v1.0/devices/{device_id}/commands"
         path_iot03 = f"/v1.0/iot-03/devices/{device_id}/commands"
+        RETRY_CODES = (1108, 1109, 2008)
 
-        # 1. Try primary endpoint (works for IR AC bridges + most cloud devices)
+        # 1. Try primary endpoint
         try:
             result = await self._request("POST", path_primary, body=body)
-            return bool(result)
+            if result:
+                return True
+            original: Optional[TuyaError] = None
         except TuyaError as e:
-            if e.code != 2008:
+            if e.code not in RETRY_CODES:
                 raise
             original = e
 
-        # 2. Fall back to iot-03 endpoint (some newer devices only accept this)
+        # 2. Try iot-03 endpoint
         try:
             result = await self._request("POST", path_iot03, body=body)
-            logger.info("Tuya: %s recovered via /v1.0/iot-03/devices/*/commands", device_id)
-            return bool(result)
+            if result:
+                logger.info("Tuya: %s recovered via /iot-03 endpoint", device_id)
+                return True
         except TuyaError as e:
-            if e.code != 2008:
+            if e.code not in RETRY_CODES:
                 raise
+            if original is None:
+                original = e
 
-        # 3. Retry with common DP-code aliases
-        aliases = {
-            "switch":         ["power", "switch_1", "switch_led"],
-            "switch_1":       ["switch", "power"],
-            "temp_set":       ["temp", "temperature_set", "temp_value"],
-            "temp":           ["temp_set"],
-            "mode":           ["work_mode", "mode_enum"],
-            "fan_speed_enum": ["fan", "fan_speed", "wind_speed"],
-            "fan_speed":      ["fan", "fan_speed_enum", "wind_speed"],
-            "fan":            ["fan_speed_enum", "fan_speed"],
-        }
-        tried = [c["code"] for c in commands]
-        for alt in aliases.get(commands[0]["code"], []):
-            if alt in tried:
-                continue
-            alt_cmds = [{"code": alt, "value": c["value"]} if c["code"] == commands[0]["code"] else c
-                        for c in commands]
+        # 3. Remap the whole batch based on the device's real DP codes
+        supported = await self._supported_codes(device_id)
+        remapped = self._remap_batch(commands, supported)
+        if remapped:
+            logger.info("Tuya remap %s: %s → %s (supported=%s)",
+                        device_id,
+                        [c["code"] for c in commands],
+                        [c["code"] for c in remapped],
+                        sorted(supported))
             for path in (path_primary, path_iot03):
                 try:
-                    result = await self._request("POST", path, body={"commands": alt_cmds})
-                    logger.info("Tuya recovered on %s with alias %s → %s via %s",
-                                device_id, commands[0]["code"], alt, path)
-                    return bool(result)
-                except TuyaError as e2:
-                    if e2.code != 2008:
+                    result = await self._request("POST", path, body={"commands": remapped})
+                    if result:
+                        logger.info("Tuya: %s recovered via remap on %s", device_id, path)
+                        return True
+                except TuyaError as e:
+                    if e.code not in RETRY_CODES:
                         raise
-            tried.append(alt)
+                    if original is None:
+                        original = e
 
-        # All retries failed — re-raise the original 2008
-        raise original
+        # All retries failed → surface the most informative error
+        if original:
+            raise original
+        return False
 
     async def get_functions(self, device_id: str) -> Dict[str, Any]:
         """List the DP codes / functions this specific device supports."""

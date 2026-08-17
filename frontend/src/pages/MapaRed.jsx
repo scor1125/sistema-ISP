@@ -17,6 +17,7 @@ import {
   MousePointer2, Waypoints, Server, Signal, Zap, Settings2, KeyRound,
   CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight,
   Users as UsersIcon, Package, Anchor, Archive, GitCommitVertical,
+  GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -38,6 +39,38 @@ const TIA598 = [
   { pos: 12, name: "Aguamarina",   hex: "#06b6d4" },
 ];
 function tia598Slice(n) { return TIA598.slice(0, Math.min(n || 12, 12)); }
+
+/* ============================================================
+   Marker icon factory — SVG data-URL with baked-in label
+   (Google Maps symbol-path icons don't render labels reliably,
+    so we render our own circle + letter + name text into an SVG)
+   ============================================================ */
+function makeMarkerIcon(google, opts) {
+  const size = opts.size || 44;
+  const half = size / 2;
+  const letterMap = {
+    nap: "N", splice: "E", pole: "P", reserve: "R",
+    olt_map: "O", client: "C",
+  };
+  const letter = letterMap[opts.type] || "?";
+  const name = String(opts.name || "").slice(0, 22)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  const color = opts.color || "#3b82f6";
+  const totalH = size + (name ? 20 : 0);
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${size + 60}' height='${totalH}'>
+    <g transform='translate(30 0)'>
+      <circle cx='${half}' cy='${half}' r='${half - 3}' fill='${color}' stroke='white' stroke-width='3'/>
+      <text x='${half}' y='${half + 6}' font-family='ui-monospace, Menlo, monospace' font-size='18' fill='white' font-weight='700' text-anchor='middle'>${letter}</text>
+    </g>
+    ${name ? `<text x='${(size + 60) / 2}' y='${size + 15}' font-family='ui-monospace, Menlo, monospace' font-size='11' fill='white' stroke='black' stroke-width='2.5' paint-order='stroke' font-weight='700' text-anchor='middle'>${name}</text>` : ""}
+  </svg>`;
+  return {
+    url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(size + 60, totalH),
+    anchor: new google.maps.Point((size + 60) / 2, half),
+  };
+}
 
 /* ============================================================
    Node & cable style catalog
@@ -470,7 +503,7 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
 }
 
 /* ============================================================
-   Floating TOP TOOLBAR inside the map
+   Floating TOP TOOLBAR inside the map · DRAGGABLE
    ============================================================ */
 function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCancelPolyline }) {
   const tools = [
@@ -483,8 +516,61 @@ function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCan
     { key: "client",  icon: UsersIcon,         label: "Cliente" },
     { key: "cable",   icon: Cable,             label: "Cable" },
   ];
+
+  // Drag state: null while centered; { x, y } once user starts moving
+  const [pos, setPos] = useState(null);
+  const barRef = useRef(null);
+
+  const startDrag = (e) => {
+    e.preventDefault();
+    const bar = barRef.current;
+    const container = bar?.parentElement;
+    if (!bar || !container) return;
+    const barRect = bar.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    // Starting pixel position of the bar within the container
+    const startX = pos?.x ?? (barRect.left - containerRect.left);
+    const startY = pos?.y ?? (barRect.top - containerRect.top);
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+
+    const onMove = (m) => {
+      const nx = startX + (m.clientX - startClientX);
+      const ny = startY + (m.clientY - startClientY);
+      // Clamp so the toolbar stays inside the container
+      const maxX = containerRect.width - barRect.width;
+      const maxY = containerRect.height - barRect.height;
+      setPos({
+        x: Math.max(0, Math.min(maxX, nx)),
+        y: Math.max(0, Math.min(maxY, ny)),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const style = pos ? { left: pos.x, top: pos.y } : { top: 12 };
+  const centerClass = pos ? "" : "left-1/2 -translate-x-1/2";
+
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 rounded-lg bg-slate-900/85 backdrop-blur px-2 py-1.5 border border-slate-700 shadow-xl">
+    <div
+      ref={barRef}
+      className={`absolute z-10 flex items-center gap-1 rounded-lg bg-slate-900/90 backdrop-blur px-2 py-1.5 border border-slate-700 shadow-xl ${centerClass}`}
+      style={style}
+      data-testid="map-toolbar"
+    >
+      <button
+        onMouseDown={startDrag}
+        className="cursor-grab active:cursor-grabbing p-1 mr-1 rounded hover:bg-slate-700/40 text-slate-400 hover:text-slate-200"
+        title="Arrastra para mover la barra"
+        data-testid="toolbar-drag-handle"
+      >
+        <GripVertical className="w-4 h-4" />
+      </button>
       {tools.map((t) => {
         const active = mode === t.key;
         const Icon = t.icon;
@@ -995,11 +1081,12 @@ export default function MapaRed() {
       if (!entry) {
         const marker = new google.maps.Marker({
           position: { lat: nap.lat, lng: nap.lng }, map, draggable: true,
-          label: { text: nap.name || "NAP", className: "gm-label-nap", color: "#fff", fontSize: "10px", fontWeight: "bold" },
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE, scale: 10,
-            fillColor: nap.color || "#ef4444", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2,
-          },
+          icon: makeMarkerIcon(google, {
+            type: "nap",
+            name: nap.name || "NAP",
+            color: nap.color || "#ef4444",
+            size: 44,
+          }),
         });
         const info = new google.maps.InfoWindow({
           content: `<div style="font-family:ui-monospace;font-size:12px;color:#111">
@@ -1034,19 +1121,14 @@ export default function MapaRed() {
       let entry = nodeMarkersRef.current.get(n.id);
       const style = NODE_TYPES[n.type] || { color: "#94a3b8" };
       if (!entry) {
-        const shape = n.type === "olt_map"
-          ? { path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW, scale: 6 }
-          : n.type === "pole"
-          ? { path: "M -6,-8 L 6,-8 L 6,8 L -6,8 z", scale: 0.8 }
-          : n.type === "splice"
-          ? { path: "M 0,-8 L 6,0 L 0,8 L -6,0 z", scale: 1.2 }
-          : n.type === "reserve"
-          ? { path: "M -6,-4 L 6,-4 L 6,4 L -6,4 z", scale: 1.2 }
-          : { path: google.maps.SymbolPath.CIRCLE, scale: 8 };
         const marker = new google.maps.Marker({
           position: { lat: n.lat, lng: n.lng }, map, draggable: true,
-          label: { text: n.name || style.label, color: "#fff", fontSize: "10px", fontWeight: "bold" },
-          icon: { ...shape, fillColor: n.color || style.color, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 },
+          icon: makeMarkerIcon(google, {
+            type: n.type,
+            name: n.name || style.label,
+            color: n.color || style.color,
+            size: n.type === "olt_map" ? 48 : 40,
+          }),
         });
         const d = n.data || {};
         const detail = n.type === "olt_map"
@@ -1093,11 +1175,12 @@ export default function MapaRed() {
       if (!entry) {
         const marker = new google.maps.Marker({
           position: { lat: c.lat, lng: c.lng }, map, draggable: true,
-          label: { text: c.full_name || "Cliente", color: "#fff", fontSize: "9px" },
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE, scale: 6,
-            fillColor: "#22c55e", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 1,
-          },
+          icon: makeMarkerIcon(google, {
+            type: "client",
+            name: c.full_name || "Cliente",
+            color: "#22c55e",
+            size: 36,
+          }),
         });
         const info = new google.maps.InfoWindow({
           content: `<div style="font-family:ui-monospace;font-size:12px;color:#111">

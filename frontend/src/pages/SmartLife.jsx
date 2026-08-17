@@ -16,11 +16,9 @@ import {
   AirVent, RefreshCw, Wifi, WifiOff, Snowflake, Sun, Wind, Zap,
   Settings2, Pencil, Trash2, Plus, Minus, Power, KeyRound, CheckCircle2,
   AlertTriangle, Save, ShieldCheck, ShieldAlert, ExternalLink, Home, Clock,
-  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { GroupsTab, ScenesTab } from "@/components/tuya/TuyaTabs";
-import AssistantTab from "@/components/tuya/AssistantTab";
 import AddDeviceDialog from "@/components/tuya/AddDeviceDialog";
 
 const REGION_LABELS = {
@@ -255,8 +253,9 @@ function DeviceCard({ device, onCommand, onRename, onDelete }) {
       <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border">
         <div>
           <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Estado</div>
-          <div className={`text-lg font-semibold ${state.on ? "text-emerald-500" : "text-muted-foreground"}`}>
-            {state.on ? "ON" : "OFF"}
+          <div className={`text-lg font-semibold ${state.on ? "text-emerald-500" : "text-muted-foreground"}`}
+               data-testid={`tuya-state-${device.id}`}>
+            {state.on ? "Prendido" : "Apagado"}
           </div>
         </div>
         <div>
@@ -482,10 +481,24 @@ export default function SmartLife() {
     })();
   }, [loadConfig, loadDevices, loadGroups, loadScenes]);
 
+  // Real-time polling: refresh device status every 15s while user is on the
+  // "devices" tab so temperature / on-off state stays in sync with the A/C.
+  useEffect(() => {
+    if (!config?.configured || tab !== "devices") return;
+    const iv = setInterval(() => {
+      if (document.visibilityState === "visible") loadDevices();
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [config?.configured, tab, loadDevices]);
+
   const sendCommand = async (deviceId, commands) => {
     try {
       await api.post(`/tuya/devices/${deviceId}/commands`, { commands });
-      toast.success("Comando enviado");
+      // Give a human-friendly toast when the command is a power toggle so
+      // the user sees "Prendido" / "Apagado" instead of the generic label.
+      const sw = commands.find((c) => c.code === "switch");
+      if (sw) toast.success(sw.value ? "Prendido" : "Apagado");
+      else toast.success("Comando enviado");
       // reload after a beat so status refreshes
       setTimeout(loadDevices, 700);
     } catch (e) { toast.error(formatApiError(e)); }
@@ -580,9 +593,6 @@ export default function SmartLife() {
           <TabsTrigger value="scenes" data-testid="tuya-tab-scenes">
             <Clock className="w-4 h-4 mr-1" /> Escenas ({scenes.length})
           </TabsTrigger>
-          <TabsTrigger value="assistant" data-testid="tuya-tab-assistant">
-            <Sparkles className="w-4 h-4 mr-1" /> Asistente
-          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="devices" className="space-y-3">
@@ -623,10 +633,6 @@ export default function SmartLife() {
 
         <TabsContent value="scenes">
           <ScenesTab devices={devices} groups={groups} scenes={scenes} onReload={loadScenes} />
-        </TabsContent>
-
-        <TabsContent value="assistant">
-          <AssistantTab />
         </TabsContent>
       </Tabs>
 

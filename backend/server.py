@@ -485,7 +485,6 @@ class DeviceIn(BaseModel):
     api_password: Optional[str] = ""
     api_port: Optional[int] = 8728
     api_use_ssl: Optional[bool] = False
-    api_verify_ssl: Optional[bool] = False  # False = ignora certs autofirmados
     management_modes: Optional[List[Literal["ppp","queues"]]] = []
     interfaces: Optional[List[str]] = None  # e.g., ["ether1","bridge","pppoe-out1"]
     # --- REST API (Mikrotik RouterOS v7+) ---
@@ -3542,18 +3541,24 @@ async def _fire_scene(scene: dict) -> dict:
     async def _send(did):
         try:
             await cli.send_commands(did, cmds)
-            return True
+            return {"device_id": did, "ok": True}
+        except TuyaError as e:
+            logger.warning("[scene %s] device %s failed: %s", scene["id"], did, e)
+            return {"device_id": did, "ok": False, "error": f"Tuya {e.code}: {e.msg}"}
         except Exception as e:
             logger.warning("[scene %s] device %s failed: %s", scene["id"], did, e)
-            return False
+            return {"device_id": did, "ok": False, "error": f"{type(e).__name__}: {e}"}
 
     results = await asyncio.gather(*[_send(d) for d in ids])
-    ok_count = sum(1 for r in results if r)
+    ok_count = sum(1 for r in results if r["ok"])
+    first_err = next((r.get("error") for r in results if not r["ok"]), None)
     return {
         "scene_id": scene["id"],
         "total": len(results),
         "ok": ok_count,
         "failed": len(results) - ok_count,
+        "results": results,
+        "error": first_err if ok_count == 0 and first_err else None,
     }
 
 
@@ -3893,13 +3898,12 @@ async def mikrotik_ros_test(device_id: str,
         raise HTTPException(400, "Configura usuario y contraseña API en la edición del router")
     port = int(d.get("api_port") or 8728)
     use_ssl = bool(d.get("api_use_ssl", False))
-    verify_ssl = bool(d.get("api_verify_ssl", False))
 
     started = now_iso()
     try:
         result = await ros_test_connect(
             host, port=port, user=user, password=pwd,
-            use_ssl=use_ssl, verify_ssl=verify_ssl, timeout=8,
+            use_ssl=use_ssl, timeout=8,
         )
     except MikrotikRosError as e:
         await db.devices.update_one({"id": device_id}, {"$set": {
