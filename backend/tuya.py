@@ -488,29 +488,17 @@ class TuyaClient:
         Errors that trigger the fallback: 1108/1109 (param invalid) and 2008
         (command not supported).
         """
-        # 0. Route IR A/Cs (category=infrared_ac) to the dedicated IR endpoint.
-        # The generic /commands path returns 1109 for infrared_ac devices because
-        # they don't accept raw DP codes — Tuya requires
-        # /v2.0/infrareds/{gateway_id}/air-conditioners/{remote_id}/scenes/command.
-        meta = await self._device_meta(device_id)
-        if (meta.get("category") or "").lower() == "infrared_ac":
-            gateway_id = meta.get("gateway_id") or meta.get("owner_id")
-            if gateway_id:
-                return await self._send_ir_ac(gateway_id, device_id, commands)
-            logger.warning("Tuya: infrared_ac %s has no gateway_id — falling "
-                           "back to /commands (will likely fail)", device_id)
-
         body = {"commands": commands}
         path_primary = f"/v1.0/devices/{device_id}/commands"
         path_iot03 = f"/v1.0/iot-03/devices/{device_id}/commands"
         RETRY_CODES = (1108, 1109, 2008)
+        original: Optional[TuyaError] = None
 
         # 1. Try primary endpoint
         try:
             result = await self._request("POST", path_primary, body=body)
             if result:
                 return True
-            original: Optional[TuyaError] = None
         except TuyaError as e:
             if e.code not in RETRY_CODES:
                 raise
@@ -548,6 +536,51 @@ class TuyaClient:
                         raise
                     if original is None:
                         original = e
+
+        # 4. For IR-controlled A/Cs, multi-DP batches on /commands fail with
+        # 1109 even when the individual DP codes are correct. Try sending each
+        # command SEPARATELY so that switch/temp succeed even if mode/fan
+        # require the paid IR subscription.
+        meta = await self._device_meta(device_id)
+        is_ir = (meta.get("category") or "").lower() == "infrared_ac"
+        if is_ir and len(commands) > 1:
+            to_send = remapped or self._remap_batch(commands, supported) or commands
+            any_ok = False
+            failed_codes: List[str] = []
+            for cmd in to_send:
+                try:
+                    r = await self._request("POST", path_primary, body={"commands": [cmd]})
+                    if r:
+                        any_ok = True
+                        logger.info("Tuya IR %s: single '%s' OK", device_id, cmd["code"])
+                    else:
+                        failed_codes.append(cmd["code"])
+                except TuyaError as e:
+                    failed_codes.append(cmd["code"])
+                    logger.info("Tuya IR %s: single '%s' failed: %s",
+                                device_id, cmd["code"], e)
+            if any_ok:
+                if failed_codes:
+                    logger.warning("Tuya IR %s: partial success (failed: %s — "
+                                   "these DP codes typically need the paid "
+                                   "'Universal Infrared' API)",
+                                   device_id, failed_codes)
+                return True
+
+        # 5. Last resort — for IR-controlled A/Cs, try the dedicated IR endpoint.
+        # (This requires the "Universal Infrared" API subscription — if it's
+        #  not enabled we keep the original 1109/2008 error as it's more
+        #  actionable than the 28841101 subscription error.)
+        if is_ir:
+            gateway_id = meta.get("gateway_id") or meta.get("owner_id")
+            if gateway_id:
+                try:
+                    return await self._send_ir_ac(gateway_id, device_id, commands)
+                except TuyaError as ir_e:
+                    logger.warning("Tuya IR AC fallback failed for %s: %s",
+                                   device_id, ir_e)
+                    if original is None:
+                        original = ir_e
 
         # All retries failed → surface the most informative error
         if original:
