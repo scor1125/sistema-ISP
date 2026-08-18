@@ -18,7 +18,7 @@ import {
   CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight,
   Users as UsersIcon, Package, Anchor, Archive, GitCommitVertical,
   GripVertical, ChevronsUpDown, ChevronsLeftRight, Maximize2, Minimize2,
-  Layers, Link2, Pencil,
+  Layers, Link2, Pencil, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1485,6 +1485,14 @@ export default function MapaRed() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [editingCableId, setEditingCableId] = useState(null);
   const [editCableProps, setEditCableProps] = useState(null); // cable being metadata-edited
+  // Explicit "add vertex" mode: when set to the id of a cable, the next
+  // click on that cable's polyline inserts a new vertex at the click point
+  // (instead of the default behaviour of opening the InfoWindow).
+  const [addVertexFor, setAddVertexFor] = useState(null);
+  const editingCableIdRef = useRef(null);
+  const addVertexForRef = useRef(null);
+  useEffect(() => { editingCableIdRef.current = editingCableId; }, [editingCableId]);
+  useEffect(() => { addVertexForRef.current = addVertexFor; }, [addVertexFor]);
   const [spliceLinks, setSpliceLinks] = useState([]);
   const [spliceDialogOpen, setSpliceDialogOpen] = useState(false);
 
@@ -1848,6 +1856,20 @@ export default function MapaRed() {
           </div>`,
         });
         polyline.addListener("click", (e) => {
+          // "Add vertex" mode: if the user has explicitly clicked the
+          // "Agregar punto" button, insert a new vertex at the click
+          // position on the exact edge and exit the mode. Google's `e.edge`
+          // provides the 0-based index of the edge that was clicked when
+          // the polyline is editable — we insert at edge+1 so it lands
+          // between the two neighboring vertices.
+          if (addVertexForRef.current === cable.id && e.latLng) {
+            const path = polyline.getPath();
+            const insertAt = typeof e.edge === "number" ? e.edge + 1 : path.getLength();
+            path.insertAt(insertAt, e.latLng);
+            setAddVertexFor(null);
+            toast.success("Punto agregado");
+            return;
+          }
           info.setPosition(e.latLng);
           info.open({ map });
           // Enter edit mode for THIS cable. The useEffect below will flip
@@ -1942,6 +1964,8 @@ export default function MapaRed() {
     for (const [id, entry] of cablePolylinesRef.current.entries()) {
       entry.polyline.setOptions({ editable: id === editingCableId });
     }
+    // Leaving edit mode also cancels any pending "add vertex" gesture.
+    if (!editingCableId) setAddVertexFor(null);
   }, [editingCableId, cables]);
 
   // Confirm cable
@@ -2100,38 +2124,66 @@ export default function MapaRed() {
             containerEl={mapContainerRef.current}
           />
 
-          {/* Floating pill shown while a cable is in edit mode. Clicking it
-              "finalises" the trace (makes it static again). The path itself
-              is auto-persisted every time the user moves a vertex via the
-              existing set_at / insert_at / remove_at listeners on the path. */}
+          {/* Floating pill shown while a cable is in edit mode. The path is
+              auto-persisted on every vertex change (drag / insert / remove)
+              via the set_at / insert_at / remove_at listeners on the path.
+              A visible legend below the pill teaches the user how to add
+              and remove vertices — both natively (drag midpoint, right-click)
+              and via the explicit "Agregar punto" click mode. */}
           {editingCableId && (() => {
             const cable = cables.find((c) => c.id === editingCableId);
             const label = cable?.name || CABLE_STYLES[cable?.tipo]?.label || "Cable";
+            const addingHere = addVertexFor === editingCableId;
             return (
-              <div
-                className="absolute z-40 top-3 right-3 flex items-center gap-2 rounded-full bg-emerald-500/95 backdrop-blur px-3 py-1.5 border border-emerald-300 shadow-2xl"
-                data-testid="cable-edit-pill"
-              >
-                <span className="text-white text-[11px] font-mono uppercase tracking-widest">
-                  Editando · {label}
-                </span>
-                <span className="text-emerald-100/90 text-[10px] hidden md:inline">
-                  arrastra puntos · click-derecho borra · midpoint agrega
-                </span>
-                <button
-                  onClick={() => setEditCableProps(cable)}
-                  className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
-                  data-testid="edit-cable-props"
-                >
-                  <Pencil className="w-3.5 h-3.5" /> Propiedades
-                </button>
-                <button
-                  onClick={() => setEditingCableId(null)}
-                  className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
-                  data-testid="finalize-cable-edit"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Finalizar
-                </button>
+              <div className="absolute z-40 top-3 right-3 flex flex-col items-end gap-1.5"
+                   data-testid="cable-edit-pill">
+                {/* Actions row */}
+                <div className="flex items-center gap-2 rounded-full bg-emerald-500/95 backdrop-blur px-3 py-1.5 border border-emerald-300 shadow-2xl">
+                  <span className="text-white text-[11px] font-mono uppercase tracking-widest">
+                    Editando · {label}
+                  </span>
+                  <button
+                    onClick={() => setAddVertexFor(addingHere ? null : editingCableId)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors ${
+                      addingHere
+                        ? "bg-sky-500 text-white ring-2 ring-sky-200"
+                        : "bg-white/20 hover:bg-white/40 text-white"
+                    }`}
+                    data-testid="add-vertex-mode"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> {addingHere ? "Click en el cable…" : "Agregar punto"}
+                  </button>
+                  <button
+                    onClick={() => setEditCableProps(cable)}
+                    className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                    data-testid="edit-cable-props"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Propiedades
+                  </button>
+                  <button
+                    onClick={() => setEditingCableId(null)}
+                    className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                    data-testid="finalize-cable-edit"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Finalizar
+                  </button>
+                </div>
+
+                {/* Legend row · always visible so the user knows all 3 actions */}
+                <div className="flex flex-col gap-0.5 rounded-md bg-slate-900/90 backdrop-blur px-3 py-1.5 border border-slate-600 text-[10px] text-slate-200 font-mono max-w-[420px]">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-white border border-slate-800 shrink-0" />
+                    <span><b className="text-emerald-300">Cuadrado</b> = punto existente · arrastra para <b>moverlo</b></span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Plus className="w-3 h-3 text-sky-300 shrink-0" />
+                    <span><b className="text-sky-300">Agregar punto</b> · click el botón y luego click en el cable donde lo quieras</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Trash2 className="w-3 h-3 text-red-300 shrink-0" />
+                    <span><b className="text-red-300">Click-derecho</b> sobre un punto para <b>eliminarlo</b> (mínimo 2)</span>
+                  </div>
+                </div>
               </div>
             );
           })()}
