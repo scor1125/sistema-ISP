@@ -18,7 +18,7 @@ import {
   CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight,
   Users as UsersIcon, Package, Anchor, Archive, GitCommitVertical,
   GripVertical, ChevronsUpDown, ChevronsLeftRight, Maximize2, Minimize2,
-  Layers, Link2,
+  Layers, Link2, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -520,7 +520,7 @@ function NewElementDialog({ open, onOpenChange, coords, initialType, onSaved }) 
    Supports: preset tipo, custom name, custom color, custom weight (1-10px)
    and fiber counts including 1-hilo drop cables.
    ============================================================ */
-function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
+function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm, initial }) {
   const [tipo, setTipo] = useState("distribucion");
   const [fibers, setFibers] = useState(12);
   const [name, setName] = useState("");
@@ -531,7 +531,18 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
   const [customized, setCustomized] = useState(false);
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    if (initial) {
+      // Edit mode: hydrate from the existing cable so the user sees the
+      // real current settings (name / tipo / fibers / color / weight).
+      const t = initial.tipo || "distribucion";
+      setTipo(t);
+      setFibers(Number(initial.fibers_count) || 12);
+      setName(initial.name || "");
+      setColor(initial.color || CABLE_STYLES[t]?.color || CABLE_STYLES.distribucion.color);
+      setWeight(Number(initial.weight) || CABLE_STYLES[t]?.weight || 3);
+      setCustomized(true); // avoid the preset auto-overriding color/weight
+    } else {
       setTipo("distribucion");
       setFibers(12);
       setName("");
@@ -539,7 +550,7 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
       setWeight(CABLE_STYLES.distribucion.weight);
       setCustomized(false);
     }
-  }, [open]);
+  }, [open, initial]);
 
   const chooseTipo = (k) => {
     setTipo(k);
@@ -551,16 +562,25 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
   };
 
   const FIBER_OPTIONS = [1, 6, 8, 12, 24];
+  const isEdit = !!initial;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Cable className="w-4 h-4 text-primary" /> Nuevo cable
+            <Cable className="w-4 h-4 text-primary" /> {isEdit ? "Editar cable" : "Nuevo cable"}
           </DialogTitle>
           <DialogDescription>
             Longitud calculada: <span className="font-mono text-primary">{lengthM.toFixed(2)} m</span> ({km(lengthM)} km)
+            {isEdit && (
+              <>
+                <br />
+                <span className="text-[10px] text-emerald-400">
+                  Consejo: cierra este diálogo y en el mapa arrastra los vértices para mover puntos, arrastra los midpoints para agregar, o click-derecho sobre un vértice para eliminarlo.
+                </span>
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -662,12 +682,12 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Descartar</Button>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>{isEdit ? "Cancelar" : "Descartar"}</Button>
           <Button
             onClick={() => onConfirm({ tipo, fibers, name: name.trim(), color, weight })}
             data-testid="cable-save"
           >
-            Guardar cable
+            {isEdit ? "Guardar cambios" : "Guardar cable"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1464,6 +1484,7 @@ export default function MapaRed() {
   const [drawingVertexCount, setDrawingVertexCount] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [editingCableId, setEditingCableId] = useState(null);
+  const [editCableProps, setEditCableProps] = useState(null); // cable being metadata-edited
   const [spliceLinks, setSpliceLinks] = useState([]);
   const [spliceDialogOpen, setSpliceDialogOpen] = useState(false);
 
@@ -1833,6 +1854,19 @@ export default function MapaRed() {
           // `editable` to true on its polyline and false on every other one.
           setEditingCableId(cable.id);
         });
+        // Right-click on a vertex → remove it (only fires while polyline
+        // is editable and the click landed on an existing vertex).
+        polyline.addListener("rightclick", (e) => {
+          if (e.vertex == null) return;
+          const p = polyline.getPath();
+          if (p.getLength() <= 2) {
+            toast.warning("El cable debe tener al menos 2 vértices");
+            return;
+          }
+          p.removeAt(e.vertex);
+          // The remove_at listener attached below auto-persists the new
+          // path via PATCH /api/map/cables/{id}.
+        });
         const path = polyline.getPath();
         const onEdit = async () => {
           const newPath = [];
@@ -1928,6 +1962,26 @@ export default function MapaRed() {
       setPendingCable(null);
       const label = name || style.label;
       toast.success(`Cable "${label}" · ${fibers} ${fibers === 1 ? "hilo" : "hilos"} · ${pendingCable.length.toFixed(2)}m guardado`);
+      reload();
+    } catch (e) { toast.error(formatApiError(e)); }
+  };
+
+  // Save metadata edits (name / tipo / fibers / color / weight) on an
+  // existing cable. The path itself is auto-saved on every vertex drag
+  // via the set_at/insert_at/remove_at listeners in the sync effect.
+  const saveEditedCable = async ({ tipo, fibers, name, color, weight }) => {
+    if (!editCableProps) return;
+    const style = CABLE_STYLES[tipo] || CABLE_STYLES.distribucion;
+    try {
+      await api.patch(`/map/cables/${editCableProps.id}`, {
+        tipo,
+        name: name || "",
+        fibers_count: Number(fibers),
+        color: color || style.color,
+        weight: Number(weight) || style.weight,
+      });
+      toast.success(`Cable "${name || style.label}" actualizado`);
+      setEditCableProps(null);
       reload();
     } catch (e) { toast.error(formatApiError(e)); }
   };
@@ -2065,6 +2119,13 @@ export default function MapaRed() {
                   arrastra puntos · click-derecho borra · midpoint agrega
                 </span>
                 <button
+                  onClick={() => setEditCableProps(cable)}
+                  className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                  data-testid="edit-cable-props"
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Propiedades
+                </button>
+                <button
                   onClick={() => setEditingCableId(null)}
                   className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
                   data-testid="finalize-cable-edit"
@@ -2104,6 +2165,13 @@ export default function MapaRed() {
         onOpenChange={(v) => { if (!v) discardCable(); }}
         lengthM={pendingCable?.length || 0}
         onConfirm={confirmCable}
+      />
+      <CableTypeDialog
+        open={!!editCableProps}
+        onOpenChange={(v) => { if (!v) setEditCableProps(null); }}
+        lengthM={Number(editCableProps?.length_m) || 0}
+        initial={editCableProps}
+        onConfirm={saveEditedCable}
       />
       <JsonExportDialog
         open={exportOpen}
