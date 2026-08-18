@@ -592,6 +592,53 @@ function MapToolbar({ mode, setMode, drawingVertexCount,
     window.addEventListener("mouseup", onUp);
   };
 
+  // Safety net: on mount, on orientation change, on window resize and on
+  // fullscreen enter/exit, verify that the saved `pos` still lands inside
+  // the current container bounds. If it doesn't (stale localStorage from a
+  // previous session, orientation swap that changed toolbar dimensions, or
+  // the user shrank their window), reset to the default centered-top layout
+  // so the toolbar is always visible.
+  useEffect(() => {
+    if (!pos) return;
+    const validate = () => {
+      const bar = barRef.current;
+      const container = bar?.parentElement;
+      if (!bar || !container) return;
+      const barRect = bar.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const maxX = Math.max(0, containerRect.width - barRect.width);
+      const maxY = Math.max(0, containerRect.height - barRect.height);
+      // Fully off-screen (or wider than the container) → hard reset
+      if (pos.x < -20 || pos.y < -20 ||
+          pos.x > containerRect.width - 40 ||
+          pos.y > containerRect.height - 20 ||
+          barRect.width > containerRect.width) {
+        setPos(null);
+        try { localStorage.removeItem(TOOLBAR_POS_KEY); } catch {}
+        return;
+      }
+      // Partially off-screen → silent clamp
+      if (pos.x > maxX || pos.y > maxY) {
+        setPos({ x: Math.min(pos.x, maxX), y: Math.min(pos.y, maxY) });
+      }
+    };
+    // Defer one frame so the newly-rendered toolbar has real dimensions
+    const raf = requestAnimationFrame(validate);
+    window.addEventListener("resize", validate);
+    document.addEventListener("fullscreenchange", validate);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", validate);
+      document.removeEventListener("fullscreenchange", validate);
+    };
+  }, [pos, orientation]);
+
+  const resetPos = () => {
+    setPos(null);
+    try { localStorage.removeItem(TOOLBAR_POS_KEY); } catch {}
+    toast.success("Barra restaurada al centro superior");
+  };
+
   const toggleOrient = () => {
     setOrientation((o) => (o === "horizontal" ? "vertical" : "horizontal"));
   };
@@ -614,16 +661,17 @@ function MapToolbar({ mode, setMode, drawingVertexCount,
   return (
     <div
       ref={barRef}
-      className={`absolute z-10 flex ${layoutClass} gap-1 rounded-lg bg-slate-900/90 backdrop-blur px-2 py-1.5 border border-slate-700 shadow-xl ${centerClass}`}
+      className={`absolute z-30 flex ${layoutClass} gap-1 rounded-lg bg-slate-900/95 backdrop-blur px-2 py-1.5 border border-emerald-500/40 shadow-2xl ${centerClass}`}
       style={style}
       data-testid="map-toolbar"
       data-orientation={orientation}
     >
-      {/* Drag handle */}
+      {/* Drag handle · double-click to restore position */}
       <button
         onMouseDown={startDrag}
+        onDoubleClick={resetPos}
         className={`cursor-grab active:cursor-grabbing p-1 rounded hover:bg-slate-700/40 text-slate-400 hover:text-slate-200 ${isVertical ? "mb-1 self-center" : "mr-1"}`}
-        title="Arrastra para mover la barra"
+        title="Arrastra para mover · doble-click para restaurar"
         data-testid="toolbar-drag-handle"
       >
         <GripVertical className={`w-4 h-4 ${isVertical ? "" : "rotate-0"}`} />
