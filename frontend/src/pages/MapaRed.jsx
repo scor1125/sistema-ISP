@@ -435,14 +435,44 @@ function NewElementDialog({ open, onOpenChange, coords, initialType, onSaved }) 
 
 /* ============================================================
    Cable-type + fibers picker (shown after finishing a polyline)
+   Supports: preset tipo, custom name, custom color, custom weight (1-10px)
+   and fiber counts including 1-hilo drop cables.
    ============================================================ */
 function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
   const [tipo, setTipo] = useState("distribucion");
   const [fibers, setFibers] = useState(12);
-  useEffect(() => { if (open) { setTipo("distribucion"); setFibers(12); } }, [open]);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(CABLE_STYLES.distribucion.color);
+  const [weight, setWeight] = useState(CABLE_STYLES.distribucion.weight);
+  // Track whether the user has manually tweaked color/weight so we don't
+  // clobber their choice when they switch the "tipo" preset.
+  const [customized, setCustomized] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setTipo("distribucion");
+      setFibers(12);
+      setName("");
+      setColor(CABLE_STYLES.distribucion.color);
+      setWeight(CABLE_STYLES.distribucion.weight);
+      setCustomized(false);
+    }
+  }, [open]);
+
+  const chooseTipo = (k) => {
+    setTipo(k);
+    // If the user hasn't customized color/weight, snap to the preset defaults.
+    if (!customized) {
+      setColor(CABLE_STYLES[k].color);
+      setWeight(CABLE_STYLES[k].weight);
+    }
+  };
+
+  const FIBER_OPTIONS = [1, 6, 8, 12, 24];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Cable className="w-4 h-4 text-primary" /> Nuevo cable
@@ -453,13 +483,26 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
         </DialogHeader>
 
         <div className="space-y-3">
+          {/* Name */}
           <div>
-            <Label className="text-xs mb-1 block">Tipo de tendido</Label>
+            <Label className="text-xs mb-1 block">Nombre del cable</Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ej: Troncal Norte, Drop Cliente #12"
+              data-testid="cable-name"
+              autoFocus
+            />
+          </div>
+
+          {/* Tipo de tendido */}
+          <div>
+            <Label className="text-xs mb-1 block">Tipo de tendido (preset)</Label>
             <div className="grid grid-cols-3 gap-2">
               {Object.entries(CABLE_STYLES).map(([k, s]) => (
                 <button
                   key={k}
-                  onClick={() => setTipo(k)}
+                  onClick={() => chooseTipo(k)}
                   data-testid={`cable-tipo-${k}`}
                   className={`rounded-md border p-3 text-left transition-colors ${
                     tipo === k ? "border-primary bg-primary/10" : "border-border hover:border-primary/40"
@@ -473,10 +516,48 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
             </div>
           </div>
 
+          {/* Color + grosor custom */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs mb-1 block">Color</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="color"
+                  value={color}
+                  onChange={(e) => { setColor(e.target.value); setCustomized(true); }}
+                  className="w-14 h-9 p-0.5 cursor-pointer"
+                  data-testid="cable-color"
+                />
+                <span className="text-xs font-mono text-muted-foreground">{color.toUpperCase()}</span>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs mb-1 block">Grosor (1-10 px)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="range"
+                  min="1" max="10" step="1"
+                  value={weight}
+                  onChange={(e) => { setWeight(Number(e.target.value)); setCustomized(true); }}
+                  className="flex-1"
+                  data-testid="cable-weight"
+                />
+                <span className="text-xs font-mono text-primary w-8 text-right">{weight}px</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Live preview line */}
+          <div className="rounded-md border border-border/60 bg-black/20 p-2">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Vista previa</div>
+            <div className="w-full rounded-full" style={{ background: color, height: `${weight}px` }} />
+          </div>
+
+          {/* Fibers */}
           <div>
             <Label className="text-xs mb-1 block">Cantidad de hilos (TIA-598)</Label>
-            <div className="grid grid-cols-4 gap-2">
-              {[6, 8, 12, 24].map((n) => (
+            <div className="grid grid-cols-5 gap-2">
+              {FIBER_OPTIONS.map((n) => (
                 <button
                   key={n}
                   onClick={() => setFibers(n)}
@@ -485,13 +566,13 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
                     fibers === n ? "border-primary bg-primary/10" : "border-border hover:border-primary/40"
                   }`}
                 >
-                  {n} hilos
+                  {n === 1 ? "1 hilo" : `${n} hilos`}
                 </button>
               ))}
             </div>
             <div className="mt-2 rounded-md border border-border p-2 bg-muted/30">
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">
-                Código de color · TIA-598 ({fibers} hilos)
+                Código de color · TIA-598 ({fibers} {fibers === 1 ? "hilo" : "hilos"})
               </div>
               <Tia598Legend count={fibers} />
             </div>
@@ -500,7 +581,10 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Descartar</Button>
-          <Button onClick={() => onConfirm(tipo, fibers)} data-testid="cable-save">
+          <Button
+            onClick={() => onConfirm({ tipo, fibers, name: name.trim(), color, weight })}
+            data-testid="cable-save"
+          >
             Guardar cable
           </Button>
         </DialogFooter>
@@ -870,9 +954,11 @@ function Sidebar({
             <ul className="space-y-1">
               {cables.map((c) => (
                 <li key={c.id} className="flex items-center gap-2 text-xs font-mono bg-black/20 rounded p-1.5">
-                  <span className="w-2 h-2 rounded-full" style={{ background: CABLE_STYLES[c.tipo]?.color }} />
-                  <span className="flex-1 truncate">
-                    {CABLE_STYLES[c.tipo]?.label} · {c.fibers_count || 12}h
+                  <span className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: c.color || CABLE_STYLES[c.tipo]?.color }} />
+                  <span className="flex-1 truncate" title={c.name || CABLE_STYLES[c.tipo]?.label}>
+                    {c.name ? c.name : CABLE_STYLES[c.tipo]?.label}
+                    <span className="text-slate-400"> · {c.fibers_count || 12}h</span>
                   </span>
                   <span className="text-emerald-300 text-[10px]">{km(c.length_m)}km</span>
                   <button onClick={() => onDeleteCable(c.id)} className="p-0.5 rounded hover:bg-red-500/20"
@@ -1380,16 +1466,22 @@ export default function MapaRed() {
     for (const cable of cables) {
       seen.add(cable.id);
       const style = CABLE_STYLES[cable.tipo] || CABLE_STYLES.distribucion;
+      // Prefer per-cable custom color/weight (set by the user), fall back to
+      // the tipo preset defaults so legacy cables still render.
+      const strokeColor = cable.color || style.color;
+      const strokeWeight = Number(cable.weight) || style.weight;
       let entry = cablePolylinesRef.current.get(cable.id);
 
       if (!entry) {
         const polyline = new google.maps.Polyline({
           path: cable.path.map((p) => ({ lat: p.lat, lng: p.lng })),
-          strokeColor: style.color, strokeWeight: style.weight, editable: true, map,
+          strokeColor, strokeWeight, editable: true, map,
         });
+        const displayName = cable.name || style.label;
         const info = new google.maps.InfoWindow({
           content: `<div style="font-family:ui-monospace;font-size:12px;color:#111">
-            <div style="font-weight:700">${style.label}</div>
+            <div style="font-weight:700">${displayName}</div>
+            <div>Tipo: <b>${style.label}</b></div>
             <div>Longitud: <b>${Number(cable.length_m || 0).toFixed(2)} m</b> · ${km(cable.length_m)} km</div>
             <div>Hilos: <b>${cable.fibers_count || 12}</b> (TIA-598)</div>
           </div>`,
@@ -1411,7 +1503,7 @@ export default function MapaRed() {
         entry = { polyline };
         cablePolylinesRef.current.set(cable.id, entry);
       } else {
-        entry.polyline.setOptions({ strokeColor: style.color, strokeWeight: style.weight });
+        entry.polyline.setOptions({ strokeColor, strokeWeight });
       }
 
       // Rebuild 1km markers along this cable
@@ -1441,7 +1533,7 @@ export default function MapaRed() {
             label: { text: `${k}K`, color: "#fff", fontSize: "9px", fontWeight: "bold" },
             icon: {
               path: google.maps.SymbolPath.CIRCLE, scale: 8,
-              fillColor: style.color, fillOpacity: 0.9, strokeColor: "#fff", strokeWeight: 1,
+              fillColor: strokeColor, fillOpacity: 0.9, strokeColor: "#fff", strokeWeight: 1,
             },
             zIndex: 999,
           });
@@ -1464,17 +1556,23 @@ export default function MapaRed() {
   }, [cables, ready]);
 
   // Confirm cable
-  const confirmCable = async (tipo, fibers) => {
+  const confirmCable = async ({ tipo, fibers, name, color, weight }) => {
     if (!pendingCable) return;
     const style = CABLE_STYLES[tipo];
     try {
       await api.post("/map/cables", {
-        tipo, path: pendingCable.path, length_m: pendingCable.length,
-        fibers_count: Number(fibers), color: style.color, weight: style.weight,
+        tipo,
+        name: name || "",
+        path: pendingCable.path,
+        length_m: pendingCable.length,
+        fibers_count: Number(fibers),
+        color: color || style.color,
+        weight: Number(weight) || style.weight,
       });
       pendingCable.overlay.setMap(null);
       setPendingCable(null);
-      toast.success(`Cable ${style.label} · ${fibers} hilos · ${pendingCable.length.toFixed(2)}m guardado`);
+      const label = name || style.label;
+      toast.success(`Cable "${label}" · ${fibers} ${fibers === 1 ? "hilo" : "hilos"} · ${pendingCable.length.toFixed(2)}m guardado`);
       reload();
     } catch (e) { toast.error(formatApiError(e)); }
   };

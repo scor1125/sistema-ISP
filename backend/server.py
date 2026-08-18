@@ -4248,7 +4248,8 @@ class CableIn(BaseModel):
     tipo: Literal["troncal", "distribucion", "drop"]
     path: List[Dict[str, float]]  # [{lat, lng}, ...]
     length_m: float = 0
-    fibers_count: Optional[int] = 12  # 6, 8, 12 or 24 fiber strands (TIA-598)
+    fibers_count: Optional[int] = 12  # 1, 6, 8, 12 or 24 fiber strands (TIA-598)
+    name: Optional[str] = ""          # user-provided display name
     notes: Optional[str] = ""
     color: Optional[str] = None
     weight: Optional[int] = None
@@ -4261,6 +4262,7 @@ class CableUpdate(BaseModel):
     path: Optional[List[Dict[str, float]]] = None
     length_m: Optional[float] = None
     fibers_count: Optional[int] = None
+    name: Optional[str] = None
     notes: Optional[str] = None
     color: Optional[str] = None
     weight: Optional[int] = None
