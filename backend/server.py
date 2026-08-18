@@ -4368,6 +4368,67 @@ async def delete_cable(cid: str, _: dict = Depends(require_roles("owner", "admin
     return {"ok": True}
 
 
+# ---------- Virtual splice links (fiber-level connections) ----------
+class SpliceEndpoint(BaseModel):
+    """One terminal of a virtual splice: an ODF/NAP port (node id + port
+    position) or a specific fiber inside a cable (cable id + fiber position,
+    1-based)."""
+    kind: Literal["odf_port", "nap_port", "cable_fiber"]
+    ref_id: str
+    position: int
+    label: Optional[str] = None
+
+
+class SpliceLinkIn(BaseModel):
+    endpoint_a: SpliceEndpoint
+    endpoint_b: SpliceEndpoint
+    notes: Optional[str] = ""
+    color: Optional[str] = "#22c55e"
+
+
+@api.get("/map/splice-links")
+async def list_splice_links(_: dict = Depends(get_current_user)):
+    items = await db.splice_links.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return items
+
+
+@api.post("/map/splice-links")
+async def create_splice_link(payload: SpliceLinkIn,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    doc = payload.dict()
+    for ep_key in ("endpoint_a", "endpoint_b"):
+        ep = doc[ep_key]
+        if ep["kind"] in ("odf_port", "nap_port"):
+            node = await db.map_nodes.find_one({"id": ep["ref_id"]}, {"_id": 0})
+            if not node:
+                raise HTTPException(400, f"{ep_key}: nodo {ep['ref_id']} no existe")
+            cap = int((node.get("data") or {}).get("capacity") or 0) or 12
+            if ep["position"] < 1 or ep["position"] > cap:
+                raise HTTPException(400, f"{ep_key}: puerto #{ep['position']} fuera de rango (1-{cap})")
+        elif ep["kind"] == "cable_fiber":
+            cable = await db.map_cables.find_one({"id": ep["ref_id"]}, {"_id": 0})
+            if not cable:
+                raise HTTPException(400, f"{ep_key}: cable {ep['ref_id']} no existe")
+            fc = int(cable.get("fibers_count") or 12)
+            if ep["position"] < 1 or ep["position"] > fc:
+                raise HTTPException(400, f"{ep_key}: hilo #{ep['position']} excede los {fc} hilos del cable")
+    doc["id"] = new_id()
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    await db.splice_links.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/map/splice-links/{sid}")
+async def delete_splice_link(sid: str,
+                             _: dict = Depends(require_roles("owner", "admin"))):
+    r = await db.splice_links.delete_one({"id": sid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Enlace no encontrado")
+    return {"ok": True}
+
+
 # ---------- Map config (Google Maps API key configurable desde UI) ----------
 class MapConfigIn(BaseModel):
     api_key: Optional[str] = None

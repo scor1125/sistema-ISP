@@ -18,7 +18,7 @@ import {
   CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight,
   Users as UsersIcon, Package, Anchor, Archive, GitCommitVertical,
   GripVertical, ChevronsUpDown, ChevronsLeftRight, Maximize2, Minimize2,
-  Layers,
+  Layers, Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -919,6 +919,7 @@ function MapToolbar({ mode, setMode, drawingVertexCount,
 function Sidebar({
   collapsed, onToggle, kmByTipo, totals, nodesCount,
   onExport, onOpenConfig, onDeleteCable, onDeleteNode, cables, nodes,
+  spliceLinks, onOpenSpliceDialog, onDeleteSpliceLink,
 }) {
   if (collapsed) {
     return (
@@ -1076,6 +1077,49 @@ function Sidebar({
         )}
       </div>
 
+      {/* Virtual splice links · fiber-level connections between ODF ports & cable fibers */}
+      <div className="p-3 border-t border-slate-600 space-y-1.5">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-mono flex items-center gap-1">
+            <Link2 className="w-3 h-3" /> Empalmes virtuales ({(spliceLinks || []).length})
+          </div>
+          <button
+            onClick={onOpenSpliceDialog}
+            className="text-[10px] text-emerald-400 hover:text-emerald-300 font-mono uppercase"
+            data-testid="new-splice-link"
+          >
+            + Nuevo
+          </button>
+        </div>
+        {(spliceLinks || []).length === 0 ? (
+          <div className="text-[10px] text-slate-500 italic">Aún sin empalmes</div>
+        ) : (
+          <ul className="space-y-1 max-h-40 overflow-y-auto pr-1">
+            {spliceLinks.map((s) => (
+              <li key={s.id} className="rounded bg-black/20 p-1.5 text-[10px] font-mono">
+                <div className="flex items-start gap-1">
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-cyan-300" title={`A: ${s.endpoint_a.label}`}>
+                      A · #{s.endpoint_a.position} {s.endpoint_a.label || "?"}
+                    </div>
+                    <div className="truncate text-fuchsia-300" title={`B: ${s.endpoint_b.label}`}>
+                      B · #{s.endpoint_b.position} {s.endpoint_b.label || "?"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onDeleteSpliceLink(s.id)}
+                    className="p-0.5 rounded hover:bg-red-500/20"
+                    data-testid={`del-splice-${s.id}`}
+                  >
+                    <Trash2 className="w-3 h-3 text-red-400" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {/* Export */}
       <div className="p-3 border-t border-slate-600 bg-black/30">
         <Button
@@ -1208,6 +1252,195 @@ function MapConfigDialog({ open, onOpenChange, current, onSaved }) {
 /* ============================================================
    PAGE ROOT
    ============================================================ */
+/* ============================================================
+   Virtual splice-link dialog · connects an ODF port to a specific
+   fiber inside a cable (or two ODFs / two cables together).
+   Uses the port names configured on the ODF so techs can trace
+   the fiber route by human-readable labels.
+   ============================================================ */
+function endpointOptionsFor(ep, { odfs, cables }) {
+  if (!ep.ref_id) return [];
+  if (ep.kind === "odf_port") {
+    const odf = odfs.find((o) => o.id === ep.ref_id);
+    if (!odf) return [];
+    const cap = Number(odf.data?.capacity) || 12;
+    const ports = odf.data?.ports || [];
+    return Array.from({ length: cap }, (_, i) => {
+      const p = ports.find((x) => x.position === i + 1);
+      return { position: i + 1, label: p?.name || `Puerto ${i + 1}` };
+    });
+  }
+  if (ep.kind === "cable_fiber") {
+    const cable = cables.find((c) => c.id === ep.ref_id);
+    if (!cable) return [];
+    const n = Math.min(Number(cable.fibers_count) || 12, 12);
+    return Array.from({ length: n }, (_, i) => {
+      const tia = TIA598[i] || { name: `Hilo ${i + 1}`, hex: "#94a3b8" };
+      return { position: i + 1, label: tia.name, hex: tia.hex };
+    });
+  }
+  return [];
+}
+
+function SpliceLinkDialog({ open, onOpenChange, odfs, cables, onSaved }) {
+  const [epA, setEpA] = useState({ kind: "odf_port", ref_id: "", position: 1 });
+  const [epB, setEpB] = useState({ kind: "cable_fiber", ref_id: "", position: 1 });
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setEpA({ kind: "odf_port", ref_id: odfs[0]?.id || "", position: 1 });
+    setEpB({ kind: "cable_fiber", ref_id: cables[0]?.id || "", position: 1 });
+    setNotes("");
+  }, [open, odfs, cables]);
+
+  const optsA = endpointOptionsFor(epA, { odfs, cables });
+  const optsB = endpointOptionsFor(epB, { odfs, cables });
+
+  const submit = async () => {
+    if (!epA.ref_id || !epB.ref_id) return toast.error("Selecciona ambos extremos");
+    if (epA.kind === epB.kind && epA.ref_id === epB.ref_id && Number(epA.position) === Number(epB.position)) {
+      return toast.error("No puedes empalmar un puerto/hilo consigo mismo");
+    }
+    const labelA = optsA.find((o) => o.position === Number(epA.position))?.label;
+    const labelB = optsB.find((o) => o.position === Number(epB.position))?.label;
+    // Prepend the parent element's name for readability in the list.
+    const parentA = epA.kind === "odf_port"
+      ? odfs.find((o) => o.id === epA.ref_id)?.name
+      : cables.find((c) => c.id === epA.ref_id)?.name;
+    const parentB = epB.kind === "odf_port"
+      ? odfs.find((o) => o.id === epB.ref_id)?.name
+      : cables.find((c) => c.id === epB.ref_id)?.name;
+    try {
+      await api.post("/map/splice-links", {
+        endpoint_a: {
+          ...epA, position: Number(epA.position),
+          label: `${parentA || "?"} · ${labelA || `#${epA.position}`}`,
+        },
+        endpoint_b: {
+          ...epB, position: Number(epB.position),
+          label: `${parentB || "?"} · ${labelB || `#${epB.position}`}`,
+        },
+        notes,
+      });
+      toast.success("Empalme virtual guardado");
+      onOpenChange(false);
+      onSaved?.();
+    } catch (e) { toast.error(formatApiError(e)); }
+  };
+
+  const renderPicker = (title, ep, setEp, opts, prefix) => (
+    <div className="rounded-md border border-border p-3 space-y-2 bg-black/10">
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">{title}</div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label className="text-[10px]">Tipo</Label>
+          <Select value={ep.kind}
+                  onValueChange={(v) => setEp({ kind: v, ref_id: "", position: 1 })}>
+            <SelectTrigger data-testid={`${prefix}-kind`}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="odf_port">Puerto ODF</SelectItem>
+              <SelectItem value="cable_fiber">Hilo de cable</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label className="text-[10px]">{ep.kind === "odf_port" ? "ODF" : "Cable"}</Label>
+          <Select value={ep.ref_id}
+                  onValueChange={(v) => setEp({ ...ep, ref_id: v, position: 1 })}>
+            <SelectTrigger data-testid={`${prefix}-ref`}><SelectValue placeholder="Seleccionar…" /></SelectTrigger>
+            <SelectContent>
+              {ep.kind === "odf_port"
+                ? odfs.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name} · {o.data?.capacity || 12}p
+                    </SelectItem>
+                  ))
+                : cables.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name || CABLE_STYLES[c.tipo]?.label || "Cable"} · {c.fibers_count || 12}h
+                    </SelectItem>
+                  ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div>
+        <Label className="text-[10px]">
+          {ep.kind === "odf_port" ? "Puerto (nombre configurado en el ODF)" : "Hilo (posición TIA-598)"}
+        </Label>
+        <Select value={String(ep.position)}
+                onValueChange={(v) => setEp({ ...ep, position: Number(v) })}>
+          <SelectTrigger data-testid={`${prefix}-pos`}><SelectValue /></SelectTrigger>
+          <SelectContent className="max-h-60">
+            {opts.map((o) => (
+              <SelectItem key={o.position} value={String(o.position)}>
+                <span className="inline-flex items-center gap-2">
+                  {o.hex && (
+                    <span className="w-2.5 h-2.5 rounded-full border border-white/40 shrink-0"
+                          style={{ background: o.hex }} />
+                  )}
+                  <span className="font-mono">#{o.position}</span>
+                  <span>· {o.label}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+
+  const disabled = (odfs.length === 0 && cables.length < 2) || (odfs.length + cables.length === 0);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Link2 className="w-4 h-4 text-primary" /> Nuevo empalme virtual
+          </DialogTitle>
+          <DialogDescription>
+            Conecta un puerto de ODF con un hilo específico de un cable (o dos puertos, o dos hilos).
+            Los nombres de los puertos se toman de la configuración del ODF; los hilos usan el código TIA-598.
+          </DialogDescription>
+        </DialogHeader>
+
+        {disabled ? (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-300">
+            Necesitas al menos un ODF <b>y</b> un cable (o dos cables / dos ODFs) para poder empalmar.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {renderPicker("Origen (A)", epA, setEpA, optsA, "splice-a")}
+            <div className="text-center text-primary text-xs font-mono">↕ empalma con ↕</div>
+            {renderPicker("Destino (B)", epB, setEpB, optsB, "splice-b")}
+
+            <div>
+              <Label className="text-xs">Notas (opcional)</Label>
+              <textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="w-full rounded-md border border-border bg-transparent px-3 py-1.5 text-sm"
+                placeholder="Ej: hilo #3 verde va a la sucursal norte"
+                data-testid="splice-notes"
+              />
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={submit} disabled={disabled} data-testid="splice-save">
+            <Link2 className="w-4 h-4 mr-1" /> Guardar empalme
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function MapaRed() {
   const containerRef = useRef(null);
   const mapContainerRef = useRef(null); // outer wrapper — target for fullscreen
@@ -1230,6 +1463,9 @@ export default function MapaRed() {
   const [mode, setModeState] = useState("pan");
   const [drawingVertexCount, setDrawingVertexCount] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [editingCableId, setEditingCableId] = useState(null);
+  const [spliceLinks, setSpliceLinks] = useState([]);
+  const [spliceDialogOpen, setSpliceDialogOpen] = useState(false);
 
   const setMode = useCallback((m) => { modeRef.current = m; setModeState(m); }, []);
 
@@ -1241,6 +1477,7 @@ export default function MapaRed() {
   const [exportPayload, setExportPayload] = useState({ nodos: [], cables: [] });
 
   const olts = useMemo(() => nodes.filter((n) => n.type === "olt_map"), [nodes]);
+  const odfs = useMemo(() => nodes.filter((n) => n.type === "odf"), [nodes]);
   const nodesCount = useMemo(() => ({
     splice: nodes.filter((n) => n.type === "splice").length,
     pole: nodes.filter((n) => n.type === "pole").length,
@@ -1263,17 +1500,19 @@ export default function MapaRed() {
 
   const reload = useCallback(async () => {
     try {
-      const [napsRes, nodesRes, clientsRes, cablesRes, cfgRes] = await Promise.all([
+      const [napsRes, nodesRes, clientsRes, cablesRes, cfgRes, linksRes] = await Promise.all([
         api.get("/nap-boxes"),
         api.get("/map/nodes").catch(() => ({ data: [] })),
         api.get("/clients").then((r) => ({ data: (r.data || []).filter((c) => c.lat != null && c.lng != null) })),
         api.get("/map/cables"),
         api.get("/map/config").catch(() => ({ data: null })),
+        api.get("/map/splice-links").catch(() => ({ data: [] })),
       ]);
       setNaps(napsRes.data);
       setNodes(nodesRes.data);
       setClients(clientsRes.data);
       setCables(cablesRes.data);
+      setSpliceLinks(linksRes.data);
       if (cfgRes.data) setMapConfig(cfgRes.data);
     } catch (e) { toast.error(formatApiError(e)); }
   }, []);
@@ -1569,7 +1808,14 @@ export default function MapaRed() {
       if (!entry) {
         const polyline = new google.maps.Polyline({
           path: cable.path.map((p) => ({ lat: p.lat, lng: p.lng })),
-          strokeColor, strokeWeight, editable: true, map,
+          strokeColor, strokeWeight,
+          // Cables are STATIC by default. Clicking one enters edit mode
+          // (see click listener below + editingCableId useEffect further down)
+          // which flips this to true so the user can drag, add or delete
+          // vertices. Right-click on a vertex removes it (Google default).
+          editable: false,
+          clickable: true,
+          map,
         });
         const displayName = cable.name || style.label;
         const info = new google.maps.InfoWindow({
@@ -1580,7 +1826,13 @@ export default function MapaRed() {
             <div>Hilos: <b>${cable.fibers_count || 12}</b> (TIA-598)</div>
           </div>`,
         });
-        polyline.addListener("click", (e) => info.setPosition(e.latLng) & info.open({ map }));
+        polyline.addListener("click", (e) => {
+          info.setPosition(e.latLng);
+          info.open({ map });
+          // Enter edit mode for THIS cable. The useEffect below will flip
+          // `editable` to true on its polyline and false on every other one.
+          setEditingCableId(cable.id);
+        });
         const path = polyline.getPath();
         const onEdit = async () => {
           const newPath = [];
@@ -1649,6 +1901,15 @@ export default function MapaRed() {
     }
   }, [cables, ready]);
 
+  // Toggle `editable` per polyline based on which cable is being edited.
+  // Runs whenever the user clicks a cable (setEditingCableId) OR when the
+  // cable list changes (so newly-added polylines pick up the current state).
+  useEffect(() => {
+    for (const [id, entry] of cablePolylinesRef.current.entries()) {
+      entry.polyline.setOptions({ editable: id === editingCableId });
+    }
+  }, [editingCableId, cables]);
+
   // Confirm cable
   const confirmCable = async ({ tipo, fibers, name, color, weight }) => {
     if (!pendingCable) return;
@@ -1683,6 +1944,11 @@ export default function MapaRed() {
   const deleteNode = async (id) => {
     if (!window.confirm("¿Eliminar este elemento?")) return;
     try { await api.delete(`/map/nodes/${id}`); toast.success("Eliminado"); reload(); }
+    catch (e) { toast.error(formatApiError(e)); }
+  };
+  const deleteSpliceLink = async (id) => {
+    if (!window.confirm("¿Eliminar este empalme virtual?")) return;
+    try { await api.delete(`/map/splice-links/${id}`); toast.success("Empalme eliminado"); reload(); }
     catch (e) { toast.error(formatApiError(e)); }
   };
 
@@ -1763,6 +2029,9 @@ export default function MapaRed() {
           onDeleteNode={deleteNode}
           cables={cables}
           nodes={nodes}
+          spliceLinks={spliceLinks}
+          onOpenSpliceDialog={() => setSpliceDialogOpen(true)}
+          onDeleteSpliceLink={deleteSpliceLink}
         />
 
         <div ref={mapContainerRef}
@@ -1776,6 +2045,36 @@ export default function MapaRed() {
             onCancelPolyline={cancelPolyline}
             containerEl={mapContainerRef.current}
           />
+
+          {/* Floating pill shown while a cable is in edit mode. Clicking it
+              "finalises" the trace (makes it static again). The path itself
+              is auto-persisted every time the user moves a vertex via the
+              existing set_at / insert_at / remove_at listeners on the path. */}
+          {editingCableId && (() => {
+            const cable = cables.find((c) => c.id === editingCableId);
+            const label = cable?.name || CABLE_STYLES[cable?.tipo]?.label || "Cable";
+            return (
+              <div
+                className="absolute z-40 top-3 right-3 flex items-center gap-2 rounded-full bg-emerald-500/95 backdrop-blur px-3 py-1.5 border border-emerald-300 shadow-2xl"
+                data-testid="cable-edit-pill"
+              >
+                <span className="text-white text-[11px] font-mono uppercase tracking-widest">
+                  Editando · {label}
+                </span>
+                <span className="text-emerald-100/90 text-[10px] hidden md:inline">
+                  arrastra puntos · click-derecho borra · midpoint agrega
+                </span>
+                <button
+                  onClick={() => setEditingCableId(null)}
+                  className="rounded-full bg-white/20 hover:bg-white/40 text-white px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                  data-testid="finalize-cable-edit"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Finalizar
+                </button>
+              </div>
+            );
+          })()}
+
           <div ref={containerRef} style={{ width: "100%", height: 680 }} />
         </div>
       </div>
@@ -1815,6 +2114,13 @@ export default function MapaRed() {
         open={configOpen}
         onOpenChange={setConfigOpen}
         current={mapConfig}
+      />
+      <SpliceLinkDialog
+        open={spliceDialogOpen}
+        onOpenChange={setSpliceDialogOpen}
+        odfs={odfs}
+        cables={cables}
+        onSaved={reload}
       />
     </div>
   );
