@@ -1491,6 +1491,9 @@ export default function MapaRed() {
   const [addVertexFor, setAddVertexFor] = useState(null);
   const editingCableIdRef = useRef(null);
   const addVertexForRef = useRef(null);
+  // Custom overlay markers rendered ON TOP of the native (small white square)
+  // vertex handles so vertices are much more visible while editing.
+  const vertexMarkersRef = useRef([]);
   useEffect(() => { editingCableIdRef.current = editingCableId; }, [editingCableId]);
   useEffect(() => { addVertexForRef.current = addVertexFor; }, [addVertexFor]);
   const [spliceLinks, setSpliceLinks] = useState([]);
@@ -1968,6 +1971,68 @@ export default function MapaRed() {
     if (!editingCableId) setAddVertexFor(null);
   }, [editingCableId, cables]);
 
+  // Overlay a big, coloured circle marker on TOP of each native vertex
+  // handle of the currently-edited cable so the vertices are easy to see
+  // and target. `clickable: false` lets drag events pass through to the
+  // native (invisible-ish) handle underneath, keeping drag-to-move working.
+  useEffect(() => {
+    const clear = () => {
+      vertexMarkersRef.current.forEach((m) => m.setMap(null));
+      vertexMarkersRef.current = [];
+    };
+    if (!editingCableId || !ready || !window.google) { clear(); return; }
+    const google = window.google;
+    const map = mapRef.current;
+    const entry = cablePolylinesRef.current.get(editingCableId);
+    if (!entry || !map) { clear(); return; }
+    const path = entry.polyline.getPath();
+
+    // Update-in-place instead of full rebuild — set_at fires many times
+    // during a single drag, so we want the cheapest possible sync.
+    const sync = () => {
+      const len = path.getLength();
+      // Trim excess markers if a vertex was removed
+      while (vertexMarkersRef.current.length > len) {
+        vertexMarkersRef.current.pop().setMap(null);
+      }
+      for (let i = 0; i < len; i++) {
+        const pos = path.getAt(i);
+        let m = vertexMarkersRef.current[i];
+        if (!m) {
+          m = new google.maps.Marker({
+            position: pos,
+            map,
+            clickable: false,             // drag goes to the native handle
+            zIndex: 100000 + i,
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 9,                   // bigger than the default handle
+              fillColor: "#fbbf24",       // amber-400: stands out on satellite view
+              fillOpacity: 0.95,
+              strokeColor: "#111827",     // dark ring for contrast
+              strokeWeight: 2,
+            },
+          });
+          vertexMarkersRef.current.push(m);
+        } else {
+          m.setPosition(pos);
+        }
+      }
+    };
+
+    sync();
+    const l1 = google.maps.event.addListener(path, "set_at", sync);
+    const l2 = google.maps.event.addListener(path, "insert_at", sync);
+    const l3 = google.maps.event.addListener(path, "remove_at", sync);
+
+    return () => {
+      google.maps.event.removeListener(l1);
+      google.maps.event.removeListener(l2);
+      google.maps.event.removeListener(l3);
+      clear();
+    };
+  }, [editingCableId, ready, cables]);
+
   // Confirm cable
   const confirmCable = async ({ tipo, fibers, name, color, weight }) => {
     if (!pendingCable) return;
@@ -2172,8 +2237,8 @@ export default function MapaRed() {
                 {/* Legend row · always visible so the user knows all 3 actions */}
                 <div className="flex flex-col gap-0.5 rounded-md bg-slate-900/90 backdrop-blur px-3 py-1.5 border border-slate-600 text-[10px] text-slate-200 font-mono max-w-[420px]">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-white border border-slate-800 shrink-0" />
-                    <span><b className="text-emerald-300">Cuadrado</b> = punto existente · arrastra para <b>moverlo</b></span>
+                    <span className="inline-block w-3 h-3 rounded-full bg-amber-400 border-2 border-slate-900 shrink-0" />
+                    <span><b className="text-amber-300">Círculos amarillos</b> = puntos del trazo · arrastra para moverlos</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Plus className="w-3 h-3 text-sky-300 shrink-0" />
