@@ -1110,14 +1110,21 @@ export default function MapaRed() {
   }, []);
   useEffect(() => { reload(); }, [reload]);
 
-  // Init Google Maps
+  // Init Google Maps — runs ONCE per mount. We deliberately do NOT depend on
+  // `mapConfig?.api_key` because that would cause a double init: first pass
+  // with the env key (before /map/config resolves), then a second pass with
+  // the same key from the DB, resulting in "Google Maps loaded multiple
+  // times" and click listeners attached to a stale (invisible) map instance.
+  // If the user swaps the key via the config dialog we do a full page reload
+  // instead (see MapConfigDialog.save), so no in-place re-init is needed.
   useEffect(() => {
+    if (mapRef.current) return;                       // already initialised
     let cancelled = false;
-    const activeKey = mapConfig?.api_key || GOOGLE_MAPS_KEY_ENV;
+    const activeKey = GOOGLE_MAPS_KEY_ENV || mapConfig?.api_key;
     if (!activeKey) return;
 
     loadGoogleMaps(activeKey).then((google) => {
-      if (cancelled || !containerRef.current) return;
+      if (cancelled || !containerRef.current || mapRef.current) return;
       const map = new google.maps.Map(containerRef.current, {
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
@@ -1138,7 +1145,8 @@ export default function MapaRed() {
     }).catch((e) => setMapError(e.message));
 
     return () => { cancelled = true; };
-  }, [mapConfig?.api_key]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Click / dblclick listeners depending on mode
   useEffect(() => {
