@@ -4272,7 +4272,7 @@ class CableUpdate(BaseModel):
 
 # ---------- Map generic nodes (splice boxes, poles, reserves, etc.) ----------
 class MapNodeIn(BaseModel):
-    type: Literal["splice", "pole", "reserve", "olt_map", "datacenter", "problem"]
+    type: Literal["splice", "pole", "reserve", "olt_map", "odf", "datacenter", "problem"]
     name: str
     lat: float
     lng: float

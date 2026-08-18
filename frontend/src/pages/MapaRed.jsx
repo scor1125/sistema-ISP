@@ -18,6 +18,7 @@ import {
   CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight,
   Users as UsersIcon, Package, Anchor, Archive, GitCommitVertical,
   GripVertical, ChevronsUpDown, ChevronsLeftRight, Maximize2, Minimize2,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -50,7 +51,7 @@ function makeMarkerIcon(google, opts) {
   const half = size / 2;
   const letterMap = {
     nap: "N", splice: "E", pole: "P", reserve: "R",
-    olt_map: "O", client: "C",
+    olt_map: "O", odf: "F", client: "C",
   };
   const letter = letterMap[opts.type] || "?";
   const name = String(opts.name || "").slice(0, 22)
@@ -95,6 +96,7 @@ const NODE_TYPES = {
   pole:      { label: "Poste",        icon: Anchor,            color: "#0ea5e9" },
   reserve:   { label: "Reserva",      icon: Archive,           color: "#f59e0b" },
   olt_map:   { label: "OLT (mapa)",   icon: Server,            color: "#3b82f6" },
+  odf:       { label: "ODF",          icon: Layers,            color: "#06b6d4" },
   client:    { label: "Cliente",      icon: UsersIcon,         color: "#22c55e" },
   cable:     { label: "Cable",        icon: Cable,             color: "#0ea5e9" },
   pan:       { label: "Mover",        icon: MousePointer2,     color: "#94a3b8" },
@@ -217,6 +219,21 @@ function NewElementDialog({ open, onOpenChange, coords, initialType, onSaved }) 
           },
         });
         toast.success(`OLT "${f.name}" agregado al mapa`);
+      } else if (type === "odf") {
+        const cap = Number(f.capacity || 12);
+        const ports = Array.from({ length: cap }, (_, i) => ({
+          position: i + 1,
+          name: (f.odf_ports?.[i]?.name || "").trim() || `Puerto ${i + 1}`,
+        }));
+        await api.post("/map/nodes", {
+          type: "odf",
+          name: f.name.trim(),
+          lat: coords.lat, lng: coords.lng,
+          color: f.color || NODE_TYPES.odf.color,
+          notes: f.notes || "",
+          data: { capacity: cap, ports },
+        });
+        toast.success(`ODF "${f.name}" (${cap} fibras · ${ports.length} puertos) agregado`);
       } else {
         await api.post("/map/nodes", {
           type,
@@ -254,7 +271,7 @@ function NewElementDialog({ open, onOpenChange, coords, initialType, onSaved }) 
         <div>
           <Label className="text-xs uppercase tracking-widest text-muted-foreground">Tipo de estructura</Label>
           <div className="grid grid-cols-3 gap-2 mt-1">
-            {["nap", "splice", "pole", "reserve", "olt_map", "client"].map((k) => {
+            {["nap", "splice", "pole", "reserve", "olt_map", "odf", "client"].map((k) => {
               const Icon = NODE_TYPES[k].icon;
               const active = type === k;
               return (
@@ -383,6 +400,71 @@ function NewElementDialog({ open, onOpenChange, coords, initialType, onSaved }) 
                   <Input type="number" min="1" data-testid="olt-ports"
                     value={f.ports || 8}
                     onChange={(e) => setF({ ...f, ports: e.target.value })} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {type === "odf" && (
+            <div className="space-y-2">
+              <div>
+                <Label className="text-xs">Capacidad de fibra</Label>
+                <Select
+                  value={String(f.capacity || 12)}
+                  onValueChange={(v) => {
+                    const cap = Number(v);
+                    // Regenerate the ports array whenever capacity changes,
+                    // preserving any names the user already typed.
+                    const ports = Array.from({ length: cap }, (_, i) => ({
+                      position: i + 1,
+                      name: f.odf_ports?.[i]?.name || `Puerto ${i + 1}`,
+                    }));
+                    setF({ ...f, capacity: cap, odf_ports: ports });
+                  }}
+                >
+                  <SelectTrigger data-testid="odf-cap"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 4, 8, 12, 24].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n} fibra{n === 1 ? "" : "s"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">
+                  Puertos virtuales · nombra cada uno ({Number(f.capacity || 12)} {Number(f.capacity || 12) === 1 ? "puerto" : "puertos"})
+                </Label>
+                <div className="grid grid-cols-2 gap-1.5 max-h-52 overflow-y-auto pr-1 mt-1 border border-border/40 rounded p-2 bg-black/10">
+                  {Array.from({ length: Number(f.capacity || 12) }, (_, i) => {
+                    const pos = i + 1;
+                    const name = f.odf_ports?.[i]?.name ?? `Puerto ${pos}`;
+                    return (
+                      <div key={i} className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-primary shrink-0 w-6 text-right">
+                          #{pos}
+                        </span>
+                        <Input
+                          value={name}
+                          onChange={(e) => {
+                            const ports = [...(f.odf_ports || [])];
+                            while (ports.length <= i) {
+                              ports.push({
+                                position: ports.length + 1,
+                                name: `Puerto ${ports.length + 1}`,
+                              });
+                            }
+                            ports[i] = { position: pos, name: e.target.value };
+                            setF({ ...f, odf_ports: ports });
+                          }}
+                          placeholder={`Puerto ${pos}`}
+                          className="h-7 text-xs font-mono px-1.5"
+                          data-testid={`odf-port-${pos}`}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -613,6 +695,7 @@ function MapToolbar({ mode, setMode, drawingVertexCount,
     { key: "pole",    icon: Anchor,            label: "Poste" },
     { key: "reserve", icon: Archive,           label: "Reserva" },
     { key: "olt_map", icon: Server,            label: "OLT" },
+    { key: "odf",     icon: Layers,            label: "ODF" },
     { key: "client",  icon: UsersIcon,         label: "Cliente" },
     { key: "cable",   icon: Cable,             label: "Cable" },
   ];
@@ -1385,6 +1468,8 @@ export default function MapaRed() {
         const d = n.data || {};
         const detail = n.type === "olt_map"
           ? `Tec: <b>${(d.technology || "").toUpperCase()}</b> · Marca: <b>${d.brand || "?"}</b> · Puertos: <b>${d.ports || "?"}</b>`
+          : n.type === "odf"
+          ? `Capacidad: <b>${d.capacity || 0}</b> fibras · Puertos: <b>${(d.ports || []).length}</b>`
           : n.type === "reserve"
           ? `Reserva: <b>${d.reserve_m || 0} m</b>`
           : n.type === "splice"
@@ -1392,12 +1477,21 @@ export default function MapaRed() {
           : n.type === "pole"
           ? `${d.material || "?"} · ${d.height_m || "?"} m`
           : "";
+        // ODF gets a scrollable list of port names inside the InfoWindow so
+        // techs can see every fiber the frame is carrying at a glance.
+        const odfPortList = n.type === "odf" && (d.ports || []).length
+          ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #ccc;font-size:11px;max-height:160px;overflow-y:auto">
+              <div style="font-weight:700;margin-bottom:2px">Puertos:</div>
+              ${d.ports.map((p) => `#${p.position} · ${(p.name || "").replace(/</g, "&lt;")}`).join("<br/>")}
+            </div>`
+          : "";
         const info = new google.maps.InfoWindow({
-          content: `<div style="font-family:ui-monospace;font-size:12px;color:#111">
+          content: `<div style="font-family:ui-monospace;font-size:12px;color:#111;min-width:180px">
             <div style="font-weight:700;font-size:13px">${n.name}</div>
             <div>Tipo: <b>${style.label || n.type}</b></div>
             ${detail ? `<div>${detail}</div>` : ""}
             ${n.notes ? `<div style="color:#555">${n.notes}</div>` : ""}
+            ${odfPortList}
           </div>`,
         });
         marker.addListener("click", () => info.open({ anchor: marker, map }));
