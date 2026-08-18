@@ -17,7 +17,7 @@ import {
   MousePointer2, Waypoints, Server, Signal, Zap, Settings2, KeyRound,
   CheckCircle2, XCircle, Loader2, ChevronLeft, ChevronRight,
   Users as UsersIcon, Package, Anchor, Archive, GitCommitVertical,
-  GripVertical,
+  GripVertical, ChevronsUpDown, ChevronsLeftRight, Maximize2, Minimize2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -102,6 +102,13 @@ const NODE_TYPES = {
 
 const OLT_BRANDS = ["V-Sol", "Huawei", "ZTE", "Fiberhome", "C-Data", "BDCOM", "Nokia", "Otro"];
 const OLT_TECH = ["gpon", "epon"];
+
+/* ============================================================
+   Default map center — Xicoténcatl (17°30'58.9"N 92°42'13.5"W).
+   User's operations base; maps always open here on first load.
+   ============================================================ */
+const DEFAULT_CENTER = { lat: 17.516359, lng: -92.703755 };
+const DEFAULT_ZOOM = 17;
 
 /* ============================================================
    Google Maps loader
@@ -503,9 +510,18 @@ function CableTypeDialog({ open, onOpenChange, lengthM, onConfirm }) {
 }
 
 /* ============================================================
-   Floating TOP TOOLBAR inside the map · DRAGGABLE
+   Floating TOOLBAR inside the map · DRAGGABLE + VERTICAL/HORIZONTAL
+   Position + orientation persisted to localStorage so the layout
+   survives reloads. Includes a custom fullscreen button that
+   toggles fullscreen on the outer container so the drawing tools
+   remain usable inside fullscreen.
    ============================================================ */
-function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCancelPolyline }) {
+const TOOLBAR_POS_KEY = "mapaToolbarPos";
+const TOOLBAR_ORIENT_KEY = "mapaToolbarOrient";
+
+function MapToolbar({ mode, setMode, drawingVertexCount,
+                     onFinishPolyline, onCancelPolyline,
+                     containerEl }) {
   const tools = [
     { key: "pan",     icon: MousePointer2,     label: "Mover" },
     { key: "nap",     icon: Boxes,             label: "NAP" },
@@ -517,9 +533,34 @@ function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCan
     { key: "cable",   icon: Cable,             label: "Cable" },
   ];
 
-  // Drag state: null while centered; { x, y } once user starts moving
-  const [pos, setPos] = useState(null);
+  const [orientation, setOrientation] = useState(() => {
+    try { return localStorage.getItem(TOOLBAR_ORIENT_KEY) || "horizontal"; }
+    catch { return "horizontal"; }
+  });
+  const [pos, setPos] = useState(() => {
+    try {
+      const raw = localStorage.getItem(TOOLBAR_POS_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  const [isFs, setIsFs] = useState(false);
   const barRef = useRef(null);
+
+  // Persist changes
+  useEffect(() => {
+    try { localStorage.setItem(TOOLBAR_ORIENT_KEY, orientation); } catch {}
+  }, [orientation]);
+  useEffect(() => {
+    if (pos == null) return;
+    try { localStorage.setItem(TOOLBAR_POS_KEY, JSON.stringify(pos)); } catch {}
+  }, [pos]);
+
+  // Track native fullscreen state so we can swap the icon.
+  useEffect(() => {
+    const handler = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   const startDrag = (e) => {
     e.preventDefault();
@@ -528,7 +569,6 @@ function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCan
     if (!bar || !container) return;
     const barRect = bar.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
-    // Starting pixel position of the bar within the container
     const startX = pos?.x ?? (barRect.left - containerRect.left);
     const startY = pos?.y ?? (barRect.top - containerRect.top);
     const startClientX = e.clientX;
@@ -537,9 +577,8 @@ function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCan
     const onMove = (m) => {
       const nx = startX + (m.clientX - startClientX);
       const ny = startY + (m.clientY - startClientY);
-      // Clamp so the toolbar stays inside the container
-      const maxX = containerRect.width - barRect.width;
-      const maxY = containerRect.height - barRect.height;
+      const maxX = Math.max(0, containerRect.width - barRect.width);
+      const maxY = Math.max(0, containerRect.height - barRect.height);
       setPos({
         x: Math.max(0, Math.min(maxX, nx)),
         y: Math.max(0, Math.min(maxY, ny)),
@@ -553,24 +592,66 @@ function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCan
     window.addEventListener("mouseup", onUp);
   };
 
+  const toggleOrient = () => {
+    setOrientation((o) => (o === "horizontal" ? "vertical" : "horizontal"));
+  };
+
+  const toggleFullscreen = () => {
+    const target = containerEl || barRef.current?.parentElement;
+    if (!target) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      target.requestFullscreen().catch((e) => toast.error(`No se pudo abrir pantalla completa: ${e.message || e}`));
+    }
+  };
+
+  const isVertical = orientation === "vertical";
   const style = pos ? { left: pos.x, top: pos.y } : { top: 12 };
   const centerClass = pos ? "" : "left-1/2 -translate-x-1/2";
+  const layoutClass = isVertical ? "flex-col items-stretch" : "flex-row items-center";
 
   return (
     <div
       ref={barRef}
-      className={`absolute z-10 flex items-center gap-1 rounded-lg bg-slate-900/90 backdrop-blur px-2 py-1.5 border border-slate-700 shadow-xl ${centerClass}`}
+      className={`absolute z-10 flex ${layoutClass} gap-1 rounded-lg bg-slate-900/90 backdrop-blur px-2 py-1.5 border border-slate-700 shadow-xl ${centerClass}`}
       style={style}
       data-testid="map-toolbar"
+      data-orientation={orientation}
     >
+      {/* Drag handle */}
       <button
         onMouseDown={startDrag}
-        className="cursor-grab active:cursor-grabbing p-1 mr-1 rounded hover:bg-slate-700/40 text-slate-400 hover:text-slate-200"
+        className={`cursor-grab active:cursor-grabbing p-1 rounded hover:bg-slate-700/40 text-slate-400 hover:text-slate-200 ${isVertical ? "mb-1 self-center" : "mr-1"}`}
         title="Arrastra para mover la barra"
         data-testid="toolbar-drag-handle"
       >
-        <GripVertical className="w-4 h-4" />
+        <GripVertical className={`w-4 h-4 ${isVertical ? "" : "rotate-0"}`} />
       </button>
+
+      {/* Orientation toggle */}
+      <button
+        onClick={toggleOrient}
+        className={`p-1 rounded hover:bg-slate-700/40 text-slate-400 hover:text-emerald-300 ${isVertical ? "self-center" : ""}`}
+        title={isVertical ? "Cambiar a horizontal" : "Cambiar a vertical"}
+        data-testid="toolbar-rotate"
+      >
+        {isVertical ? <ChevronsLeftRight className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
+      </button>
+
+      {/* Custom fullscreen button (so drawing tools remain usable in fullscreen) */}
+      <button
+        onClick={toggleFullscreen}
+        className={`p-1 rounded hover:bg-slate-700/40 text-slate-400 hover:text-sky-300 ${isVertical ? "self-center" : ""}`}
+        title={isFs ? "Salir de pantalla completa" : "Pantalla completa"}
+        data-testid="toolbar-fullscreen"
+      >
+        {isFs ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+      </button>
+
+      {/* Separator */}
+      <span className={isVertical ? "my-1 h-px w-full bg-slate-600" : "mx-1 h-6 w-px bg-slate-600"} />
+
       {tools.map((t) => {
         const active = mode === t.key;
         const Icon = t.icon;
@@ -583,19 +664,19 @@ function MapToolbar({ mode, setMode, drawingVertexCount, onFinishPolyline, onCan
               active
                 ? "bg-emerald-500/25 text-emerald-300 border border-emerald-500/60"
                 : "text-slate-300 hover:text-white hover:bg-slate-700/40 border border-transparent"
-            }`}
+            } ${isVertical ? "justify-start" : ""}`}
             style={active ? { boxShadow: `0 0 0 1px ${NODE_TYPES[t.key]?.color || "transparent"}` } : {}}
             title={t.label}
           >
-            <Icon className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{t.label}</span>
+            <Icon className="w-3.5 h-3.5 shrink-0" />
+            <span className={isVertical ? "" : "hidden sm:inline"}>{t.label}</span>
           </button>
         );
       })}
       {drawingVertexCount > 0 && (
         <>
-          <span className="mx-1 h-6 w-px bg-slate-600" />
-          <span className="text-[10px] text-sky-300 font-mono">{drawingVertexCount} vért.</span>
+          <span className={isVertical ? "my-1 h-px w-full bg-slate-600" : "mx-1 h-6 w-px bg-slate-600"} />
+          <span className="text-[10px] text-sky-300 font-mono px-1">{drawingVertexCount} vért.</span>
           <button
             onClick={onFinishPolyline}
             disabled={drawingVertexCount < 2}
@@ -853,9 +934,12 @@ function MapConfigDialog({ open, onOpenChange, current, onSaved }) {
     if (!apiKey.trim()) return toast.error("La API key no puede estar vacía");
     try {
       await api.patch("/map/config", { api_key: apiKey.trim() });
-      toast.success("API key guardada · recargando mapa…");
-      onSaved?.(apiKey.trim());
+      toast.success("API key guardada · recargando…");
       onOpenChange(false);
+      // Google Maps JS globals can't be re-initialised in-place, so a full
+      // page reload is the reliable way to swap keys. Small delay so the
+      // toast is visible before the reload kicks in.
+      setTimeout(() => window.location.reload(), 500);
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
@@ -909,6 +993,7 @@ function MapConfigDialog({ open, onOpenChange, current, onSaved }) {
    ============================================================ */
 export default function MapaRed() {
   const containerRef = useRef(null);
+  const mapContainerRef = useRef(null); // outer wrapper — target for fullscreen
   const mapRef = useRef(null);
   const modeRef = useRef("pan");
   const drawingRef = useRef({ polyline: null, path: [] });
@@ -936,7 +1021,6 @@ export default function MapaRed() {
   const [pendingCable, setPendingCable] = useState(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
-  const [scriptReloadNonce, setScriptReloadNonce] = useState(0);
   const [exportPayload, setExportPayload] = useState({ nodos: [], cables: [] });
 
   const olts = useMemo(() => nodes.filter((n) => n.type === "olt_map"), [nodes]);
@@ -987,11 +1071,14 @@ export default function MapaRed() {
     loadGoogleMaps(activeKey).then((google) => {
       if (cancelled || !containerRef.current) return;
       const map = new google.maps.Map(containerRef.current, {
-        center: { lat: 19.4326, lng: -99.1332 },
-        zoom: 13,
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM,
         mapTypeControl: true,
         streetViewControl: false,
-        fullscreenControl: true,
+        // Use our own fullscreen button (in the toolbar) so the drawing
+        // tools go fullscreen together with the map. Google's built-in
+        // control only fullscreens the inner map div and hides the tools.
+        fullscreenControl: false,
         disableDoubleClickZoom: true,
         mapTypeId: "hybrid",
       });
@@ -1003,7 +1090,7 @@ export default function MapaRed() {
     }).catch((e) => setMapError(e.message));
 
     return () => { cancelled = true; };
-  }, [mapConfig?.api_key, scriptReloadNonce]);
+  }, [mapConfig?.api_key]);
 
   // Click / dblclick listeners depending on mode
   useEffect(() => {
@@ -1068,6 +1155,29 @@ export default function MapaRed() {
     if (!map) return;
     map.setOptions({ draggableCursor: mode === "pan" ? null : "crosshair" });
   }, [mode]);
+
+  // Fullscreen: when the outer container enters/exits fullscreen, resize
+  // the inner map div and trigger Google Maps' resize event so tiles refit.
+  useEffect(() => {
+    const handler = () => {
+      const inner = containerRef.current;
+      const outer = mapContainerRef.current;
+      if (!inner || !outer) return;
+      const fs = document.fullscreenElement === outer;
+      if (fs) {
+        inner.style.height = "100vh";
+        outer.style.minHeight = "100vh";
+      } else {
+        inner.style.height = "680px";
+        outer.style.minHeight = "680px";
+      }
+      if (mapRef.current && window.google) {
+        window.google.maps.event.trigger(mapRef.current, "resize");
+      }
+    };
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   // Sync NAP markers
   useEffect(() => {
@@ -1407,7 +1517,8 @@ export default function MapaRed() {
           nodes={nodes}
         />
 
-        <div className="flex-1 rounded-md border border-border overflow-hidden bg-card relative"
+        <div ref={mapContainerRef}
+             className="flex-1 rounded-md border border-border overflow-hidden bg-card relative"
              style={{ minHeight: 680 }} data-testid="mapa-container">
           <MapToolbar
             mode={mode}
@@ -1415,6 +1526,7 @@ export default function MapaRed() {
             drawingVertexCount={drawingVertexCount}
             onFinishPolyline={finishPolyline}
             onCancelPolyline={cancelPolyline}
+            containerEl={mapContainerRef.current}
           />
           <div ref={containerRef} style={{ width: "100%", height: 680 }} />
         </div>
@@ -1455,16 +1567,6 @@ export default function MapaRed() {
         open={configOpen}
         onOpenChange={setConfigOpen}
         current={mapConfig}
-        onSaved={(newKey) => {
-          _mapsPromise = null;
-          _mapsPromiseKey = null;
-          if (window.google) delete window.google;
-          setMapError(null);
-          setReady(false);
-          setMapConfig((c) => ({ ...(c || {}), api_key: newKey, has_key: true, api_key_masked: newKey.slice(0,4)+"•••"+newKey.slice(-4) }));
-          setScriptReloadNonce((n) => n + 1);
-          reload();
-        }}
       />
     </div>
   );
