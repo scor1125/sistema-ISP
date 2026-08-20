@@ -1145,6 +1145,17 @@ def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
     # TCP); incluirlo haría fallar el comando. En 7.4+ sí hay que declararlo.
     protocol_line = f"    protocol={profile['protocol']} \\\n" if version == "v7" else ""
 
+    # El cliente NTP se configura distinto según la versión (`servers=` en 7.x,
+    # `server-dns-names=` / `primary-ntp=` en 6.x) y habilitarlo sin servidores
+    # no sincroniza nada. Se intenta en orden y se ignora el que no aplique.
+    ntp_block = """:do { /system ntp client set enabled=yes servers=pool.ntp.org } on-error={
+  :do { /system ntp client set enabled=yes server-dns-names=pool.ntp.org } on-error={
+    :do { /system ntp client set enabled=yes primary-ntp=162.159.200.1 } on-error={
+      :log warning "Sistema ISP: configura la hora manualmente"
+    }
+  }
+}"""
+
     return f"""# ============================================================
 # Sistema ISP · Vincular "{name_q}" por OpenVPN
 # Perfil: {profile['label']}
@@ -1152,8 +1163,9 @@ def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
 # Se puede volver a pegar sin problema: no duplica configuración.
 # ============================================================
 
-# 1) Reloj en hora: si el router va desfasado, el TLS del túnel falla
-/system ntp client set enabled=yes
+# 1) Reloj en hora: si el router va desfasado, el TLS del túnel falla.
+#    El nombre del parámetro cambia entre versiones, por eso los intentos.
+{ntp_block}
 
 # 2) Túnel OpenVPN hacia el CRM
 /interface ovpn-client
@@ -1168,13 +1180,18 @@ add name=ovpn-crm connect-to={public_ip} port={OPENVPN_PORT} \\
 set [find name=api] disabled=no port={api_port} address={server_ip}/32
 
 # 4) Firewall: aceptar la API solo desde el CRM por el túnel.
-#    /ip service ya restringe por IP, pero esto lo deja también a nivel de red
-#    y por encima de cualquier regla de drop que tengas más abajo.
+#    /ip service ya restringe por IP, pero esto lo deja también a nivel de red.
+#    Se intenta poner de primera; si la lista está vacía, place-before falla y
+#    entonces se agrega normal (que en ese caso es lo mismo).
 /ip firewall filter
 remove [find comment="Sistema ISP API"]
-add chain=input in-interface=ovpn-crm src-address={server_ip} \\
-    protocol=tcp dst-port={api_port} action=accept \\
-    place-before=0 comment="Sistema ISP API"
+:do {{
+  /ip firewall filter add chain=input in-interface=ovpn-crm src-address={server_ip} \\
+    protocol=tcp dst-port={api_port} action=accept place-before=0 comment="Sistema ISP API"
+}} on-error={{
+  /ip firewall filter add chain=input in-interface=ovpn-crm src-address={server_ip} \\
+    protocol=tcp dst-port={api_port} action=accept comment="Sistema ISP API"
+}}
 
 # 5) Usuario de la API que usará el CRM
 :do {{ /user group add name=crm-api policy=read,write,api,test,sensitive }} on-error={{}}
