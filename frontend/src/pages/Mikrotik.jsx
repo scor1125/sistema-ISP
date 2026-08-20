@@ -20,7 +20,7 @@ import {
 import {
   Plus, Router as RouterIcon, Pencil, Trash2, Radio, Cpu, Copy,
   CheckCircle2, XCircle, Terminal, ChevronDown, ChevronUp, KeyRound,
-  ShieldCheck, Loader2, FileCode,
+  ShieldCheck, Loader2, FileCode, RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,6 +31,13 @@ const ROS_PROFILES = [
   { value: "v7", title: "RouterOS 7.4 o superior", hint: "UDP · AES-256-GCM" },
   { value: "v6", title: "RouterOS 6.x (o 7.x < 7.4)", hint: "TCP · AES-256-CBC" },
 ];
+
+const VPN_STATUS = {
+  online:  { label: "En línea",  cls: "border-emerald-500/40 text-emerald-500" },
+  offline: { label: "Sin conexión", cls: "border-red-500/40 text-red-500" },
+  pending: { label: "Pendiente", cls: "border-amber-500/40 text-amber-500" },
+  revoked: { label: "Revocado",  cls: "border-muted-foreground/40 text-muted-foreground" },
+};
 
 /* ============================================================
    Resultado de la prueba de conexión (compartido)
@@ -121,17 +128,30 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
   const [loading, setLoading] = useState(false);
   const test = useConnectionTest(device);
 
-  const provision = useCallback(async (v) => {
+  const provision = useCallback(async (v, regenerate = false) => {
     if (!device) return;
     setLoading(true);
     try {
-      const { data: d } = await api.post(`/devices/${device.id}/openvpn-provision`, { version: v });
+      const { data: d } = await api.post(`/devices/${device.id}/openvpn-provision`,
+                                         { version: v, regenerate });
       setData(d);
+      if (regenerate) toast.success("Credenciales nuevas generadas");
     } catch (e) {
       toast.error(formatApiError(e));
-      setData(null);
+      if (!regenerate) setData(null);
     } finally { setLoading(false); }
   }, [device]);
+
+  // Invalida las credenciales anteriores: el router deja de conectar hasta que
+  // le peguen el script nuevo, así que se confirma antes.
+  const regenerate = () => {
+    if (!window.confirm(
+      "Se generarán una contraseña de VPN y una de API nuevas.\n\n" +
+      "El router perderá la conexión hasta que le pegues el script actualizado. ¿Continuar?"
+    )) return;
+    test.reset();
+    provision(version, true);
+  };
 
   useEffect(() => {
     if (!open || !device) { setData(null); test.reset(); return; }
@@ -210,10 +230,16 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
                 <Badge variant="outline" className="text-[10px] font-mono">
                   API {data.api_user}
                 </Badge>
-                <Button size="sm" variant="outline" onClick={copy} className="ml-auto"
-                  data-testid="mk-script-copy">
-                  <Copy className="w-3.5 h-3.5 mr-1" /> Copiar script
-                </Button>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button size="sm" variant="ghost" onClick={regenerate} disabled={loading}
+                    data-testid="mk-script-regen" title="Generar contraseñas nuevas">
+                    <RefreshCw className="w-3.5 h-3.5 mr-1" /> Regenerar
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={copy}
+                    data-testid="mk-script-copy">
+                    <Copy className="w-3.5 h-3.5 mr-1" /> Copiar script
+                  </Button>
+                </div>
               </div>
 
               <div>
@@ -579,18 +605,18 @@ export default function Mikrotik() {
     finally { setDeleting(false); }
   };
 
-  const lastTestBadge = (d) => {
-    if (!d.last_ros_test_at) {
-      return <Badge variant="outline" className="text-[10px] text-muted-foreground">sin probar</Badge>;
+  const statusBadge = (d) => {
+    const st = d.vpn_status || (d.last_ros_test_at ? (d.last_ros_test_ok ? "online" : "offline") : null);
+    if (!st) {
+      return <Badge variant="outline" className="text-[10px] text-muted-foreground">sin vincular</Badge>;
     }
-    if (d.last_ros_test_ok) {
-      return <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500">
-        <CheckCircle2 className="w-3 h-3 mr-1" /> Exitosa
-      </Badge>;
-    }
-    return <Badge variant="outline" className="text-[10px] border-red-500/40 text-red-500">
-      <XCircle className="w-3 h-3 mr-1" /> Sin éxito
-    </Badge>;
+    const s = VPN_STATUS[st] || VPN_STATUS.pending;
+    const Icon = st === "online" ? CheckCircle2 : st === "offline" ? XCircle : Radio;
+    return (
+      <Badge variant="outline" className={`text-[10px] ${s.cls}`}>
+        <Icon className="w-3 h-3 mr-1" /> {s.label}
+      </Badge>
+    );
   };
 
   return (
@@ -621,7 +647,7 @@ export default function Mikrotik() {
               <TableHead>Nombre</TableHead>
               <TableHead>Host · Puerto</TableHead>
               <TableHead>Usuario API</TableHead>
-              <TableHead>Última prueba</TableHead>
+              <TableHead>Estado</TableHead>
               <TableHead>Ubicación</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
@@ -664,7 +690,7 @@ export default function Mikrotik() {
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">
-                    {lastTestBadge(d)}
+                    {statusBadge(d)}
                     {d.last_ros_test_at && (
                       <span className="text-[10px] text-muted-foreground font-mono">
                         {new Date(d.last_ros_test_at).toLocaleString()}

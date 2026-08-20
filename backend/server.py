@@ -39,6 +39,65 @@ COOKIE_SUFFIX = os.environ.get("COOKIE_SUFFIX", "")
 ACCESS_COOKIE = f"access_token{COOKIE_SUFFIX}"
 PORTAL_COOKIE = f"portal_token{COOKIE_SUFFIX}"
 
+# Credenciales de un equipo que nunca deben viajar al navegador. Se muestran
+# una sola vez, al generar el script de vinculación.
+DEVICE_SECRET_FIELDS = ("api_password", "api_password_enc", "vpn_password", "vpn_password_enc")
+DEVICE_SECRET_PROJECTION = {f: 0 for f in DEVICE_SECRET_FIELDS}
+
+
+def _secret_key() -> bytes:
+    """Clave AES para cifrar credenciales en reposo. Se puede fijar con
+    CREDENTIALS_ENCRYPTION_KEY (32 bytes en base64); si no, se deriva de
+    JWT_SECRET para que el cifrado funcione sin configuración extra."""
+    import base64
+    import hashlib
+    raw = os.environ.get("CREDENTIALS_ENCRYPTION_KEY", "").strip()
+    if raw:
+        try:
+            key = base64.b64decode(raw)
+            if len(key) == 32:
+                return key
+        except Exception:
+            pass
+        logger.warning("CREDENTIALS_ENCRYPTION_KEY inválida (se esperan 32 bytes en base64); se deriva de JWT_SECRET")
+    return hashlib.sha256(f"device-credentials::{JWT_SECRET}".encode()).digest()
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """AES-256-GCM. Devuelve 'v1:<base64(nonce|ciphertext|tag)>'."""
+    if not plaintext:
+        return ""
+    import base64
+    import secrets as _secrets
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    nonce = _secrets.token_bytes(12)
+    blob = nonce + AESGCM(_secret_key()).encrypt(nonce, plaintext.encode(), None)
+    return "v1:" + base64.b64encode(blob).decode()
+
+
+def decrypt_secret(blob: str) -> str:
+    if not blob:
+        return ""
+    if not blob.startswith("v1:"):
+        return blob  # documento antiguo, guardado en claro antes de cifrar
+    import base64
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    try:
+        raw = base64.b64decode(blob[3:])
+        return AESGCM(_secret_key()).decrypt(raw[:12], raw[12:], None).decode()
+    except Exception:
+        logger.error("no se pudo descifrar una credencial guardada")
+        return ""
+
+
+def device_secret(device: dict, field: str) -> str:
+    """Lee una credencial del equipo aceptando los dos formatos: el cifrado
+    nuevo (`<campo>_enc`) y el texto plano de documentos anteriores."""
+    enc = device.get(f"{field}_enc")
+    if enc:
+        return decrypt_secret(enc)
+    return device.get(field) or ""
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("isp_crm")
 
@@ -778,20 +837,36 @@ async def delete_user(uid: str, current: dict = Depends(require_roles("owner","a
 
 # ---------- Generic collection helpers ----------
 def crud_router(prefix: str, model_in, collection: str, extra_defaults=None,
-                permission_module: Optional[str] = None):
+                permission_module: Optional[str] = None,
+                hidden_fields: Optional[tuple] = None,
+                encrypt_fields: Optional[tuple] = None):
+    """`hidden_fields` se excluye de todo lo que sale hacia el navegador: hay
+    colecciones (dispositivos) que guardan credenciales que el frontend nunca
+    necesita y que no deben viajar en un listado. `encrypt_fields` son campos
+    que llegan en claro desde el formulario y se guardan cifrados como
+    `<campo>_enc`, para no dejar contraseñas legibles en la base."""
     r = APIRouter(prefix=prefix)
+    hide = {f: 0 for f in (hidden_fields or ())}
+
+    def _protect(doc: dict) -> dict:
+        for f in (encrypt_fields or ()):
+            if doc.get(f):
+                doc[f"{f}_enc"] = encrypt_secret(doc.pop(f))
+            else:
+                doc.pop(f, None)
+        return doc
 
     def _dep(action: str):
         return Depends(require_permission(permission_module, action)) if permission_module else Depends(get_current_user)
 
     @r.get("")
     async def _list(_: dict = _dep("read")):
-        items = await db[collection].find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+        items = await db[collection].find({}, {"_id": 0, **hide}).sort("created_at", -1).to_list(2000)
         return items
 
     @r.post("")
     async def _create(payload: model_in, _: dict = _dep("write")):
-        doc = payload.dict()
+        doc = _protect(payload.dict())
         doc["id"] = new_id()
         doc["created_at"] = now_iso()
         doc["updated_at"] = now_iso()
@@ -800,14 +875,16 @@ def crud_router(prefix: str, model_in, collection: str, extra_defaults=None,
                 doc.setdefault(k, v)
         await db[collection].insert_one(doc)
         doc.pop("_id", None)
+        for f in (hidden_fields or ()):
+            doc.pop(f, None)
         return doc
 
     @r.patch("/{item_id}")
     async def _update(item_id: str, payload: dict, _: dict = _dep("write")):
-        payload = {k: v for k, v in payload.items() if v is not None}
+        payload = _protect({k: v for k, v in payload.items() if v is not None})
         payload["updated_at"] = now_iso()
         await db[collection].update_one({"id": item_id}, {"$set": payload})
-        return await db[collection].find_one({"id": item_id}, {"_id": 0})
+        return await db[collection].find_one({"id": item_id}, {"_id": 0, **hide})
 
     @r.delete("/{item_id}")
     async def _delete(item_id: str, _: dict = _dep("delete")):
@@ -822,7 +899,9 @@ api.include_router(crud_router("/nap-boxes", NapBoxIn, "nap_boxes"))
 api.include_router(crud_router("/extras", ExtraServiceIn, "extras"))
 api.include_router(crud_router("/leads", LeadIn, "leads"))
 api.include_router(crud_router("/tasks", TaskIn, "tasks"))
-api.include_router(crud_router("/devices", DeviceIn, "devices"))
+api.include_router(crud_router("/devices", DeviceIn, "devices",
+                               hidden_fields=DEVICE_SECRET_FIELDS,
+                               encrypt_fields=("api_password", "vpn_password")))
 
 # ---------- VPN helpers ----------
 @api.post("/vpn/{vpn_id}/generate-config")
@@ -905,9 +984,14 @@ api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections"))
 # una IP fija del túnel, que es la que el CRM usa luego para hablarle por la API.
 OPENVPN_AUTH_FILE = Path(os.environ.get("OPENVPN_AUTH_FILE", "/etc/openvpn/auth/psw-file"))
 OPENVPN_CCD_DIR = Path(os.environ.get("OPENVPN_CCD_DIR", "/etc/openvpn/ccd"))
-OPENVPN_SUBNET = os.environ.get("OPENVPN_SUBNET", "172.1.10.")
+# Rango privado (RFC1918). Ojo al cambiarlo: 172.1.x NO es privado — pertenece
+# a espacio público real y romperías el acceso a esas direcciones.
+OPENVPN_SUBNET = os.environ.get("OPENVPN_SUBNET", "172.16.10.")
 OPENVPN_NETMASK = os.environ.get("OPENVPN_NETMASK", "255.255.255.128")
 OPENVPN_PORT = int(os.environ.get("OPENVPN_PORT", "1194"))
+# Serializa el alta: leer las IPs ocupadas y escribir la nueva no es atómico,
+# y dos altas simultáneas podrían quedarse con la misma dirección.
+_ovpn_lock = asyncio.Lock()
 
 OPENVPN_PROFILES = {
     "v6": {
@@ -981,6 +1065,18 @@ def _ovpn_allocate_ip(version: str, username: str) -> str:
     raise HTTPException(409, f"No quedan IPs libres en el rango {version} del túnel")
 
 
+def _atomic_write(path: Path, content: str, mode: int) -> None:
+    """Escribe a un temporal y renombra. Un corte a media escritura dejaría el
+    archivo de credenciales truncado y tumbaría el acceso de todos los routers."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _ovpn_write_credentials(username: str, password: str, tunnel_ip: str) -> None:
     """Registra al router en el servidor OpenVPN: contraseña en el archivo de
     auth y su IP fija en el client-config-dir."""
@@ -998,18 +1094,16 @@ def _ovpn_write_credentials(username: str, password: str, tunnel_ip: str) -> Non
         existing = OPENVPN_AUTH_FILE.read_text().splitlines() if OPENVPN_AUTH_FILE.is_file() else []
         kept = [ln for ln in existing if ln.strip() and not ln.lower().startswith(f"{username.lower()}:")]
         kept.append(f"{username}:{digest}")
-        OPENVPN_AUTH_FILE.write_text("\n".join(kept) + "\n")
+        _atomic_write(OPENVPN_AUTH_FILE, "\n".join(kept) + "\n", 0o640)
         # openvpn corre como `nobody` tras soltar privilegios: necesita leerlo.
-        os.chmod(OPENVPN_AUTH_FILE, 0o640)
         try:
             import shutil
             shutil.chown(OPENVPN_AUTH_FILE, user="root", group="nogroup")
-        except (LookupError, PermissionError):
+        except (LookupError, PermissionError, OSError):
             pass
 
-        ccd = OPENVPN_CCD_DIR / username
-        ccd.write_text(f"ifconfig-push {tunnel_ip} {OPENVPN_NETMASK}\n")
-        os.chmod(ccd, 0o644)
+        _atomic_write(OPENVPN_CCD_DIR / username,
+                      f"ifconfig-push {tunnel_ip} {OPENVPN_NETMASK}\n", 0o644)
     except OSError as e:
         raise HTTPException(500, f"No se pudo escribir la configuración de OpenVPN: {e}")
 
@@ -1022,49 +1116,73 @@ def _ovpn_remove_credentials(username: str) -> None:
                 ln for ln in OPENVPN_AUTH_FILE.read_text().splitlines()
                 if ln.strip() and not ln.lower().startswith(f"{username.lower()}:")
             ]
-            OPENVPN_AUTH_FILE.write_text(("\n".join(kept) + "\n") if kept else "")
-            os.chmod(OPENVPN_AUTH_FILE, 0o640)
+            _atomic_write(OPENVPN_AUTH_FILE, ("\n".join(kept) + "\n") if kept else "", 0o640)
         (OPENVPN_CCD_DIR / username).unlink(missing_ok=True)
     except OSError as e:
         logger.warning("no se pudo revocar la VPN de %s: %s", username, e)
 
 
+def _ros_quote(value: str) -> str:
+    """Escapa un valor que se interpola en el script de RouterOS. Sin esto, un
+    nombre de router con comillas o saltos de línea podría inyectar comandos."""
+    return (str(value or "")
+            .replace("\\", "\\\\").replace('"', '\\"')
+            .replace("\r", " ").replace("\n", " "))
+
+
 def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
                        vpn_user: str, vpn_password: str, tunnel_ip: str,
                        api_user: str, api_password: str, api_port: int) -> str:
-    """Script .rsc listo para pegar en el terminal del Mikrotik."""
+    """Script .rsc listo para pegar en el terminal del Mikrotik. Es idempotente:
+    volver a pegarlo deja el router en el mismo estado, no duplica nada."""
     profile = OPENVPN_PROFILES[version]
     server_ip = f"{OPENVPN_SUBNET}{profile['server_host']}"
+    name_q = _ros_quote(device_name)
+    vpn_user_q, vpn_pass_q = _ros_quote(vpn_user), _ros_quote(vpn_password)
+    api_user_q, api_pass_q = _ros_quote(api_user), _ros_quote(api_password)
 
     # RouterOS 6 no tiene el parámetro `protocol` (su cliente OpenVPN es solo
     # TCP); incluirlo haría fallar el comando. En 7.4+ sí hay que declararlo.
     protocol_line = f"    protocol={profile['protocol']} \\\n" if version == "v7" else ""
 
     return f"""# ============================================================
-# Sistema ISP · Vincular "{device_name}" por OpenVPN
+# Sistema ISP · Vincular "{name_q}" por OpenVPN
 # Perfil: {profile['label']}
 # Pega este bloque completo en  /system > New Terminal  del router.
+# Se puede volver a pegar sin problema: no duplica configuración.
 # ============================================================
 
-# 1) Túnel OpenVPN hacia el CRM
+# 1) Reloj en hora: si el router va desfasado, el TLS del túnel falla
+/system ntp client set enabled=yes
+
+# 2) Túnel OpenVPN hacia el CRM
 /interface ovpn-client
 remove [find name="ovpn-crm"]
 add name=ovpn-crm connect-to={public_ip} port={OPENVPN_PORT} \\
-{protocol_line}    user="{vpn_user}" password="{vpn_password}" certificate=none \\
-    auth={profile['auth']} cipher={profile['cipher']} \\
+{protocol_line}    user="{vpn_user_q}" password="{vpn_pass_q}" certificate=none \\
+    mode=ip auth={profile['auth']} cipher={profile['cipher']} \\
     add-default-route=no comment="Sistema ISP"
 
-# 2) Abrir la API solo hacia el CRM, por dentro del túnel
+# 3) Abrir la API solo hacia el CRM, por dentro del túnel
 /ip service
 set [find name=api] disabled=no port={api_port} address={server_ip}/32
 
-# 3) Usuario de la API que usará el CRM
+# 4) Firewall: aceptar la API solo desde el CRM por el túnel.
+#    /ip service ya restringe por IP, pero esto lo deja también a nivel de red
+#    y por encima de cualquier regla de drop que tengas más abajo.
+/ip firewall filter
+remove [find comment="Sistema ISP API"]
+add chain=input in-interface=ovpn-crm src-address={server_ip} \\
+    protocol=tcp dst-port={api_port} action=accept \\
+    place-before=0 comment="Sistema ISP API"
+
+# 5) Usuario de la API que usará el CRM
 :do {{ /user group add name=crm-api policy=read,write,api,test,sensitive }} on-error={{}}
 /user
-remove [find name="{api_user}"]
-add name="{api_user}" password="{api_password}" group=crm-api comment="Sistema ISP"
+remove [find name="{api_user_q}"]
+add name="{api_user_q}" password="{api_pass_q}" group=crm-api comment="Sistema ISP"
 
-# 4) Comprobar
+# 6) Comprobar
 /interface ovpn-client print
 # Debe aparecer la bandera R (running). Este router quedará en {tunnel_ip}.
 # Luego vuelve al CRM y presiona "Probar conexión".
@@ -1089,15 +1207,12 @@ async def mikrotik_openvpn_provision(device_id: str, payload: OpenVpnProvisionIn
 
     version = payload.version
     username = d.get("vpn_user") or _ovpn_slug(d.get("name", ""))
-    password = d.get("vpn_password") or ""
+    password = device_secret(d, "vpn_password")
     if payload.regenerate or not password:
         password = _ovpn_random_secret()
 
-    tunnel_ip = _ovpn_allocate_ip(version, username)
-    _ovpn_write_credentials(username, password, tunnel_ip)
-
     api_user = d.get("api_user") or f"crm-{username}"[:32]
-    api_password = d.get("api_password") or ""
+    api_password = device_secret(d, "api_password")
     if payload.regenerate or not api_password:
         api_password = _ovpn_random_secret()
     api_port = int(d.get("api_port") or 8728)
@@ -1108,20 +1223,27 @@ async def mikrotik_openvpn_provision(device_id: str, payload: OpenVpnProvisionIn
     if not public_ip:
         raise HTTPException(400, "Falta la IP pública del servidor (VPN > Datos del servidor)")
 
-    await db.devices.update_one({"id": device_id}, {"$set": {
-        "host": tunnel_ip,
-        "api_enabled": True,
-        "api_port": api_port,
-        "api_user": api_user,
-        "api_password": api_password,
-        "connection": "vpn",
-        "vpn_protocol": "openvpn",
-        "vpn_user": username,
-        "vpn_password": password,
-        "ros_version": version,
-        "vpn_provisioned_at": now_iso(),
-        "updated_at": now_iso(),
-    }})
+    # Bajo candado: elegir IP libre y escribirla tienen que ser un solo paso, o
+    # dos altas a la vez podrían llevarse la misma dirección.
+    async with _ovpn_lock:
+        tunnel_ip = _ovpn_allocate_ip(version, username)
+        _ovpn_write_credentials(username, password, tunnel_ip)
+
+        await db.devices.update_one({"id": device_id}, {"$set": {
+            "host": tunnel_ip,
+            "api_enabled": True,
+            "api_port": api_port,
+            "api_user": api_user,
+            "api_password_enc": encrypt_secret(api_password),
+            "connection": "vpn",
+            "vpn_protocol": "openvpn",
+            "vpn_user": username,
+            "vpn_password_enc": encrypt_secret(password),
+            "ros_version": version,
+            "vpn_status": "pending",
+            "vpn_provisioned_at": now_iso(),
+            "updated_at": now_iso(),
+        }, "$unset": {"api_password": "", "vpn_password": ""}})
 
     script = _ovpn_build_script(
         version=version, device_name=d.get("name", ""), public_ip=public_ip,
@@ -1193,9 +1315,10 @@ async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
     add("Protocolo VPN definido", bool(d.get("vpn_protocol")), (d.get("vpn_protocol") or "").upper() or "no seleccionado",
         fix="Reconfigura y elegí WireGuard o L2TP." if not d.get("vpn_protocol") else "")
     if proto == "l2tp":
-        add("Credenciales L2TP", bool(d.get("vpn_user") and d.get("vpn_password")),
-            "usuario/contraseña completos" if d.get("vpn_user") and d.get("vpn_password") else "faltan credenciales",
-            fix="Reconfigura y presiona 'Autogenerar' en Usuario VPN." if not (d.get("vpn_user") and d.get("vpn_password")) else "")
+        _has_vpn = bool(d.get("vpn_user") and device_secret(d, "vpn_password"))
+        add("Credenciales L2TP", _has_vpn,
+            "usuario/contraseña completos" if _has_vpn else "faltan credenciales",
+            fix="Reconfigura y presiona 'Autogenerar' en Usuario VPN." if not _has_vpn else "")
     else:
         add("Public Key del servidor", bool(cfg.get("server_public_key")),
             "configurada" if cfg.get("server_public_key") else "sin configurar",
@@ -1203,9 +1326,10 @@ async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
     add("IP pública del CRM", bool(cfg.get("public_ip")), cfg.get("public_ip") or "sin definir",
         fix="Edita 'Datos del servidor' y completá la IP pública." if not cfg.get("public_ip") else "")
     if d.get("api_enabled"):
-        add("Usuario API", bool(d.get("api_user") and d.get("api_password")),
-            (d.get("api_user") or "") + (" · pass ok" if d.get("api_password") else " · pass vacío"),
-            fix="Reconfigura y presiona 'Generar credenciales API'." if not (d.get("api_user") and d.get("api_password")) else "")
+        _has_api_pwd = bool(device_secret(d, "api_password"))
+        add("Usuario API", bool(d.get("api_user")) and _has_api_pwd,
+            (d.get("api_user") or "") + (" · pass ok" if _has_api_pwd else " · pass vacío"),
+            fix="Reconfigura y presiona 'Generar credenciales API'." if not (d.get("api_user") and _has_api_pwd) else "")
     else:
         add("API deshabilitada", True, "gestión de sesión sólo por túnel", fix="")
     add("Modo de gestión", bool(d.get("management_modes")),
@@ -1297,7 +1421,7 @@ async def mikrotik_rest_sync(device_id: str, _: dict = Depends(require_roles("ow
 
     url = (d.get("rest_api_url") or "").rstrip("/")
     user = d.get("api_user") or ""
-    pwd = d.get("api_password") or ""
+    pwd = device_secret(d, "api_password")
     if not url or not user or not pwd:
         raise HTTPException(400, "Configura URL REST + usuario y contraseña API antes de sincronizar.")
     if not url.lower().startswith(("http://", "https://")):
@@ -2373,7 +2497,7 @@ async def dashboard(_: dict = Depends(get_current_user)):
         p["client_name"] = clients_map.get(p.get("client_id"), "—")
 
     open_leads = await db.leads.count_documents({"status": {"$in": ["new", "in_progress"]}})
-    devices = await db.devices.find({}, {"_id": 0}).to_list(500)
+    devices = await db.devices.find({}, {"_id": 0, **DEVICE_SECRET_PROJECTION}).to_list(500)
     mikrotiks = [d for d in devices if d.get("kind") == "mikrotik"]
     olts = [d for d in devices if d.get("kind") == "olt"]
 
@@ -4177,7 +4301,7 @@ async def mikrotik_ros_test(device_id: str,
     if not host or host == "-":
         raise HTTPException(400, "El router no tiene host/IP configurado")
     user = d.get("api_user") or ""
-    pwd = d.get("api_password") or ""
+    pwd = device_secret(d, "api_password")
     if not user or not pwd:
         raise HTTPException(400, "Configura usuario y contraseña API en la edición del router")
     port = int(d.get("api_port") or 8728)
@@ -4194,6 +4318,7 @@ async def mikrotik_ros_test(device_id: str,
             "last_ros_test_at": started,
             "last_ros_test_ok": False,
             "last_ros_test_error": str(e)[:300],
+            "vpn_status": "offline",
         }})
         raise HTTPException(424, str(e))
 
@@ -4204,6 +4329,8 @@ async def mikrotik_ros_test(device_id: str,
         "last_ros_test_ok": True,
         "last_ros_test_error": "",
         "ros_info": snapshot,
+        "vpn_status": "online",
+        "last_seen": started,
     }})
     return {"tested_at": started, **result}
 
