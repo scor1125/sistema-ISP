@@ -627,7 +627,9 @@ async def login(payload: LoginIn, response: Response):
     if user.get("active") is False:
         raise HTTPException(403, "Usuario desactivado")
     token = create_access_token(user["id"], user["email"], user["role"])
-    response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none",
+    _is_https = os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https")
+    response.set_cookie("access_token", token, httponly=True, secure=_is_https,
+                        samesite="none" if _is_https else "lax",
                         max_age=int(ACCESS_TTL.total_seconds()), path="/")
     return {
         "token": token,
@@ -811,7 +813,6 @@ api.include_router(crud_router("/extras", ExtraServiceIn, "extras"))
 api.include_router(crud_router("/leads", LeadIn, "leads"))
 api.include_router(crud_router("/tasks", TaskIn, "tasks"))
 api.include_router(crud_router("/devices", DeviceIn, "devices"))
-api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections"))
 
 # ---------- VPN helpers ----------
 @api.post("/vpn/{vpn_id}/generate-config")
@@ -879,6 +880,11 @@ async def update_vpn_server_info(payload: dict, _: dict = Depends(require_roles(
     payload = {k: v for k, v in payload.items() if v is not None}
     await db.config.update_one({"key": "server_vpn"}, {"$set": {"value": payload, "updated_at": now_iso()}}, upsert=True)
     return {"ok": True, "value": payload}
+
+# Registrado despues de las rutas especificas /vpn/server-info: FastAPI/Starlette
+# empareja por orden de registro, y una ruta generica /vpn/{vpn_id} registrada
+# antes interceptaria "server-info" como si fuera un ID.
+api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections"))
 
 @api.post("/devices/{device_id}/mikrotik-test")
 async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
@@ -2333,9 +2339,10 @@ async def portal_login(payload: PortalLoginIn, response: Response):
         raise HTTPException(401, "PIN inválido")
 
     token = create_portal_token(client["id"], client.get("phone", ""))
+    _is_https = os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https")
     response.set_cookie(
         "portal_token", token,
-        max_age=30 * 24 * 3600, httponly=True, secure=True, samesite="lax", path="/",
+        max_age=30 * 24 * 3600, httponly=True, secure=_is_https, samesite="lax", path="/",
     )
     return {"token": token, "client": _sanitize_client_portal({k: v for k, v in client.items() if k != "portal_pin_hash"})}
 
