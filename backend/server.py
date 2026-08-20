@@ -29,6 +29,7 @@ api = APIRouter(prefix="/api")
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
 ACCESS_TTL = timedelta(hours=12)
+COOKIE_PATH = os.environ.get("COOKIE_PATH", "/")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("isp_crm")
@@ -630,7 +631,7 @@ async def login(payload: LoginIn, response: Response):
     _is_https = os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https")
     response.set_cookie("access_token", token, httponly=True, secure=_is_https,
                         samesite="none" if _is_https else "lax",
-                        max_age=int(ACCESS_TTL.total_seconds()), path="/")
+                        max_age=int(ACCESS_TTL.total_seconds()), path=COOKIE_PATH)
     return {
         "token": token,
         "user": {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"]}
@@ -638,7 +639,7 @@ async def login(payload: LoginIn, response: Response):
 
 @api.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("access_token", path=COOKIE_PATH)
     return {"ok": True}
 
 @api.get("/auth/me")
@@ -2342,13 +2343,13 @@ async def portal_login(payload: PortalLoginIn, response: Response):
     _is_https = os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https")
     response.set_cookie(
         "portal_token", token,
-        max_age=30 * 24 * 3600, httponly=True, secure=_is_https, samesite="lax", path="/",
+        max_age=30 * 24 * 3600, httponly=True, secure=_is_https, samesite="lax", path=COOKIE_PATH,
     )
     return {"token": token, "client": _sanitize_client_portal({k: v for k, v in client.items() if k != "portal_pin_hash"})}
 
 @api.post("/portal/logout")
 async def portal_logout(response: Response):
-    response.delete_cookie("portal_token", path="/")
+    response.delete_cookie("portal_token", path=COOKIE_PATH)
     return {"ok": True}
 
 @api.get("/portal/me")
