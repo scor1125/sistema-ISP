@@ -89,7 +89,14 @@ def _connect_sync(host: str, port: int, user: str, password: str,
             "raw": info,
         }
     except routeros_api.exceptions.RouterOsApiConnectionError as e:
-        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {e}") from e
+        # Algunos fallos de esta librería llegan sin texto (p. ej. cuando el
+        # puerto acepta la conexión pero no habla el protocolo de RouterOS),
+        # y "No se pudo conectar a X — " a secas no le dice nada al operador.
+        detail = str(e).strip() or (
+            f"el puerto {port} respondió pero no con el protocolo de la API de RouterOS. "
+            "Revisa que /ip service tenga 'api' habilitado en ese puerto"
+        )
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
     except routeros_api.exceptions.RouterOsApiCommunicationError as e:
         # Includes login failures ("invalid user name or password")
         raise MikrotikRosError(f"Autenticación falló — verifica usuario/contraseña API: {e}") from e

@@ -485,7 +485,8 @@ class DeviceIn(BaseModel):
     location: Optional[str] = ""
     notes: Optional[str] = ""
     # --- Mikrotik wizard extras ---
-    vpn_protocol: Optional[Literal["wireguard","l2tp"]] = None
+    vpn_protocol: Optional[Literal["wireguard","l2tp","openvpn"]] = None
+    ros_version: Optional[Literal["v6","v7"]] = None  # dialecto OpenVPN del router
     vpn_user: Optional[str] = ""
     vpn_password: Optional[str] = ""
     vpn_public_key: Optional[str] = ""  # router pubkey when WG
@@ -894,6 +895,273 @@ async def update_vpn_server_info(payload: dict, _: dict = Depends(require_roles(
 # empareja por orden de registro, y una ruta generica /vpn/{vpn_id} registrada
 # antes interceptaria "server-info" como si fuera un ID.
 api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections"))
+
+# ---------- OpenVPN: alta de routers Mikrotik ----------
+# El servidor OpenVPN corre en el mismo host que este backend, con dos listeners
+# en el puerto 1194 porque RouterOS 6 y 7 no hablan el mismo dialecto:
+#   v6  -> TCP  + AES-256-CBC/SHA1   (v6 no soporta UDP ni AES-GCM)
+#   v7  -> UDP  + AES-256-GCM        (GCM ya autentica, por eso auth=none)
+# Cada router recibe usuario/contraseña propios (sin certificado de cliente) y
+# una IP fija del túnel, que es la que el CRM usa luego para hablarle por la API.
+OPENVPN_AUTH_FILE = Path(os.environ.get("OPENVPN_AUTH_FILE", "/etc/openvpn/auth/psw-file"))
+OPENVPN_CCD_DIR = Path(os.environ.get("OPENVPN_CCD_DIR", "/etc/openvpn/ccd"))
+OPENVPN_SUBNET = os.environ.get("OPENVPN_SUBNET", "172.1.10.")
+OPENVPN_NETMASK = os.environ.get("OPENVPN_NETMASK", "255.255.255.128")
+OPENVPN_PORT = int(os.environ.get("OPENVPN_PORT", "1194"))
+
+OPENVPN_PROFILES = {
+    "v6": {
+        "label": "RouterOS 6.x (o 7.x anterior a 7.4)",
+        "protocol": "tcp", "server_host": 1, "first_host": 2, "last_host": 126,
+        "cipher": "aes256", "auth": "sha1",
+    },
+    "v7": {
+        "label": "RouterOS 7.4 en adelante",
+        "protocol": "udp", "server_host": 129, "first_host": 130, "last_host": 254,
+        "cipher": "aes256-gcm", "auth": "none",
+    },
+}
+
+
+def _ovpn_slug(name: str) -> str:
+    """Usuario VPN estable derivado del nombre del router."""
+    import re
+    import unicodedata
+    plain = unicodedata.normalize("NFD", name or "")
+    plain = "".join(c for c in plain if unicodedata.category(c) != "Mn")
+    slug = re.sub(r"[^a-z0-9-]", "", plain.lower().replace(" ", "-").replace("_", "-"))
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "router"
+
+
+def _ovpn_random_secret(length: int = 16) -> str:
+    """Contraseña solo alfanumérica: se pega dentro de un script de RouterOS,
+    donde comillas, $, ; o barras romperían el comando."""
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _ovpn_ccd_ip(path: Path) -> Optional[str]:
+    try:
+        for line in path.read_text().splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == "ifconfig-push":
+                return parts[1]
+    except OSError:
+        pass
+    return None
+
+
+def _ovpn_allocate_ip(version: str, username: str) -> str:
+    """IP libre del rango de esa versión. Si el router ya tenía una asignada,
+    la conserva (re-generar el script no debe cambiarle la IP)."""
+    profile = OPENVPN_PROFILES[version]
+    own = OPENVPN_CCD_DIR / username
+    if own.is_file():
+        current = _ovpn_ccd_ip(own)
+        if current and current.startswith(OPENVPN_SUBNET):
+            host = int(current.rsplit(".", 1)[1])
+            if profile["first_host"] <= host <= profile["last_host"]:
+                return current
+
+    taken = set()
+    if OPENVPN_CCD_DIR.is_dir():
+        for f in OPENVPN_CCD_DIR.iterdir():
+            if f.is_file() and f.name != username:
+                ip = _ovpn_ccd_ip(f)
+                if ip:
+                    taken.add(ip)
+
+    for host in range(profile["first_host"], profile["last_host"] + 1):
+        candidate = f"{OPENVPN_SUBNET}{host}"
+        if candidate not in taken:
+            return candidate
+    raise HTTPException(409, f"No quedan IPs libres en el rango {version} del túnel")
+
+
+def _ovpn_write_credentials(username: str, password: str, tunnel_ip: str) -> None:
+    """Registra al router en el servidor OpenVPN: contraseña en el archivo de
+    auth y su IP fija en el client-config-dir."""
+    import hashlib
+
+    if not OPENVPN_AUTH_FILE.parent.is_dir() or not OPENVPN_CCD_DIR.is_dir():
+        raise HTTPException(
+            503,
+            "Este servidor no tiene el servicio OpenVPN configurado "
+            f"({OPENVPN_AUTH_FILE.parent} / {OPENVPN_CCD_DIR} no existen).",
+        )
+
+    digest = hashlib.sha256(password.encode()).hexdigest()
+    try:
+        existing = OPENVPN_AUTH_FILE.read_text().splitlines() if OPENVPN_AUTH_FILE.is_file() else []
+        kept = [ln for ln in existing if ln.strip() and not ln.lower().startswith(f"{username.lower()}:")]
+        kept.append(f"{username}:{digest}")
+        OPENVPN_AUTH_FILE.write_text("\n".join(kept) + "\n")
+        # openvpn corre como `nobody` tras soltar privilegios: necesita leerlo.
+        os.chmod(OPENVPN_AUTH_FILE, 0o640)
+        try:
+            import shutil
+            shutil.chown(OPENVPN_AUTH_FILE, user="root", group="nogroup")
+        except (LookupError, PermissionError):
+            pass
+
+        ccd = OPENVPN_CCD_DIR / username
+        ccd.write_text(f"ifconfig-push {tunnel_ip} {OPENVPN_NETMASK}\n")
+        os.chmod(ccd, 0o644)
+    except OSError as e:
+        raise HTTPException(500, f"No se pudo escribir la configuración de OpenVPN: {e}")
+
+
+def _ovpn_remove_credentials(username: str) -> None:
+    """Revoca el acceso VPN de un router (al eliminarlo del CRM)."""
+    try:
+        if OPENVPN_AUTH_FILE.is_file():
+            kept = [
+                ln for ln in OPENVPN_AUTH_FILE.read_text().splitlines()
+                if ln.strip() and not ln.lower().startswith(f"{username.lower()}:")
+            ]
+            OPENVPN_AUTH_FILE.write_text(("\n".join(kept) + "\n") if kept else "")
+            os.chmod(OPENVPN_AUTH_FILE, 0o640)
+        (OPENVPN_CCD_DIR / username).unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning("no se pudo revocar la VPN de %s: %s", username, e)
+
+
+def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
+                       vpn_user: str, vpn_password: str, tunnel_ip: str,
+                       api_user: str, api_password: str, api_port: int) -> str:
+    """Script .rsc listo para pegar en el terminal del Mikrotik."""
+    profile = OPENVPN_PROFILES[version]
+    server_ip = f"{OPENVPN_SUBNET}{profile['server_host']}"
+
+    # RouterOS 6 no tiene el parámetro `protocol` (su cliente OpenVPN es solo
+    # TCP); incluirlo haría fallar el comando. En 7.4+ sí hay que declararlo.
+    protocol_line = f"    protocol={profile['protocol']} \\\n" if version == "v7" else ""
+
+    return f"""# ============================================================
+# Sistema ISP · Vincular "{device_name}" por OpenVPN
+# Perfil: {profile['label']}
+# Pega este bloque completo en  /system > New Terminal  del router.
+# ============================================================
+
+# 1) Túnel OpenVPN hacia el CRM
+/interface ovpn-client
+remove [find name="ovpn-crm"]
+add name=ovpn-crm connect-to={public_ip} port={OPENVPN_PORT} \\
+{protocol_line}    user="{vpn_user}" password="{vpn_password}" certificate=none \\
+    auth={profile['auth']} cipher={profile['cipher']} \\
+    add-default-route=no comment="Sistema ISP"
+
+# 2) Abrir la API solo hacia el CRM, por dentro del túnel
+/ip service
+set [find name=api] disabled=no port={api_port} address={server_ip}/32
+
+# 3) Usuario de la API que usará el CRM
+:do {{ /user group add name=crm-api policy=read,write,api,test,sensitive }} on-error={{}}
+/user
+remove [find name="{api_user}"]
+add name="{api_user}" password="{api_password}" group=crm-api comment="Sistema ISP"
+
+# 4) Comprobar
+/interface ovpn-client print
+# Debe aparecer la bandera R (running). Este router quedará en {tunnel_ip}.
+# Luego vuelve al CRM y presiona "Probar conexión".
+"""
+
+
+class OpenVpnProvisionIn(BaseModel):
+    version: Literal["v6", "v7"] = "v7"
+    regenerate: bool = False  # fuerza credenciales nuevas
+
+
+@api.post("/devices/{device_id}/openvpn-provision")
+async def mikrotik_openvpn_provision(device_id: str, payload: OpenVpnProvisionIn,
+                                     _: dict = Depends(require_roles("owner", "admin"))):
+    """Da de alta el router en el servidor OpenVPN y devuelve el script listo
+    para pegar. Reutiliza las credenciales ya emitidas salvo que se pida
+    regenerarlas, para que volver a ver el script no rompa un túnel que ya
+    estaba levantado."""
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+
+    version = payload.version
+    username = d.get("vpn_user") or _ovpn_slug(d.get("name", ""))
+    password = d.get("vpn_password") or ""
+    if payload.regenerate or not password:
+        password = _ovpn_random_secret()
+
+    tunnel_ip = _ovpn_allocate_ip(version, username)
+    _ovpn_write_credentials(username, password, tunnel_ip)
+
+    api_user = d.get("api_user") or f"crm-{username}"[:32]
+    api_password = d.get("api_password") or ""
+    if payload.regenerate or not api_password:
+        api_password = _ovpn_random_secret()
+    api_port = int(d.get("api_port") or 8728)
+
+    cfg_doc = await db.config.find_one({"key": "server_vpn"}, {"_id": 0}) or {}
+    cfg = cfg_doc.get("value", {}) if isinstance(cfg_doc, dict) else {}
+    public_ip = cfg.get("public_ip") or os.environ.get("PUBLIC_HOST", "")
+    if not public_ip:
+        raise HTTPException(400, "Falta la IP pública del servidor (VPN > Datos del servidor)")
+
+    await db.devices.update_one({"id": device_id}, {"$set": {
+        "host": tunnel_ip,
+        "api_enabled": True,
+        "api_port": api_port,
+        "api_user": api_user,
+        "api_password": api_password,
+        "connection": "vpn",
+        "vpn_protocol": "openvpn",
+        "vpn_user": username,
+        "vpn_password": password,
+        "ros_version": version,
+        "vpn_provisioned_at": now_iso(),
+        "updated_at": now_iso(),
+    }})
+
+    script = _ovpn_build_script(
+        version=version, device_name=d.get("name", ""), public_ip=public_ip,
+        vpn_user=username, vpn_password=password, tunnel_ip=tunnel_ip,
+        api_user=api_user, api_password=api_password, api_port=api_port,
+    )
+    return {
+        "version": version,
+        "label": OPENVPN_PROFILES[version]["label"],
+        "protocol": OPENVPN_PROFILES[version]["protocol"],
+        "public_ip": public_ip,
+        "port": OPENVPN_PORT,
+        "vpn_user": username,
+        "vpn_password": password,
+        "tunnel_ip": tunnel_ip,
+        "api_user": api_user,
+        "api_password": api_password,
+        "api_port": api_port,
+        "filename": f"sistema-isp-{username}-{version}.rsc",
+        "script": script,
+    }
+
+
+@api.post("/devices/{device_id}/openvpn-revoke")
+async def mikrotik_openvpn_revoke(device_id: str,
+                                  _: dict = Depends(require_roles("owner", "admin"))):
+    """Quita al router del servidor OpenVPN. El borrado genérico de /devices no
+    puede hacerlo (no sabe de VPN), así que la UI llama a esto antes de borrar
+    para no dejar credenciales vivas de un equipo que ya no existe."""
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+    username = d.get("vpn_user")
+    if not username:
+        return {"ok": True, "revoked": False, "detail": "El router no tenía VPN asignada"}
+    _ovpn_remove_credentials(username)
+    await db.devices.update_one({"id": device_id}, {"$set": {
+        "vpn_password": "", "vpn_provisioned_at": "", "updated_at": now_iso(),
+    }})
+    return {"ok": True, "revoked": True, "vpn_user": username}
 
 @api.post("/devices/{device_id}/mikrotik-test")
 async def mikrotik_test(device_id: str, _: dict = Depends(get_current_user)):
