@@ -59,7 +59,7 @@ function App() {
   useEffect(() => { initThemeFromStorage(); }, []);
   return (
     <AuthProvider>
-      <BrowserRouter basename={process.env.PUBLIC_URL}>
+      <BrowserRouter basename={process.env.REACT_APP_BASENAME || ""}>
         <Routes>
           <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
           {/* Public client-facing portal — no staff auth required, uses its own portal cookie */}
