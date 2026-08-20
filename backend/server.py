@@ -30,6 +30,14 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
 ACCESS_TTL = timedelta(hours=12)
 COOKIE_PATH = os.environ.get("COOKIE_PATH", "/")
+# Distinct cookie names per deployment. Two deployments on the same host would
+# otherwise both send a cookie named "access_token" (the browser sends every
+# same-name cookie whose path matches, so a path-scoped cookie does NOT prevent
+# the collision) and whichever one the server parses last wins — producing
+# "Token inválido" when it was signed with the other deployment's JWT_SECRET.
+COOKIE_SUFFIX = os.environ.get("COOKIE_SUFFIX", "")
+ACCESS_COOKIE = f"access_token{COOKIE_SUFFIX}"
+PORTAL_COOKIE = f"portal_token{COOKIE_SUFFIX}"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("isp_crm")
@@ -67,7 +75,7 @@ def create_portal_token(client_id: str, phone: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 async def get_portal_client(request: Request) -> dict:
-    token = request.cookies.get("portal_token")
+    token = request.cookies.get(PORTAL_COOKIE)
     if not token:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
@@ -167,7 +175,7 @@ async def _enforce_time_restrictions(user: dict):
 
 
 async def get_current_user(request: Request) -> dict:
-    token = request.cookies.get("access_token")
+    token = request.cookies.get(ACCESS_COOKIE)
     if not token:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
@@ -629,7 +637,7 @@ async def login(payload: LoginIn, response: Response):
         raise HTTPException(403, "Usuario desactivado")
     token = create_access_token(user["id"], user["email"], user["role"])
     _is_https = os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https")
-    response.set_cookie("access_token", token, httponly=True, secure=_is_https,
+    response.set_cookie(ACCESS_COOKIE, token, httponly=True, secure=_is_https,
                         samesite="none" if _is_https else "lax",
                         max_age=int(ACCESS_TTL.total_seconds()), path=COOKIE_PATH)
     return {
@@ -639,7 +647,7 @@ async def login(payload: LoginIn, response: Response):
 
 @api.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path=COOKIE_PATH)
+    response.delete_cookie(ACCESS_COOKIE, path=COOKIE_PATH)
     return {"ok": True}
 
 @api.get("/auth/me")
@@ -2342,14 +2350,14 @@ async def portal_login(payload: PortalLoginIn, response: Response):
     token = create_portal_token(client["id"], client.get("phone", ""))
     _is_https = os.environ.get("PUBLIC_BASE_URL", "").lower().startswith("https")
     response.set_cookie(
-        "portal_token", token,
+        PORTAL_COOKIE, token,
         max_age=30 * 24 * 3600, httponly=True, secure=_is_https, samesite="lax", path=COOKIE_PATH,
     )
     return {"token": token, "client": _sanitize_client_portal({k: v for k, v in client.items() if k != "portal_pin_hash"})}
 
 @api.post("/portal/logout")
 async def portal_logout(response: Response):
-    response.delete_cookie("portal_token", path=COOKIE_PATH)
+    response.delete_cookie(PORTAL_COOKIE, path=COOKIE_PATH)
     return {"ok": True}
 
 @api.get("/portal/me")
