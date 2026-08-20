@@ -4,7 +4,7 @@ import { api, formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Wifi, UserPlus, LogIn, CheckCircle2, User, ArrowRight } from "lucide-react";
+import { Wifi, UserPlus, LogIn, CheckCircle2, User, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
@@ -20,6 +20,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [regDone, setRegDone] = useState(false);
   const [regError, setRegError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const onLogin = async (e) => {
     e.preventDefault();
@@ -123,8 +124,22 @@ export default function Login() {
               </div>
               <div>
                 <Label htmlFor="password">Contraseña</Label>
-                <Input id="password" data-testid="login-password" type="password" value={password}
-                  onChange={(e)=>setPassword(e.target.value)} required autoComplete="current-password" />
+                <div className="relative">
+                  <Input id="password" data-testid="login-password"
+                    type={showPassword ? "text" : "password"} value={password}
+                    onChange={(e)=>setPassword(e.target.value)} required autoComplete="current-password"
+                    className="pr-10" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    data-testid="login-password-toggle"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               {error && <div data-testid="login-error" className="text-sm text-destructive">{error}</div>}
               <Button data-testid="login-submit" disabled={loading} type="submit" className="w-full">
