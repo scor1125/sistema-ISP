@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import QRCode from "react-qr-code";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const PROVIDERS = [
   { value: "simulated", label: "Simulado (sin conexión real)" },
@@ -84,7 +85,7 @@ function ConfigDialog({ open, onClose, config, onSaved }) {
     setForm(f => ({ ...f, webhook_token: t }));
   };
 
-  const copy = (text) => { navigator.clipboard.writeText(text); toast("Copiado"); };
+  const copy = (text) => { copyToClipboard(text); toast("Copiado"); };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>

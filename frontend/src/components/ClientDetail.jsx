@@ -7,6 +7,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Wifi, WifiOff, Gauge, Activity, DollarSign, Router, KeyRound, Copy } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const AXIS = "hsl(240 5% 55%)";
 const GRID = "hsl(240 10% 15%)";
@@ -101,7 +102,7 @@ export default function ClientDetail({ client, open, onOpenChange }) {
               size="sm" variant="ghost"
               onClick={() => {
                 if (!client.portal_pin) return;
-                navigator.clipboard.writeText(String(client.portal_pin));
+                copyToClipboard(String(client.portal_pin));
                 toast.success("PIN copiado");
               }}
               disabled={!client.portal_pin}

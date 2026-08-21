@@ -13,6 +13,7 @@ import {
   Copy, ChevronDown, ChevronUp, Webhook, ServerCog,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const fmt = (iso) => {
   if (!iso) return "—";
@@ -197,7 +198,7 @@ export default function MikrotikDynamicPanel() {
   ), [webhookUrl]);
 
   const copy = async (txt, label = "Copiado") => {
-    try { await navigator.clipboard.writeText(txt); toast.success(label); }
+    try { await copyToClipboard(txt); toast.success(label); }
     catch { toast.error("No pude copiar"); }
   };
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -170,17 +171,15 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
 
   const copy = async () => {
     if (!data?.script) return;
-    try {
-      await navigator.clipboard.writeText(data.script);
-      toast.success("Script copiado");
-    } catch { toast.error("No se pudo copiar"); }
+    if (await copyToClipboard(data.script)) toast.success("Script copiado");
+    else toast.error("No se pudo copiar — selecciona el texto y usa Ctrl+C");
   };
 
   const close = (v) => { if (!v) onDone?.(); onOpenChange(v); };
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileCode className="w-4 h-4 text-primary" />
@@ -192,7 +191,7 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           <div>
             <Label className="text-xs mb-1.5 block">1 · Versión de tu RouterOS</Label>
             <Tabs value={version} onValueChange={changeVersion}>
@@ -243,8 +242,13 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
               </div>
 
               <div>
-                <Label className="text-xs mb-1.5 block">2 · Pega esto en el terminal del Mikrotik</Label>
-                <pre className="text-[11px] font-mono bg-background border border-border rounded p-2 overflow-x-auto whitespace-pre max-h-72">
+                <Label className="text-xs mb-1.5 block">
+                  2 · Pega esto en el terminal del Mikrotik
+                  <span className="ml-1 font-normal normal-case text-muted-foreground">
+                    (si el botón de copiar no funciona, haz clic en el recuadro y usa Ctrl+C)
+                  </span>
+                </Label>
+                <pre className="text-[11px] font-mono bg-background border border-border rounded p-2 whitespace-pre-wrap break-words max-h-72 overflow-y-auto select-all">
 {data.script}
                 </pre>
               </div>

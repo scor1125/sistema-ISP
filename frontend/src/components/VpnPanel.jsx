@@ -9,6 +9,7 @@ import {
   Pencil, CheckCircle2, XCircle, Activity, Signal, ArrowUpFromLine, ArrowDownToLine,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const PROTOCOLS = {
   wireguard: { label: "WireGuard", port: 51820 },
@@ -217,7 +218,7 @@ export default function VpnPanel({ mikrotiks }) {
           </DialogHeader>
           <pre className="text-xs bg-muted p-3 rounded-md overflow-x-auto max-h-80 font-mono">{configText}</pre>
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => { navigator.clipboard.writeText(configText); toast.success("Copiado"); }}>
+            <Button variant="outline" onClick={() => { copyToClipboard(configText); toast.success("Copiado"); }}>
               Copiar
             </Button>
             <Button onClick={download}><Download className="w-4 h-4 mr-1" /> Descargar</Button>

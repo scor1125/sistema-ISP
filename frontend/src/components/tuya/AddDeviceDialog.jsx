@@ -11,6 +11,7 @@ import {
   Smartphone, Info, RefreshCw, Power, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 export default function AddDeviceDialog({ open, onOpenChange, onAdded }) {
   const [tab, setTab] = useState("by-id");
@@ -85,7 +86,7 @@ export default function AddDeviceDialog({ open, onOpenChange, onAdded }) {
   const copyToken = async () => {
     if (!token?.token) return;
     try {
-      await navigator.clipboard.writeText(token.token);
+      await copyToClipboard(token.token);
       toast.success("Token copiado");
     } catch { /* ignore */ }
   };

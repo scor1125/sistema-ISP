@@ -14,6 +14,7 @@ import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Colum
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const statusMap = {
   active: { label: "Activo", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
@@ -328,7 +329,7 @@ export default function Clients() {
             duration: 12000,
             action: {
               label: "Copiar PIN",
-              onClick: () => { navigator.clipboard.writeText(data.portal_pin); toast("PIN copiado"); },
+              onClick: () => { copyToClipboard(data.portal_pin); toast("PIN copiado"); },
             },
           });
         } else {

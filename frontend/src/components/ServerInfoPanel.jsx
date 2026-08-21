@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Server, Copy, Pencil, Save, ShieldCheck, Globe, Key, Network } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const FIELDS = [
   { key: "public_ip",         label: "IP pública / Host",         icon: Globe,       hint: "El router usará esto como Endpoint (ejemplo: 190.10.20.30 o vpn.miisp.com)" },
@@ -46,7 +47,7 @@ export default function ServerInfoPanel() {
 
   const copy = async (label, value) => {
     if (!value) return toast.error("Sin valor para copiar");
-    try { await navigator.clipboard.writeText(String(value)); toast.success(`${label} copiado`); }
+    try { await copyToClipboard(String(value)); toast.success(`${label} copiado`); }
     catch { toast.error("No se pudo copiar"); }
   };
 

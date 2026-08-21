@@ -21,6 +21,7 @@ import {
   Layers, Link2, Pencil, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /* ============================================================
    TIA-598 fiber color code (up to 24 strands)
@@ -1170,7 +1171,7 @@ function JsonExportDialog({ open, onOpenChange, data }) {
         </DialogHeader>
         <pre className="bg-black/60 text-emerald-300 font-mono text-xs p-3 rounded max-h-[420px] overflow-auto whitespace-pre">{text}</pre>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { navigator.clipboard.writeText(text); toast.success("JSON copiado"); }}>
+          <Button variant="outline" onClick={() => { copyToClipboard(text); toast.success("JSON copiado"); }}>
             <Copy className="w-4 h-4 mr-1" /> Copiar
           </Button>
           <Button onClick={() => {

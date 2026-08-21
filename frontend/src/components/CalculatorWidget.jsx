@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Calculator as CalcIcon, Delete, X } from "lucide-react";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /**
  * Calculadora rápida en la barra superior.
@@ -159,7 +160,7 @@ export default function CalculatorWidget() {
   );
 
   const copyResult = async () => {
-    try { await navigator.clipboard.writeText(shown.replace(/[^\d.\-eE+]/g, "")); } catch { /* ignore */ }
+    try { await copyToClipboard(shown.replace(/[^\d.\-eE+]/g, "")); } catch { /* ignore */ }
   };
 
   return (
