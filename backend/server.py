@@ -1130,80 +1130,94 @@ def _ros_quote(value: str) -> str:
             .replace("\r", " ").replace("\n", " "))
 
 
+def _ros_ascii(value: str) -> str:
+    """El terminal de RouterOS descarta los caracteres no ASCII al pegar: los
+    acentos desaparecen y, si cayeran dentro de un valor, lo corromperían.
+    Por eso el script se emite en ASCII puro."""
+    import unicodedata
+    plain = unicodedata.normalize("NFD", str(value or ""))
+    plain = "".join(c for c in plain if unicodedata.category(c) != "Mn")
+    return plain.encode("ascii", "replace").decode("ascii")
+
+
 def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
                        vpn_user: str, vpn_password: str, tunnel_ip: str,
                        api_user: str, api_password: str, api_port: int) -> str:
-    """Script .rsc listo para pegar en el terminal del Mikrotik. Es idempotente:
-    volver a pegarlo deja el router en el mismo estado, no duplica nada."""
+    """Script .rsc para pegar en el terminal del Mikrotik.
+
+    Restricciones que impone el terminal de RouterOS, comprobadas contra un
+    router real — romperlas hace que el pegado falle a medias:
+      * un comando por linea: la continuacion con `\` se corta al pegar;
+      * los bloques `:do {{ }} on-error={{ }}` tienen que caber en una sola
+        linea, porque cada linea se interpreta por separado;
+      * solo ASCII.
+    Es idempotente: volver a pegarlo deja el router igual, no duplica nada.
+    """
     profile = OPENVPN_PROFILES[version]
     server_ip = f"{OPENVPN_SUBNET}{profile['server_host']}"
-    name_q = _ros_quote(device_name)
+    name_q = _ros_ascii(_ros_quote(device_name))
     vpn_user_q, vpn_pass_q = _ros_quote(vpn_user), _ros_quote(vpn_password)
     api_user_q, api_pass_q = _ros_quote(api_user), _ros_quote(api_password)
 
-    # RouterOS 6 no tiene el parámetro `protocol` (su cliente OpenVPN es solo
-    # TCP); incluirlo haría fallar el comando. En 7.4+ sí hay que declararlo.
-    protocol_line = f"    protocol={profile['protocol']} \\\n" if version == "v7" else ""
+    # RouterOS 6 no tiene el parametro `protocol` (su cliente OpenVPN es solo
+    # TCP); incluirlo hace fallar el comando. En 7.4+ hay que declararlo.
+    protocol = f"protocol={profile['protocol']} " if version == "v7" else ""
 
-    # El cliente NTP se configura distinto según la versión (`servers=` en 7.x,
-    # `server-dns-names=` / `primary-ntp=` en 6.x) y habilitarlo sin servidores
-    # no sincroniza nada. Se intenta en orden y se ignora el que no aplique.
-    ntp_block = """:do { /system ntp client set enabled=yes servers=pool.ntp.org } on-error={
-  :do { /system ntp client set enabled=yes server-dns-names=pool.ntp.org } on-error={
-    :do { /system ntp client set enabled=yes primary-ntp=162.159.200.1 } on-error={
-      :log warning "Sistema ISP: configura la hora manualmente"
-    }
-  }
-}"""
+    # Habilitar el cliente NTP sin servidores no sincroniza nada, y el nombre
+    # del parametro cambia entre versiones.
+    if version == "v7":
+        ntp = (':do { /system ntp client set enabled=yes servers=pool.ntp.org }'
+               ' on-error={ :log warning "Sistema ISP: revisa la hora del router" }')
+    else:
+        ntp = (':do { /system ntp client set enabled=yes server-dns-names=pool.ntp.org }'
+               ' on-error={ :do { /system ntp client set enabled=yes primary-ntp=162.159.200.1 }'
+               ' on-error={ :log warning "Sistema ISP: revisa la hora del router" } }')
 
-    return f"""# ============================================================
-# Sistema ISP · Vincular "{name_q}" por OpenVPN
-# Perfil: {profile['label']}
-# Pega este bloque completo en  /system > New Terminal  del router.
-# Se puede volver a pegar sin problema: no duplica configuración.
-# ============================================================
+    fw = (f"/ip firewall filter add chain=input in-interface=ovpn-crm"
+          f" src-address={server_ip} protocol=tcp dst-port={api_port} action=accept")
 
-# 1) Reloj en hora: si el router va desfasado, el TLS del túnel falla.
-#    El nombre del parámetro cambia entre versiones, por eso los intentos.
-{ntp_block}
-
-# 2) Túnel OpenVPN hacia el CRM
-/interface ovpn-client
-remove [find name="ovpn-crm"]
-add name=ovpn-crm connect-to={public_ip} port={OPENVPN_PORT} \\
-{protocol_line}    user="{vpn_user_q}" password="{vpn_pass_q}" certificate=none \\
-    mode=ip auth={profile['auth']} cipher={profile['cipher']} \\
-    add-default-route=no comment="Sistema ISP"
-
-# 3) Abrir la API solo hacia el CRM, por dentro del túnel
-/ip service
-set [find name=api] disabled=no port={api_port} address={server_ip}/32
-
-# 4) Firewall: aceptar la API solo desde el CRM por el túnel.
-#    /ip service ya restringe por IP, pero esto lo deja también a nivel de red.
-#    Se intenta poner de primera; si la lista está vacía, place-before falla y
-#    entonces se agrega normal (que en ese caso es lo mismo).
-/ip firewall filter
-remove [find comment="Sistema ISP API"]
-:do {{
-  /ip firewall filter add chain=input in-interface=ovpn-crm src-address={server_ip} \\
-    protocol=tcp dst-port={api_port} action=accept place-before=0 comment="Sistema ISP API"
-}} on-error={{
-  /ip firewall filter add chain=input in-interface=ovpn-crm src-address={server_ip} \\
-    protocol=tcp dst-port={api_port} action=accept comment="Sistema ISP API"
-}}
-
-# 5) Usuario de la API que usará el CRM
-:do {{ /user group add name=crm-api policy=read,write,api,test,sensitive }} on-error={{}}
-/user
-remove [find name="{api_user_q}"]
-add name="{api_user_q}" password="{api_pass_q}" group=crm-api comment="Sistema ISP"
-
-# 6) Comprobar
-/interface ovpn-client print
-# Debe aparecer la bandera R (running). Este router quedará en {tunnel_ip}.
-# Luego vuelve al CRM y presiona "Probar conexión".
-"""
+    lines = [
+        "# ============================================================",
+        f'# Sistema ISP - Vincular "{name_q}" por OpenVPN',
+        f"# Perfil: {_ros_ascii(profile['label'])}",
+        "# Pega este bloque completo en  /system > New Terminal  del router.",
+        "# Se puede volver a pegar sin problema: no duplica nada.",
+        "# ============================================================",
+        "",
+        "# 1) Reloj en hora: si el router va desfasado, falla el TLS del tunel",
+        ntp,
+        "",
+        "# 2) Tunel OpenVPN hacia el CRM",
+        '/interface ovpn-client remove [find name="ovpn-crm"]',
+        (f"/interface ovpn-client add name=ovpn-crm connect-to={public_ip}"
+         f" port={OPENVPN_PORT} {protocol}"
+         f'user="{vpn_user_q}" password="{vpn_pass_q}" certificate=none mode=ip'
+         f" auth={profile['auth']} cipher={profile['cipher']}"
+         f' add-default-route=no comment="Sistema ISP"'),
+        "",
+        "# 3) Abrir la API solo hacia el CRM, por dentro del tunel",
+        f"/ip service set [find name=api] disabled=no port={api_port} address={server_ip}/32",
+        "",
+        "# 4) Firewall: aceptar la API solo desde el CRM por el tunel.",
+        "#    Se intenta poner de primera; si la lista esta vacia, place-before",
+        "#    falla y entonces se agrega normal (que ahi es lo mismo).",
+        '/ip firewall filter remove [find comment="Sistema ISP API"]',
+        (f':do {{ {fw} place-before=0 comment="Sistema ISP API" }}'
+         f' on-error={{ {fw} comment="Sistema ISP API" }}'),
+        "",
+        "# 5) Usuario de la API que usara el CRM",
+        ":do { /user group add name=crm-api policy=read,write,api,test,sensitive } on-error={}",
+        f'/user remove [find name="{api_user_q}"]',
+        (f'/user add name="{api_user_q}" password="{api_pass_q}"'
+         f' group=crm-api comment="Sistema ISP"'),
+        "",
+        "# 6) Comprobar",
+        "/interface ovpn-client print",
+        f"# Debe aparecer la bandera R (running). Este router quedara en {tunnel_ip}.",
+        '# Luego vuelve al CRM y presiona "Probar conexion".',
+        "",
+    ]
+    return _ros_ascii("\n".join(lines))
 
 
 class OpenVpnProvisionIn(BaseModel):
