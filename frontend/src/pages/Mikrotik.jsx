@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -21,7 +22,7 @@ import {
 import {
   Plus, Router as RouterIcon, Pencil, Trash2, Radio, Cpu, Copy,
   CheckCircle2, XCircle, Terminal, ChevronDown, ChevronUp, KeyRound,
-  ShieldCheck, Loader2, FileCode, RefreshCw, Ban,
+  ShieldCheck, Loader2, FileCode, RefreshCw, Ban, Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -196,6 +197,105 @@ function OverdueRulesDialog({ open, onOpenChange }) {
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ============================================================
+   Configurar el servidor PPPoE del router (una vez por router)
+   ============================================================ */
+function PppoeServerDialog({ device, open, onOpenChange, onDone }) {
+  const [interfaceName, setInterfaceName] = useState("");
+  const [poolRanges, setPoolRanges] = useState("10.20.0.2-10.20.0.254");
+  const [rateLimit, setRateLimit] = useState("5M/5M");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    if (!open) { setResult(null); return; }
+    setInterfaceName(device?.interfaces?.[0] || "");
+  }, [open, device]);
+
+  const submit = async () => {
+    if (!interfaceName) return toast.error("Elige la interfaz donde están los ONUs");
+    if (!poolRanges.trim()) return toast.error("Falta el rango de IPs del pool");
+    setSaving(true);
+    try {
+      const { data } = await api.post(`/devices/${device.id}/pppoe-server`, {
+        interface: interfaceName, pool_ranges: poolRanges.trim(), rate_limit: rateLimit,
+      });
+      setResult(data);
+      toast.success("Servidor PPPoE listo");
+      onDone?.();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[95vw] max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Wifi className="w-4 h-4 text-primary" />
+            Configurar servidor PPPoE · {device?.name}
+          </DialogTitle>
+          <DialogDescription>
+            Se hace una sola vez por router. Después, cada cliente en modo PPPoE se
+            conecta solo — el CRM le crea su usuario/contraseña automáticamente.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Interfaz donde están los ONUs</Label>
+            {device?.interfaces?.length ? (
+              <Select value={interfaceName} onValueChange={setInterfaceName}>
+                <SelectTrigger data-testid="pppoe-srv-iface">
+                  <SelectValue placeholder="Seleccionar" />
+                </SelectTrigger>
+                <SelectContent>
+                  {device.interfaces.map((i) => <SelectItem key={i} value={i}>{i}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input value={interfaceName} onChange={(e) => setInterfaceName(e.target.value)}
+                placeholder="Ej: vlan-clientes" data-testid="pppoe-srv-iface-text" />
+            )}
+            <div className="text-[11px] text-muted-foreground mt-1">
+              {device?.interfaces?.length
+                ? "De las interfaces ya sincronizadas de este router."
+                : 'Sin interfaces sincronizadas todavía — sincronízalas desde el campo "Interfaz" al editar un cliente, o escribe el nombre exacto.'}
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Rango de IPs para los clientes PPPoE</Label>
+            <Input value={poolRanges} onChange={(e) => setPoolRanges(e.target.value)}
+              placeholder="10.20.0.2-10.20.0.254" className="font-mono" data-testid="pppoe-srv-pool" />
+            <div className="text-[11px] text-muted-foreground mt-1">
+              Un rango que no choque con otras redes ya usadas en este router.
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Velocidad por defecto (quien no tenga plan con velocidad)</Label>
+            <Input value={rateLimit} onChange={(e) => setRateLimit(e.target.value)}
+              placeholder="5M/5M" className="font-mono" data-testid="pppoe-srv-rate" />
+          </div>
+
+          {result && (
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2 text-xs text-emerald-500">
+              Listo: interfaz <b>{result.interface}</b>, pool <b>{result.pool}</b>, perfil <b>{result.profile}</b>.
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
+          <Button onClick={submit} disabled={saving} data-testid="pppoe-srv-save">
+            {saving ? "Configurando…" : "Configurar"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -643,6 +743,7 @@ export default function Mikrotik() {
   const [testing, setTesting] = useState(null);
   const [scripting, setScripting] = useState(null);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [pppoeSrvDevice, setPppoeSrvDevice] = useState(null);
   const [askDelete, setAskDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -807,6 +908,11 @@ export default function Mikrotik() {
                     title="Reglas de corte por mora para pegar en este router">
                     <Ban className="w-3.5 h-3.5 mr-1" /> Reglas de corte
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => setPppoeSrvDevice(d)}
+                    data-testid={`mk-pppoe-srv-${d.id}`} className="mr-1"
+                    title="Configurar el servidor PPPoE de este router (una vez)">
+                    <Wifi className="w-3.5 h-3.5 mr-1" /> PPPoE
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => setTesting(d)}
                     disabled={!d.host || d.host === "-" || !d.api_user}
                     data-testid={`mk-test-${d.id}`}
@@ -839,6 +945,9 @@ export default function Mikrotik() {
       />
 
       <OverdueRulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
+
+      <PppoeServerDialog device={pppoeSrvDevice} open={!!pppoeSrvDevice}
+        onOpenChange={(v) => { if (!v) setPppoeSrvDevice(null); }} onDone={load} />
 
       <LinkScriptDialog
         device={scripting}

@@ -407,6 +407,16 @@ class ClientIn(BaseModel):
     ip_address: Optional[str] = ""
     mikrotik_server: Optional[str] = ""
     mikrotik_interface: Optional[str] = ""
+    # Cómo se conecta este cliente al Mikrotik:
+    #   "queue" — IP fija + Simple Queue (lo que ya sincroniza el CRM solo).
+    #   "pppoe" — usuario/contraseña PPPoE; el límite de velocidad va en el
+    #             perfil PPP del router, no en una queue por IP.
+    connection_mode: Literal["queue", "pppoe"] = "queue"
+    pppoe_user: Optional[str] = ""
+    pppoe_password: Optional[str] = ""
+    # Perfil PPP a usar (elegido de los que ya existen en el router). Vacío =
+    # el CRM administra uno propio según la velocidad del plan.
+    pppoe_profile: Optional[str] = ""
     wifi_ssid: Optional[str] = ""
     wifi_password: Optional[str] = ""
     tag: Optional[str] = ""
@@ -433,6 +443,10 @@ class ClientUpdate(BaseModel):
     ip_address: Optional[str] = None
     mikrotik_server: Optional[str] = None
     mikrotik_interface: Optional[str] = None
+    connection_mode: Optional[Literal["queue", "pppoe"]] = None
+    pppoe_user: Optional[str] = None
+    pppoe_password: Optional[str] = None
+    pppoe_profile: Optional[str] = None
     wifi_ssid: Optional[str] = None
     wifi_password: Optional[str] = None
     tag: Optional[str] = None
@@ -1408,16 +1422,73 @@ async def mikrotik_sync_interfaces(device_id: str,
             host, port=int(d.get("api_port") or 8728), user=user, password=pwd,
             use_ssl=bool(d.get("api_use_ssl")),
         )
+        pppoe = await ros_pppoe_inventory(
+            host, port=int(d.get("api_port") or 8728), user=user, password=pwd,
+            use_ssl=bool(d.get("api_use_ssl")),
+        )
     except MikrotikRosError as e:
         raise HTTPException(424, str(e))
 
     names = res["interfaces"]
     networks = res["networks"]
+    ppp_profiles = pppoe["ppp_profiles"]
+    pppoe_servers = pppoe["pppoe_servers"]
+    ip_pools = pppoe["ip_pools"]
     await db.devices.update_one({"id": device_id}, {"$set": {
         "interfaces": names, "interface_networks": networks,
+        "ppp_profiles": ppp_profiles, "pppoe_servers": pppoe_servers, "ip_pools": ip_pools,
         "interfaces_synced_at": now_iso(), "updated_at": now_iso(),
     }})
-    return {"ok": True, "interfaces": names, "interface_networks": networks, "synced_at": now_iso()}
+    return {
+        "ok": True, "interfaces": names, "interface_networks": networks,
+        "ppp_profiles": ppp_profiles, "pppoe_servers": pppoe_servers, "ip_pools": ip_pools,
+        "synced_at": now_iso(),
+    }
+
+
+@api.post("/devices/{device_id}/pppoe-server")
+async def mikrotik_create_pppoe_server(device_id: str, payload: dict,
+                                       _: dict = Depends(require_roles("owner", "admin"))):
+    """Arma (o corrige) lo mínimo para que el router empiece a aceptar
+    clientes PPPoE: el pool de IPs, un perfil por defecto, y el servidor
+    escuchando en la interfaz que elija el operador. Se puede volver a llamar
+    sin miedo: actualiza por nombre en vez de duplicar.
+
+    Body: {"interface": "...", "pool_ranges": "10.20.0.2-10.20.0.254",
+           "pool_name"?: "...", "service_name"?: "...",
+           "profile_name"?: "...", "rate_limit"?: "5M/5M"}
+    """
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+    host = d.get("host") or ""
+    user = d.get("api_user") or ""
+    pwd = device_secret(d, "api_password")
+    if not host or host == "-" or not user or not pwd:
+        raise HTTPException(400, "El router aún no tiene VPN/API configuradas — genera su script primero.")
+
+    interface = (payload.get("interface") or "").strip()
+    pool_ranges = (payload.get("pool_ranges") or "").strip()
+    if not interface:
+        raise HTTPException(400, "Falta la interfaz donde escuchará el servidor PPPoE")
+    if not pool_ranges:
+        raise HTTPException(400, "Falta el rango de IPs para el pool (ej: 10.20.0.2-10.20.0.254)")
+
+    try:
+        res = await ros_create_pppoe_server(
+            host, port=int(d.get("api_port") or 8728), user=user, password=pwd,
+            use_ssl=bool(d.get("api_use_ssl")),
+            interface=interface, pool_ranges=pool_ranges,
+            pool_name=(payload.get("pool_name") or "isp-pppoe-pool"),
+            service_name=(payload.get("service_name") or "isp-pppoe"),
+            profile_name=(payload.get("profile_name") or "isp-pppoe-default"),
+            rate_limit=(payload.get("rate_limit") or "5M/5M"),
+        )
+    except MikrotikRosError as e:
+        raise HTTPException(424, str(e))
+
+    await db.devices.update_one({"id": device_id}, {"$set": {"updated_at": now_iso()}})
+    return res
 
 
 @api.post("/devices/{device_id}/openvpn-revoke")
@@ -2025,10 +2096,25 @@ async def create_client(payload: ClientIn, _: dict = Depends(require_permission(
     doc["portal_pin"] = pin_plain
     await db.clients.insert_one(doc)
     doc.pop("_id", None)
+
+    mode = doc.get("connection_mode", "queue")
+    if mode == "queue" and doc.get("ip_address") and doc.get("mikrotik_server") and doc.get("plan_id"):
+        await _sync_client_queue_and_persist(doc)
+        fresh = await db.clients.find_one({"id": doc["id"]}, {"_id": 0})
+        if fresh:
+            doc = fresh
+    elif mode == "pppoe" and doc.get("mikrotik_server") and doc.get("plan_id"):
+        await _sync_client_pppoe_and_persist(doc)
+        fresh = await db.clients.find_one({"id": doc["id"]}, {"_id": 0})
+        if fresh:
+            doc = fresh
     return doc
 
 @api.patch("/clients/{cid}")
 async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(require_permission("clients", "write"))):
+    before = await db.clients.find_one({"id": cid}, {"_id": 0})
+    if not before:
+        raise HTTPException(404, "Cliente no encontrado")
     updates = payload.dict(exclude_none=True)
     if updates.get("nap_box_id"):
         await _check_nap_capacity(updates["nap_box_id"], exclude_client_id=cid)
@@ -2036,12 +2122,69 @@ async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(requi
         updates["next_due_date"] = _next_due_date(updates["payment_day"])
     updates["updated_at"] = now_iso()
     await db.clients.update_one({"id": cid}, {"$set": updates})
+
+    # La cola del router depende de la IP, el router y la velocidad del plan;
+    # si alguno cambió, hay que reflejarlo. Si el cliente se quedó sin IP o
+    # sin router, la cola que tenía ya no aplica y se retira.
+    sync_relevant = {"ip_address", "mikrotik_server", "mikrotik_interface", "plan_id",
+                     "connection_mode", "pppoe_user", "pppoe_password", "pppoe_profile"}
+    if sync_relevant & updates.keys():
+        merged = {**before, **updates, "id": cid}
+        mode = merged.get("connection_mode", "queue")
+
+        if mode == "queue" and merged.get("ip_address") and merged.get("mikrotik_server") and merged.get("plan_id"):
+            await _sync_client_queue_and_persist(merged)
+        elif before.get("mikrotik_queue_name"):
+            await _remove_client_queue(before)
+            await db.clients.update_one({"id": cid}, {"$unset": {
+                "mikrotik_queue_name": "", "mikrotik_queue_synced_at": "",
+            }, "$set": {"mikrotik_queue_error": ""}})
+
+        if mode == "pppoe" and merged.get("mikrotik_server") and merged.get("plan_id"):
+            await _sync_client_pppoe_and_persist(merged)
+        elif before.get("mikrotik_pppoe_secret_name"):
+            await _remove_client_pppoe(before)
+            await db.clients.update_one({"id": cid}, {"$unset": {
+                "mikrotik_pppoe_secret_name": "", "mikrotik_pppoe_synced_at": "",
+            }, "$set": {"mikrotik_pppoe_error": ""}})
+
     return await db.clients.find_one({"id": cid}, {"_id": 0})
 
 @api.delete("/clients/{cid}")
 async def delete_client(cid: str, _: dict = Depends(require_permission("clients", "delete"))):
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    if client and client.get("mikrotik_queue_name"):
+        await _remove_client_queue(client)
+    if client and client.get("mikrotik_pppoe_secret_name"):
+        await _remove_client_pppoe(client)
     await db.clients.delete_one({"id": cid})
     return {"ok": True}
+
+
+@api.post("/clients/{cid}/sync-queue")
+async def sync_client_queue(cid: str, _: dict = Depends(require_permission("clients", "write"))):
+    """Reintento manual: crea/actualiza la Simple Queue del cliente ahora
+    mismo, para cuando el router no respondió en el momento del alta/edición."""
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+    res = await _sync_client_queue_and_persist(client)
+    if not res.get("ok"):
+        raise HTTPException(424, res.get("reason") or "No se pudo sincronizar la cola")
+    return res
+
+
+@api.post("/clients/{cid}/sync-pppoe")
+async def sync_client_pppoe(cid: str, _: dict = Depends(require_permission("clients", "write"))):
+    """Reintento manual: crea/actualiza el secret PPPoE del cliente ahora
+    mismo (o lo genera, si todavía no tenía usuario/contraseña)."""
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+    res = await _sync_client_pppoe_and_persist(client)
+    if not res.get("ok"):
+        raise HTTPException(424, res.get("reason") or "No se pudo sincronizar el PPPoE")
+    return res
 
 # ---------- Payments ----------
 @api.get("/payments")
@@ -4339,8 +4482,14 @@ from olt import read_onus as olt_read_onus, snmp_test as olt_snmp_test, OLTError
 from mikrotik_ros import (  # noqa: E402
     connect_and_test as ros_test_connect,
     set_overdue as ros_set_overdue,
-    list_overdue as ros_list_overdue,
     list_interfaces_and_addresses as ros_list_interfaces_and_addresses,
+    set_queue as ros_set_queue,
+    remove_queue as ros_remove_queue,
+    pppoe_inventory as ros_pppoe_inventory,
+    create_pppoe_server as ros_create_pppoe_server,
+    ensure_ppp_profile as ros_ensure_ppp_profile,
+    set_ppp_secret as ros_set_ppp_secret,
+    remove_ppp_secret as ros_remove_ppp_secret,
     MikrotikRosError,
 )
 
@@ -4364,6 +4513,191 @@ async def _router_for_client(client: dict) -> Optional[dict]:
             if wanted in (str(r.get("name", "")).lower(), str(r.get("id", "")).lower()):
                 return r
     return routers[0] if len(routers) == 1 else None
+
+
+def _queue_name_for(client: dict) -> str:
+    """Nombre estable de la Simple Queue en el router. Incluye un trozo del id
+    del cliente para que dos clientes con el mismo nombre no choquen; una vez
+    generado se guarda en el cliente (`mikrotik_queue_name`) y no vuelve a
+    cambiar aunque se le edite el nombre después."""
+    base = _ovpn_slug(client.get("full_name", "") or "cliente")
+    return f"isp-{base}-{(client.get('id') or '')[:6]}"[:32]
+
+
+async def _apply_client_queue(client: dict) -> dict:
+    """Crea o actualiza la Simple Queue del cliente según su plan. Nunca
+    lanza: un router caído no debe impedir crear/editar el cliente en el CRM."""
+    if client.get("connection_mode", "queue") != "queue":
+        return {"ok": False, "reason": "el cliente está en modo PPPoE, no usa Simple Queue por IP"}
+    ip = (client.get("ip_address") or "").strip()
+    if not ip:
+        return {"ok": False, "reason": "el cliente no tiene IP asignada"}
+    if not client.get("plan_id"):
+        return {"ok": False, "reason": "el cliente no tiene plan asignado"}
+    plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0, "speed_mbps": 1})
+    if not plan or not plan.get("speed_mbps"):
+        return {"ok": False, "reason": "el plan del cliente no tiene velocidad definida"}
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+
+    speed = int(plan["speed_mbps"])
+    max_limit = f"{speed}M/{speed}M"
+    name = client.get("mikrotik_queue_name") or _queue_name_for(client)
+    try:
+        res = await ros_set_queue(
+            router["host"], port=int(router.get("api_port") or 8728),
+            user=router.get("api_user", ""),
+            password=device_secret(router, "api_password"),
+            use_ssl=bool(router.get("api_use_ssl")),
+            name=name, target=f"{ip}/32", max_limit=max_limit,
+            comment=f"Sistema ISP - {client.get('full_name', '')}"[:60],
+        )
+        return {"ok": True, "router": router.get("name"), "queue_name": name, "max_limit": max_limit, **res}
+    except MikrotikRosError as e:
+        logger.warning("[queue] sync %s (%s) en %s: %s", ip, name, router.get("name"), e)
+        return {"ok": False, "router": router.get("name"), "queue_name": name, "reason": str(e)[:200]}
+
+
+async def _remove_client_queue(client: dict) -> dict:
+    """Quita la Simple Queue del cliente (al eliminarlo o al quitarle la IP/router)."""
+    name = client.get("mikrotik_queue_name")
+    if not name:
+        return {"ok": True, "removed": False}
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+    try:
+        res = await ros_remove_queue(
+            router["host"], port=int(router.get("api_port") or 8728),
+            user=router.get("api_user", ""),
+            password=device_secret(router, "api_password"),
+            use_ssl=bool(router.get("api_use_ssl")), name=name,
+        )
+        return {"ok": True, **res}
+    except MikrotikRosError as e:
+        logger.warning("[queue] remove %s: %s", name, e)
+        return {"ok": False, "reason": str(e)[:200]}
+
+
+async def _sync_client_queue_and_persist(client: dict) -> dict:
+    """Corre `_apply_client_queue` y guarda el resultado en el cliente
+    (nombre de cola, hora de sync, error si lo hubo) para que la UI lo muestre."""
+    res = await _apply_client_queue(client)
+    fields = {
+        "mikrotik_queue_error": "" if res.get("ok") else (res.get("reason") or "")[:200],
+        "updated_at": now_iso(),
+    }
+    if res.get("ok"):
+        fields["mikrotik_queue_name"] = res.get("queue_name") or client.get("mikrotik_queue_name")
+        fields["mikrotik_queue_synced_at"] = now_iso()
+    await db.clients.update_one({"id": client["id"]}, {"$set": fields})
+    return res
+
+
+def _ppp_profile_name_for_plan(plan: dict) -> str:
+    """Un perfil PPP por velocidad de plan, compartido por todos sus clientes
+    — igual que en Queue, cambiar la velocidad del plan actualiza a todos los
+    que lo usan de una sola vez."""
+    return f"isp-plan-{int(plan['speed_mbps'])}m"
+
+
+async def _apply_client_pppoe(client: dict) -> dict:
+    """Crea/actualiza el secret PPPoE del cliente. Si no tiene usuario o
+    contraseña todavía, los genera (únicos, sin caracteres raros — van a
+    parar a la configuración PPPoE de un ONU). Nunca lanza: un router caído
+    no debe impedir crear/editar el cliente en el CRM."""
+    if client.get("connection_mode") != "pppoe":
+        return {"ok": False, "reason": "el cliente no está en modo PPPoE"}
+    if not client.get("plan_id"):
+        return {"ok": False, "reason": "el cliente no tiene plan asignado"}
+    plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0, "speed_mbps": 1})
+    if not plan or not plan.get("speed_mbps"):
+        return {"ok": False, "reason": "el plan del cliente no tiene velocidad definida"}
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+
+    username = (client.get("pppoe_user") or "").strip() or f"{_ovpn_slug(client.get('full_name',''))}-{client['id'][:6]}"
+    secret_password = (client.get("pppoe_password") or "").strip() or _ovpn_random_secret()
+    profile = (client.get("pppoe_profile") or "").strip() or _ppp_profile_name_for_plan(plan)
+    remote_address = (client.get("ip_address") or "").strip()
+    speed = int(plan["speed_mbps"])
+    rate_limit = f"{speed}M/{speed}M"
+
+    router_kwargs = dict(
+        host=router["host"], port=int(router.get("api_port") or 8728),
+        user=router.get("api_user", ""), password=device_secret(router, "api_password"),
+        use_ssl=bool(router.get("api_use_ssl")),
+    )
+
+    try:
+        # Si no eligieron un perfil existente del router, el CRM administra
+        # uno propio por velocidad (no toca los perfiles del operador).
+        if not (client.get("pppoe_profile") or "").strip():
+            await ros_ensure_ppp_profile(**router_kwargs, name=profile, rate_limit=rate_limit)
+
+        # Si le cambiaron el usuario, el secret viejo queda huérfano — se
+        # quita antes de crear el nuevo (RouterOS identifica el secret por
+        # nombre, no se puede "renombrar" en el mismo comando).
+        old_name = client.get("mikrotik_pppoe_secret_name")
+        if old_name and old_name != username:
+            try:
+                await ros_remove_ppp_secret(**router_kwargs, name=old_name)
+            except MikrotikRosError:
+                pass
+
+        res = await ros_set_ppp_secret(
+            **router_kwargs, name=username, secret_password=secret_password, profile=profile,
+            remote_address=remote_address,
+            comment=f"Sistema ISP - {client.get('full_name', '')}"[:60],
+        )
+        return {
+            "ok": True, "router": router.get("name"), "username": username,
+            "password": secret_password, "profile": profile, **res,
+        }
+    except MikrotikRosError as e:
+        logger.warning("[pppoe] sync %s en %s: %s", username, router.get("name"), e)
+        return {"ok": False, "router": router.get("name"), "username": username, "reason": str(e)[:200]}
+
+
+async def _remove_client_pppoe(client: dict) -> dict:
+    """Quita el secret PPPoE (y corta cualquier sesión activa) al eliminar el
+    cliente o al sacarlo del modo PPPoE."""
+    name = client.get("mikrotik_pppoe_secret_name")
+    if not name:
+        return {"ok": True, "removed": False}
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+    try:
+        res = await ros_remove_ppp_secret(
+            router["host"], port=int(router.get("api_port") or 8728),
+            user=router.get("api_user", ""),
+            password=device_secret(router, "api_password"),
+            use_ssl=bool(router.get("api_use_ssl")), name=name,
+        )
+        return {"ok": True, **res}
+    except MikrotikRosError as e:
+        logger.warning("[pppoe] remove %s: %s", name, e)
+        return {"ok": False, "reason": str(e)[:200]}
+
+
+async def _sync_client_pppoe_and_persist(client: dict) -> dict:
+    """Corre `_apply_client_pppoe` y guarda el resultado (usuario/contraseña
+    reales si se generaron, hora de sync, error si lo hubo)."""
+    res = await _apply_client_pppoe(client)
+    fields = {
+        "mikrotik_pppoe_error": "" if res.get("ok") else (res.get("reason") or "")[:200],
+        "updated_at": now_iso(),
+    }
+    if res.get("ok"):
+        fields["pppoe_user"] = res.get("username") or client.get("pppoe_user")
+        fields["pppoe_password"] = res.get("password") or client.get("pppoe_password")
+        fields["mikrotik_pppoe_secret_name"] = res.get("username")
+        fields["mikrotik_pppoe_synced_at"] = now_iso()
+    await db.clients.update_one({"id": client["id"]}, {"$set": fields})
+    return res
 
 
 async def _apply_overdue_block(client: dict, blocked: bool) -> dict:

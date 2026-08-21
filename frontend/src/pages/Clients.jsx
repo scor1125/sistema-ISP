@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
@@ -263,7 +263,42 @@ export default function Clients() {
       options: mikrotiks.map((m) => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":" + m.port : ""} · ${m.connection}` })),
       hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
     },
+    { name: "connection_mode", label: "Modo de conexión", type: "select",
+      options: [
+        { value: "queue", label: "Simple Queue (IP fija)" },
+        { value: "pppoe", label: "PPPoE" },
+      ],
+      hint: (v) => v.connection_mode === "pppoe"
+        ? "El cliente entra por usuario/contraseña PPPoE; no necesita IP asignada por el CRM."
+        : "El CRM le asigna una IP fija y crea/actualiza su Simple Queue solo, según su plan.",
+    },
+    { name: "pppoe_profile", label: "Perfil PPP", type: "select",
+      hidden: (v) => v.connection_mode !== "pppoe",
+      options: (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        return (mk?.ppp_profiles || []).map((p) => ({ value: p, label: p }));
+      },
+      placeholder: "(automático según el plan)",
+      hint: (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        if (!mk) return "Elige primero el servidor Mikrotik.";
+        return mk.ppp_profiles?.length
+          ? "Déjalo vacío para que el CRM administre uno según la velocidad del plan, o elige uno existente del router."
+          : 'Sin perfiles sincronizados — presiona sincronizar en el campo "Interfaz" (trae perfiles PPP también).';
+      },
+    },
+    { name: "pppoe_user", label: "Usuario PPPoE",
+      hidden: (v) => v.connection_mode !== "pppoe",
+      placeholder: "(se genera solo si lo dejas vacío)",
+      hint: (v) => v.pppoe_user ? undefined : "Vacío = el CRM genera uno único al guardar.",
+    },
+    { name: "pppoe_password", label: "Contraseña PPPoE",
+      hidden: (v) => v.connection_mode !== "pppoe",
+      placeholder: "(se genera sola si la dejas vacía)",
+      hint: (v) => v.pppoe_password ? undefined : "Vacío = el CRM genera una segura al guardar.",
+    },
     { name: "mikrotik_interface", label: "Interfaz", type: "select",
+      hidden: (v) => v.connection_mode === "pppoe",
       options: (v) => {
         const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
         const list = (mk?.interfaces && mk.interfaces.length > 0)
@@ -286,15 +321,19 @@ export default function Clients() {
         try {
           const { data } = await api.post(`/devices/${mk.id}/sync-interfaces`);
           setMikrotiks((prev) => prev.map((m) => m.id === mk.id
-            ? { ...m, interfaces: data.interfaces, interfaces_synced_at: data.synced_at }
+            ? {
+                ...m, interfaces: data.interfaces, interfaces_synced_at: data.synced_at,
+                ppp_profiles: data.ppp_profiles, pppoe_servers: data.pppoe_servers, ip_pools: data.ip_pools,
+              }
             : m));
-          toast.success(`${data.interfaces.length} interfaces sincronizadas`);
+          toast.success(`${data.interfaces.length} interfaces y ${data.ppp_profiles?.length || 0} perfiles PPP sincronizados`);
         } catch (e) {
           toast.error(formatApiError(e));
         }
       },
     },
     { name: "ip_address", label: "IP",
+      hidden: (v) => v.connection_mode === "pppoe",
       // Si la interfaz elegida ya tiene su red sincronizada desde el router,
       // las sugerencias se acotan a esa red (y se excluyen las IPs que ya usa
       // cualquier otro cliente). Si no, cae a la red global de Configuración.
@@ -383,6 +422,31 @@ export default function Clients() {
     if (!window.confirm("¿Eliminar cliente?")) return;
     try { await api.delete(`/clients/${id}`); toast.success("Eliminado"); await load(); }
     catch (e) { toast.error(formatApiError(e)); }
+  };
+
+  // La cola de ancho de banda (Simple Queue) se sincroniza sola al guardar el
+  // cliente; este botón es solo para reintentar si el router no respondió en
+  // ese momento (quedó guardado el motivo en `mikrotik_queue_error`).
+  const syncQueue = async (c) => {
+    try {
+      await api.post(`/clients/${c.id}/sync-queue`);
+      toast.success(`Cola sincronizada con "${c.mikrotik_server}"`);
+      await load();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
+  };
+
+  // El secret PPPoE (usuario/contraseña/perfil) se sincroniza solo al
+  // guardar el cliente; este botón reintenta si el router no respondió.
+  const syncPppoe = async (c) => {
+    try {
+      await api.post(`/clients/${c.id}/sync-pppoe`);
+      toast.success(`PPPoE sincronizado con "${c.mikrotik_server}"`);
+      await load();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    }
   };
 
   const visibleCount = COLUMNS.filter((c) => showCol(c.key)).length;
@@ -595,6 +659,18 @@ export default function Clients() {
                   {showCol("actions") && (
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
+                        {c.mikrotik_queue_error && (
+                          <Button size="icon" variant="ghost" title={`Cola sin sincronizar: ${c.mikrotik_queue_error}. Click para reintentar.`}
+                            onClick={() => syncQueue(c)} data-testid={`sync-queue-${c.id}`}>
+                            <RefreshCw className="w-4 h-4 text-amber-500" />
+                          </Button>
+                        )}
+                        {c.mikrotik_pppoe_error && (
+                          <Button size="icon" variant="ghost" title={`PPPoE sin sincronizar: ${c.mikrotik_pppoe_error}. Click para reintentar.`}
+                            onClick={() => syncPppoe(c)} data-testid={`sync-pppoe-${c.id}`}>
+                            <RefreshCw className="w-4 h-4 text-amber-500" />
+                          </Button>
+                        )}
                         <Button size="icon" variant="ghost" title="Tráfico en vivo" onClick={() => setDetail(c)} data-testid={`traffic-${c.id}`}><Activity className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" title="Registrar pago" onClick={() => navigate(`/pagos?client=${c.id}`)}><DollarSign className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" onClick={() => { setEditing(c); setOpen(true); }} data-testid={`edit-${c.id}`}><Pencil className="w-4 h-4" /></Button>
@@ -622,8 +698,12 @@ export default function Clients() {
               installer_ids: Array.isArray(editing.installer_ids) && editing.installer_ids.length > 0
                 ? editing.installer_ids
                 : (editing.installer_id ? [editing.installer_id] : []),
+              // Clientes creados antes de que existiera este campo no lo tienen
+              // guardado; el backend ya los trata como "queue" por defecto, esto
+              // solo hace que el selector lo muestre en vez de verse vacío.
+              connection_mode: editing.connection_mode || "queue",
             }
-          : { payment_day: 1, status: "new", installer_ids: [] }}
+          : { payment_day: 1, status: "new", installer_ids: [], connection_mode: "queue" }}
         onSubmit={save}
         size="full"
       />

@@ -337,3 +337,373 @@ async def list_interfaces_and_addresses(host: str, *, port: int = DEFAULT_API_PO
     return await asyncio.to_thread(
         _interfaces_and_addresses_sync, host, int(port), user, password, use_ssl, int(timeout)
     )
+
+
+# --------------------------------------------------------------------------
+# Simple Queue por cliente (límite de velocidad según su plan)
+# --------------------------------------------------------------------------
+def _queue_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                timeout: int, action: str, name: str, target: str = "",
+                max_limit: str = "", comment: str = "") -> Dict[str, Any]:
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/queue/simple")
+        existing = list(res.get(name=name))
+
+        if action == "remove":
+            if not existing:
+                return {"ok": True, "changed": False, "detail": "no existía"}
+            for r in existing:
+                res.remove(id=r.get("id"))
+            return {"ok": True, "changed": True, "removed": len(existing)}
+
+        if action == "set":
+            if existing:
+                res.set(id=existing[0].get("id"), target=target, comment=comment,
+                        **{"max-limit": max_limit})
+                return {"ok": True, "changed": True, "action": "updated"}
+            res.add(name=name, target=target, comment=comment, **{"max-limit": max_limit})
+            return {"ok": True, "changed": True, "action": "created"}
+
+        raise MikrotikRosError(f"Acción desconocida: {action}")
+
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def set_queue(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                    name: str, target: str, max_limit: str, comment: str = "",
+                    use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    """Crea o actualiza la Simple Queue de un cliente (por nombre; se identifica
+    por nombre y no por IP porque la IP puede cambiar)."""
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not target:
+        raise MikrotikRosError("El cliente no tiene IP asignada")
+    return await asyncio.to_thread(
+        _queue_sync, host, int(port), user, password, use_ssl, int(timeout),
+        "set", name, target, max_limit, comment,
+    )
+
+
+async def remove_queue(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                       name: str, use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _queue_sync, host, int(port), user, password, use_ssl, int(timeout),
+        "remove", name,
+    )
+
+
+# --------------------------------------------------------------------------
+# PPPoE: servidor (una vez por router) + perfiles + secrets (por cliente)
+# --------------------------------------------------------------------------
+def _pppoe_inventory_sync(host: str, port: int, user: str, password: str,
+                          use_ssl: bool, timeout: int) -> Dict[str, Any]:
+    """Lo que ya existe en el router para armar los selectores del CRM: no se
+    inventa nada, se muestra lo real (los nombres pueden cambiar con el tiempo)."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+
+        profiles = [r.get("name") for r in api.get_resource("/ppp/profile").get() if r.get("name")]
+
+        servers = []
+        for r in api.get_resource("/interface/pppoe-server/server").get():
+            servers.append({
+                "service_name": r.get("service-name"),
+                "interface": r.get("interface"),
+                "default_profile": r.get("default-profile"),
+                "disabled": str(r.get("disabled", "false")).lower() == "true",
+            })
+
+        ip_pools = []
+        for r in api.get_resource("/ip/pool").get():
+            ip_pools.append({"name": r.get("name"), "ranges": r.get("ranges")})
+
+        return {"ok": True, "ppp_profiles": profiles, "pppoe_servers": servers, "ip_pools": ip_pools}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def pppoe_inventory(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                          use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _pppoe_inventory_sync, host, int(port), user, password, use_ssl, int(timeout)
+    )
+
+
+def _pppoe_server_create_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                              timeout: int, interface: str, pool_name: str, pool_ranges: str,
+                              service_name: str, profile_name: str, rate_limit: str) -> Dict[str, Any]:
+    """Arma lo mínimo para que un router empiece a aceptar PPPoE: el pool de
+    IPs (si hace falta crearlo), el perfil por defecto, y el servidor
+    escuchando en la interfaz elegida. Todo por nombre — si ya existe algo con
+    ese nombre se actualiza en vez de duplicar, para poder correrlo de nuevo
+    sin miedo."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+
+        # 1) Pool de IPs para los clientes PPPoE
+        pools_res = api.get_resource("/ip/pool")
+        existing_pool = list(pools_res.get(name=pool_name))
+        if existing_pool:
+            pools_res.set(id=existing_pool[0].get("id"), ranges=pool_ranges)
+        else:
+            pools_res.add(name=pool_name, ranges=pool_ranges)
+
+        # 2) Perfil por defecto para quien no tenga uno propio por plan
+        prof_res = api.get_resource("/ppp/profile")
+        existing_profile = list(prof_res.get(name=profile_name))
+        if existing_profile:
+            prof_res.set(id=existing_profile[0].get("id"),
+                        **{"remote-address": pool_name, "rate-limit": rate_limit})
+        else:
+            prof_res.add(name=profile_name, **{"remote-address": pool_name, "rate-limit": rate_limit})
+
+        # 3) El servidor en sí, escuchando en la interfaz elegida
+        srv_res = api.get_resource("/interface/pppoe-server/server")
+        existing_srv = list(srv_res.get(**{"service-name": service_name}))
+        if existing_srv:
+            srv_res.set(id=existing_srv[0].get("id"), interface=interface,
+                       **{"default-profile": profile_name}, disabled="no")
+        else:
+            srv_res.add(**{"service-name": service_name}, interface=interface,
+                       **{"default-profile": profile_name}, disabled="no")
+
+        return {"ok": True, "pool": pool_name, "profile": profile_name,
+                "service_name": service_name, "interface": interface}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def create_pppoe_server(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                              interface: str, pool_name: str, pool_ranges: str,
+                              service_name: str = "isp-pppoe", profile_name: str = "isp-pppoe-default",
+                              rate_limit: str = "5M/5M", use_ssl: bool = False,
+                              timeout: int = 10) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not interface:
+        raise MikrotikRosError("Falta la interfaz donde va a escuchar el servidor PPPoE")
+    if not pool_ranges:
+        raise MikrotikRosError("Falta el rango de IPs del pool")
+    return await asyncio.to_thread(
+        _pppoe_server_create_sync, host, int(port), user, password, use_ssl, int(timeout),
+        interface, pool_name, pool_ranges, service_name, profile_name, rate_limit,
+    )
+
+
+def _ppp_profile_ensure_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                             timeout: int, name: str, rate_limit: str) -> Dict[str, Any]:
+    """Crea o actualiza un perfil PPP por velocidad de plan, compartido por
+    todos los clientes de ese plan.
+
+    Al crearlo (no al actualizar uno que ya existe) copia el remote-address
+    de algún perfil que ya tenga uno configurado — normalmente el
+    default-profile del servidor PPPoE. Sin esto, un perfil nuevo se queda
+    sin pool de IPs y el cliente no recibe dirección al conectarse aunque el
+    secret y la velocidad estén perfectos."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/ppp/profile")
+        existing = list(res.get(name=name))
+        if existing:
+            res.set(id=existing[0].get("id"), **{"rate-limit": rate_limit})
+            return {"ok": True, "action": "updated"}
+
+        remote_address = ""
+        for r in res.get():
+            addr = r.get("remote-address")
+            if addr:
+                remote_address = addr
+                break
+        fields = {"rate-limit": rate_limit}
+        if remote_address:
+            fields["remote-address"] = remote_address
+        res.add(name=name, **fields)
+        return {"ok": True, "action": "created", "remote_address": remote_address}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def ensure_ppp_profile(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                             name: str, rate_limit: str, use_ssl: bool = False,
+                             timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _ppp_profile_ensure_sync, host, int(port), user, password, use_ssl, int(timeout), name, rate_limit
+    )
+
+
+def _ppp_secret_sync(host: str, port: int, user: str, password: str, use_ssl: bool, timeout: int,
+                     action: str, name: str, secret_password: str = "", profile: str = "",
+                     remote_address: str = "", comment: str = "") -> Dict[str, Any]:
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/ppp/secret")
+        existing = list(res.get(name=name))
+
+        if action == "remove":
+            if not existing:
+                return {"ok": True, "changed": False}
+            for r in existing:
+                res.remove(id=r.get("id"))
+            # Una sesion ya activa no se cae solo con borrar el secret — hay
+            # que sacarla tambien de /ppp active para el corte sea inmediato.
+            try:
+                act_res = pool.get_api().get_resource("/ppp/active")
+                for r in act_res.get(name=name):
+                    act_res.remove(id=r.get("id"))
+            except Exception:
+                pass
+            return {"ok": True, "changed": True, "removed": len(existing)}
+
+        if action == "set":
+            fields = {"password": secret_password, "profile": profile, "service": "pppoe",
+                     "comment": comment}
+            if remote_address:
+                fields["remote-address"] = remote_address
+            if existing:
+                res.set(id=existing[0].get("id"), **fields)
+                return {"ok": True, "changed": True, "action": "updated"}
+            res.add(name=name, **fields)
+            return {"ok": True, "changed": True, "action": "created"}
+
+        raise MikrotikRosError(f"Acción desconocida: {action}")
+
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def set_ppp_secret(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                         name: str, secret_password: str, profile: str, remote_address: str = "",
+                         comment: str = "", use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not name or not secret_password:
+        raise MikrotikRosError("Falta el usuario o la contraseña PPPoE")
+    return await asyncio.to_thread(
+        _ppp_secret_sync, host, int(port), user, password, use_ssl, int(timeout),
+        "set", name, secret_password, profile, remote_address, comment,
+    )
+
+
+async def remove_ppp_secret(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                            name: str, use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _ppp_secret_sync, host, int(port), user, password, use_ssl, int(timeout), "remove", name,
+    )

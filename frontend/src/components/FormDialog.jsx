@@ -89,6 +89,11 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
 
 function Field({ field, value, onChange, values }) {
   const key = `field-${field.name}`;
+  // Some fields only make sense given another field's value (e.g. PPPoE
+  // credentials only apply in PPPoE mode) — same `(values) => ...` pattern
+  // used for options/hint/suggestions.
+  const isHidden = typeof field.hidden === "function" ? field.hidden(values) : !!field.hidden;
+  if (isHidden) return null;
   // In full-width dialogs, the parent grid supplies the column count;
   // full-span fields still span all columns via `full: true`.
   const wrapCls = field.full ? "col-span-full" : "";
