@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api, formatApiError } from "@/lib/api";
 import { toast } from "sonner";
-import { ChevronDown, X, Search, Wifi, AlertTriangle } from "lucide-react";
+import { ChevronDown, X, Search, Wifi, AlertTriangle, RefreshCw } from "lucide-react";
 
 /**
  * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,hint?,suggestions?}]
@@ -92,14 +92,49 @@ function Field({ field, value, onChange, values }) {
   // In full-width dialogs, the parent grid supplies the column count;
   // full-span fields still span all columns via `full: true`.
   const wrapCls = field.full ? "col-span-full" : "";
+  // `hint` can depend on other fields (e.g. which router is selected), same
+  // pattern as `options: (values) => [...]` above.
+  const hint = typeof field.hint === "function" ? field.hint(values) : field.hint;
 
   return (
     <div className={wrapCls}>
       <Label htmlFor={key}>{field.label}</Label>
       <FieldControl field={field} value={value} onChange={onChange} inputId={key} values={values} />
-      {field.hint && (
-        <div className="mt-1 text-[11px] text-muted-foreground font-mono">{field.hint}</div>
+      {hint && (
+        <div className="mt-1 text-[11px] text-muted-foreground font-mono">{hint}</div>
       )}
+    </div>
+  );
+}
+
+function SyncableSelectRow({ field, values, select }) {
+  const [syncing, setSyncing] = useState(false);
+  const disabled = field.syncDisabled ? field.syncDisabled(values) : false;
+
+  const run = async () => {
+    setSyncing(true);
+    try {
+      await field.onSync(values);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="flex-1 min-w-0">{select}</div>
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        className="h-9 w-9 shrink-0"
+        onClick={run}
+        disabled={syncing || disabled}
+        title={field.syncTitle || "Sincronizar"}
+        data-testid={`sync-${field.name}`}
+      >
+        <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} />
+      </Button>
     </div>
   );
 }
@@ -126,20 +161,21 @@ function FieldControl({ field, value, onChange, inputId, values }) {
     const rawOpts = typeof field.options === "function" ? field.options(values) : (field.options || []);
     const safeOptions = rawOpts.filter((o) => String(o.value ?? "") !== "");
     const selectValue = value === "" || value == null ? undefined : String(value);
-    if (safeOptions.length > 8 || field.searchable) {
-      return (
-        <SearchableSelect
-          testId={testId}
-          value={selectValue}
-          onValueChange={(v) => onChange(field.name, v)}
-          options={safeOptions}
-          placeholder={field.placeholder || "Seleccionar"}
-          searchPlaceholder={`Buscar ${(field.label || "").toLowerCase()}…`}
-          clearable={!field.required}
-        />
-      );
-    }
-    return (
+
+    // Un campo puede traer sus opciones en vivo (ej. las interfaces reales de
+    // un router) en vez de una lista fija. `field.onSync(values)` hace la
+    // llamada y el padre actualiza el estado que alimenta `field.options`.
+    const select = safeOptions.length > 8 || field.searchable ? (
+      <SearchableSelect
+        testId={testId}
+        value={selectValue}
+        onValueChange={(v) => onChange(field.name, v)}
+        options={safeOptions}
+        placeholder={field.placeholder || "Seleccionar"}
+        searchPlaceholder={`Buscar ${(field.label || "").toLowerCase()}…`}
+        clearable={!field.required}
+      />
+    ) : (
       <Select value={selectValue} onValueChange={(v) => onChange(field.name, v)}>
         <SelectTrigger data-testid={testId}>
           <SelectValue placeholder={field.placeholder || "Seleccionar"} />
@@ -157,6 +193,9 @@ function FieldControl({ field, value, onChange, inputId, values }) {
         </SelectContent>
       </Select>
     );
+
+    if (!field.onSync) return select;
+    return <SyncableSelectRow field={field} values={values} select={select} />;
   }
 
   if (field.type === "multiselect") {

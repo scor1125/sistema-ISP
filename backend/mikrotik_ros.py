@@ -234,3 +234,49 @@ async def list_overdue(host: str, *, port: int = DEFAULT_API_PORT, user: str, pa
         raise
     except Exception as e:
         raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+
+
+# --------------------------------------------------------------------------
+# Interfaces del router (para el selector de "Interfaz" al editar un cliente)
+# --------------------------------------------------------------------------
+def _list_interfaces_sync(host: str, port: int, user: str, password: str,
+                          use_ssl: bool, timeout: int) -> Dict[str, Any]:
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        rows = pool.get_api().get_resource("/interface").get()
+        names = [r.get("name") for r in rows if r.get("name")]
+        return {"ok": True, "interfaces": names}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def list_interfaces(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                          use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    """Nombres de todas las interfaces del router (ether, bridge, vlan,
+    pppoe-out, el propio túnel ovpn-crm, etc.), vía la misma API nativa que
+    ya se usa para probar la conexión."""
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _list_interfaces_sync, host, int(port), user, password, use_ssl, int(timeout)
+    )

@@ -281,7 +281,28 @@ export default function Clients() {
           : ["ether1","ether2","ether3","ether4","bridge","vlan-clientes","pppoe-out1","wg-crm"];
         return list.map((i) => ({ value: i, label: i }));
       },
-      hint: "Interfaz del Mikrotik donde está conectado este cliente.",
+      hint: (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        if (!mk) return "Elige primero el servidor Mikrotik.";
+        return mk.interfaces?.length
+          ? `${mk.interfaces.length} interfaces reales de "${mk.name}"${mk.interfaces_synced_at ? " · sincronizado " + new Date(mk.interfaces_synced_at).toLocaleString() : ""}.`
+          : `Mostrando una lista genérica — presiona sincronizar para traer las interfaces reales de "${mk.name}".`;
+      },
+      syncTitle: "Traer las interfaces reales del router",
+      syncDisabled: (v) => !v.mikrotik_server,
+      onSync: async (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        if (!mk) { toast.error("Elige primero el servidor Mikrotik"); return; }
+        try {
+          const { data } = await api.post(`/devices/${mk.id}/sync-interfaces`);
+          setMikrotiks((prev) => prev.map((m) => m.id === mk.id
+            ? { ...m, interfaces: data.interfaces, interfaces_synced_at: data.synced_at }
+            : m));
+          toast.success(`${data.interfaces.length} interfaces sincronizadas`);
+        } catch (e) {
+          toast.error(formatApiError(e));
+        }
+      },
     },
     { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
     { name: "wifi_password", label: "Contraseña del WiFi", placeholder: "Contraseña asignada" },
