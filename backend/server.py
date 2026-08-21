@@ -42,6 +42,9 @@ PORTAL_COOKIE = f"portal_token{COOKIE_SUFFIX}"
 # Credenciales de un equipo que nunca deben viajar al navegador. Se muestran
 # una sola vez, al generar el script de vinculación.
 DEVICE_SECRET_FIELDS = ("api_password", "api_password_enc", "vpn_password", "vpn_password_enc")
+# Igual que en dispositivos: la clave compartida de una VPN no tiene por qué
+# viajar al navegador solo para pintar la lista de conexiones.
+VPN_SECRET_FIELDS = ("preshared_key", "preshared_key_enc")
 DEVICE_SECRET_PROJECTION = {f: 0 for f in DEVICE_SECRET_FIELDS}
 
 
@@ -921,7 +924,7 @@ async def generate_vpn_config(vpn_id: str, _: dict = Depends(require_roles("owne
             f"Address = 10.100.0.2/24\n"
             f"DNS = {v.get('dns','1.1.1.1')}\n\n"
             "[Peer]\n"
-            f"PublicKey = {v.get('preshared_key') or '<PUBLIC_KEY_DEL_MIKROTIK>'}\n"
+            f"PublicKey = {device_secret(v, 'preshared_key') or '<PUBLIC_KEY_DEL_MIKROTIK>'}\n"
             f"Endpoint = {v['remote_host']}:{v.get('remote_port', 51820)}\n"
             f"AllowedIPs = {v.get('allowed_ips','0.0.0.0/0')}\n"
             "PersistentKeepalive = 25\n"
@@ -973,7 +976,9 @@ async def update_vpn_server_info(payload: dict, _: dict = Depends(require_roles(
 # Registrado despues de las rutas especificas /vpn/server-info: FastAPI/Starlette
 # empareja por orden de registro, y una ruta generica /vpn/{vpn_id} registrada
 # antes interceptaria "server-info" como si fuera un ID.
-api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections"))
+api.include_router(crud_router("/vpn", VpnConnectionIn, "vpn_connections",
+                               hidden_fields=VPN_SECRET_FIELDS,
+                               encrypt_fields=("preshared_key",)))
 
 # ---------- OpenVPN: alta de routers Mikrotik ----------
 # El servidor OpenVPN corre en el mismo host que este backend, con dos listeners
