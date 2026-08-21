@@ -1388,10 +1388,12 @@ async def mikrotik_overdue_rules(_: dict = Depends(get_current_user)):
 @api.post("/devices/{device_id}/sync-interfaces")
 async def mikrotik_sync_interfaces(device_id: str,
                                    _: dict = Depends(require_roles("owner", "admin"))):
-    """Trae los nombres reales de las interfaces del router (por la misma API
-    nativa que usa "Probar conexión", vía el túnel VPN) y los deja guardados
-    en el dispositivo para que el selector "Interfaz" del cliente los muestre
-    en vez de la lista genérica."""
+    """Trae los nombres reales de las interfaces del router y la red IP que
+    tiene configurada cada una (por la misma API nativa que usa "Probar
+    conexión", vía el túnel VPN). Con esto el selector "Interfaz" del cliente
+    muestra las interfaces reales, y el campo "IP" puede sugerir direcciones
+    libres dentro de la red de la interfaz elegida en vez de una lista
+    genérica de todo el ISP."""
     d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
     if not d:
         raise HTTPException(404, "Mikrotik no encontrado")
@@ -1402,7 +1404,7 @@ async def mikrotik_sync_interfaces(device_id: str,
         raise HTTPException(400, "El router aún no tiene VPN/API configuradas — genera su script primero.")
 
     try:
-        res = await ros_list_interfaces(
+        res = await ros_list_interfaces_and_addresses(
             host, port=int(d.get("api_port") or 8728), user=user, password=pwd,
             use_ssl=bool(d.get("api_use_ssl")),
         )
@@ -1410,10 +1412,12 @@ async def mikrotik_sync_interfaces(device_id: str,
         raise HTTPException(424, str(e))
 
     names = res["interfaces"]
+    networks = res["networks"]
     await db.devices.update_one({"id": device_id}, {"$set": {
-        "interfaces": names, "interfaces_synced_at": now_iso(), "updated_at": now_iso(),
+        "interfaces": names, "interface_networks": networks,
+        "interfaces_synced_at": now_iso(), "updated_at": now_iso(),
     }})
-    return {"ok": True, "interfaces": names, "synced_at": now_iso()}
+    return {"ok": True, "interfaces": names, "interface_networks": networks, "synced_at": now_iso()}
 
 
 @api.post("/devices/{device_id}/openvpn-revoke")
@@ -4336,7 +4340,7 @@ from mikrotik_ros import (  # noqa: E402
     connect_and_test as ros_test_connect,
     set_overdue as ros_set_overdue,
     list_overdue as ros_list_overdue,
-    list_interfaces as ros_list_interfaces,
+    list_interfaces_and_addresses as ros_list_interfaces_and_addresses,
     MikrotikRosError,
 )
 

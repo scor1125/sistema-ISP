@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
 import { copyToClipboard } from "@/lib/clipboard";
+import { cidrAvailableHosts } from "@/lib/cidr";
 
 const statusMap = {
   active: { label: "Activo", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
@@ -258,17 +259,6 @@ export default function Clients() {
       }),
     },
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
-    { name: "ip_address", label: "IP",
-      suggestions: (() => {
-        const list = ipPool.available || [];
-        if (editing?.ip_address && !list.includes(editing.ip_address)) return [editing.ip_address, ...list];
-        return list;
-      })(),
-      hint: ipPool.cidr
-        ? `Red ${ipPool.cidr} · ${ipPool.available?.length || 0} disponibles / ${ipPool.total} totales · usadas: ${ipPool.used?.length || 0}`
-        : "Define tu red (CIDR) en Configuración para ver IPs disponibles.",
-      placeholder: ipPool.available?.[0] || "10.10.0.10",
-    },
     { name: "mikrotik_server", label: "Servidor Mikrotik", type: "select",
       options: mikrotiks.map((m) => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":" + m.port : ""} · ${m.connection}` })),
       hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
@@ -303,6 +293,34 @@ export default function Clients() {
           toast.error(formatApiError(e));
         }
       },
+    },
+    { name: "ip_address", label: "IP",
+      // Si la interfaz elegida ya tiene su red sincronizada desde el router,
+      // las sugerencias se acotan a esa red (y se excluyen las IPs que ya usa
+      // cualquier otro cliente). Si no, cae a la red global de Configuración.
+      suggestions: (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        const net = mk?.interface_networks?.[v.mikrotik_interface]?.[0];
+        // La IP del propio router (ej. "192.168.50.1" en "192.168.50.1/24")
+        // es su gateway, no una IP asignable a un cliente.
+        const excluded = [...(ipPool.used || []), ...(ipPool.reserved || []), ...(net ? [net.split("/")[0]] : [])];
+        const list = net ? cidrAvailableHosts(net, excluded) : (ipPool.available || []);
+        if (editing?.ip_address && !list.includes(editing.ip_address)) return [editing.ip_address, ...list];
+        return list;
+      },
+      hint: (v) => {
+        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
+        const net = mk?.interface_networks?.[v.mikrotik_interface]?.[0];
+        if (net) {
+          const excluded = [...(ipPool.used || []), ...(ipPool.reserved || []), net.split("/")[0]];
+          const count = cidrAvailableHosts(net, excluded, { cap: 5000 }).length;
+          return `Red ${net} de la interfaz "${v.mikrotik_interface}" · ${count} disponibles`;
+        }
+        return ipPool.cidr
+          ? `Red ${ipPool.cidr} · ${ipPool.available?.length || 0} disponibles / ${ipPool.total} totales · usadas: ${ipPool.used?.length || 0}`
+          : "Elige un Mikrotik con la interfaz sincronizada, o define tu red (CIDR) en Configuración.";
+      },
+      placeholder: ipPool.available?.[0] || "10.10.0.10",
     },
     { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
     { name: "wifi_password", label: "Contraseña del WiFi", placeholder: "Contraseña asignada" },

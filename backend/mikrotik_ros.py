@@ -280,3 +280,60 @@ async def list_interfaces(host: str, *, port: int = DEFAULT_API_PORT, user: str,
     return await asyncio.to_thread(
         _list_interfaces_sync, host, int(port), user, password, use_ssl, int(timeout)
     )
+
+
+def _interfaces_and_addresses_sync(host: str, port: int, user: str, password: str,
+                                   use_ssl: bool, timeout: int) -> Dict[str, Any]:
+    """Una sola conexión: nombres de interfaz + qué red IP tiene configurada
+    cada una (para poder ofrecer, por interfaz, qué IPs de esa red están
+    libres al dar de alta un cliente)."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+        iface_rows = api.get_resource("/interface").get()
+        names = [r.get("name") for r in iface_rows if r.get("name")]
+
+        addr_rows = api.get_resource("/ip/address").get()
+        networks: Dict[str, list] = {}
+        for r in addr_rows:
+            iface = r.get("interface")
+            cidr = r.get("address")  # ej. "192.168.50.1/24" — es la IP del propio router
+            if not iface or not cidr:
+                continue
+            networks.setdefault(iface, []).append(cidr)
+
+        return {"ok": True, "interfaces": names, "networks": networks}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def list_interfaces_and_addresses(host: str, *, port: int = DEFAULT_API_PORT, user: str,
+                                        password: str, use_ssl: bool = False,
+                                        timeout: int = 8) -> Dict[str, Any]:
+    """Interfaces + la(s) red(es) IP configuradas en cada una, en una sola
+    conexión al router."""
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _interfaces_and_addresses_sync, host, int(port), user, password, use_ssl, int(timeout)
+    )

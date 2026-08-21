@@ -210,7 +210,11 @@ function FieldControl({ field, value, onChange, inputId, values }) {
     );
   }
 
-  const hasSuggestions = field.suggestions && field.suggestions.length > 0;
+  // `suggestions` can depend on other fields too (e.g. IPs scoped to the
+  // interface chosen above), same pattern as `options`/`hint`.
+  const resolvedSuggestions = typeof field.suggestions === "function"
+    ? field.suggestions(values) : field.suggestions;
+  const hasSuggestions = resolvedSuggestions && resolvedSuggestions.length > 0;
 
   if (hasSuggestions) {
     return (
@@ -220,6 +224,7 @@ function FieldControl({ field, value, onChange, inputId, values }) {
         field={field}
         value={value}
         onChange={onChange}
+        suggestions={resolvedSuggestions}
       />
     );
   }
@@ -489,10 +494,10 @@ function MacPickerField({ field, value, onChange, testId, inputId }) {
   );
 }
 
-function SuggestionInputDropdown({ inputId, testId, field, value, onChange }) {
+function SuggestionInputDropdown({ inputId, testId, field, value, onChange, suggestions: suggestionsProp }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  const suggestions = field.suggestions || [];
+  const suggestions = suggestionsProp || [];
   const items = filter
     ? suggestions.filter((s) => String(s).toLowerCase().includes(filter.toLowerCase()))
     : suggestions;
