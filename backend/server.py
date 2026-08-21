@@ -990,8 +990,28 @@ OPENVPN_SUBNET = os.environ.get("OPENVPN_SUBNET", "172.16.10.")
 OPENVPN_NETMASK = os.environ.get("OPENVPN_NETMASK", "255.255.255.0")
 OPENVPN_PORT = int(os.environ.get("OPENVPN_PORT", "1194"))
 # Serializa el alta: leer las IPs ocupadas y escribir la nueva no es atómico,
-# y dos altas simultáneas podrían quedarse con la misma dirección.
-_ovpn_lock = asyncio.Lock()
+# y dos altas simultáneas podrían quedarse con la misma dirección. El candado
+# va en un archivo, no en memoria: producción y el piloto son dos procesos
+# distintos que comparten estos mismos archivos de OpenVPN.
+OPENVPN_LOCK_FILE = Path(os.environ.get("OPENVPN_LOCK_FILE", "/etc/openvpn/.sistema-isp.lock"))
+
+
+def _ovpn_locked(fn, *args):
+    """Ejecuta `fn` con el candado tomado. Bloquea, así que se llama desde un
+    hilo aparte para no frenar el bucle de eventos."""
+    import fcntl
+    with open(OPENVPN_LOCK_FILE, "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            return fn(*args)
+        finally:
+            fcntl.flock(lk, fcntl.LOCK_UN)
+
+
+def _ovpn_reserve(username: str, password: str, version: str) -> str:
+    ip = _ovpn_allocate_ip(version, username)
+    _ovpn_write_credentials(username, password, ip)
+    return ip
 
 # Ambos perfiles van por TCP contra el mismo listener y comparten todo el /24.
 # La única diferencia real es cómo se llama el cifrado en cada versión:
@@ -1259,10 +1279,9 @@ async def mikrotik_openvpn_provision(device_id: str, payload: OpenVpnProvisionIn
 
     # Bajo candado: elegir IP libre y escribirla tienen que ser un solo paso, o
     # dos altas a la vez podrían llevarse la misma dirección.
-    async with _ovpn_lock:
-        tunnel_ip = _ovpn_allocate_ip(version, username)
-        _ovpn_write_credentials(username, password, tunnel_ip)
-
+    tunnel_ip = await asyncio.to_thread(_ovpn_locked, _ovpn_reserve,
+                                       username, password, version)
+    if True:
         await db.devices.update_one({"id": device_id}, {"$set": {
             "host": tunnel_ip,
             "api_enabled": True,
@@ -1313,7 +1332,7 @@ async def mikrotik_openvpn_revoke(device_id: str,
     username = d.get("vpn_user")
     if not username:
         return {"ok": True, "revoked": False, "detail": "El router no tenía VPN asignada"}
-    _ovpn_remove_credentials(username)
+    await asyncio.to_thread(_ovpn_locked, _ovpn_remove_credentials, username)
     await db.devices.update_one({"id": device_id}, {"$set": {
         "vpn_password": "", "vpn_provisioned_at": "", "updated_at": now_iso(),
     }})
