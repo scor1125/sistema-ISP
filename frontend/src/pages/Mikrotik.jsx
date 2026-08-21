@@ -24,12 +24,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-/* Los dos dialectos de OpenVPN que habla RouterOS. La diferencia no es
-   cosmética: v6 solo soporta TCP y no negocia cifrado (sin NCP), así que el
-   servidor tiene un listener aparte para cada uno. */
+/* Los dos dialectos de RouterOS. Ambos usan el mismo túnel (TCP, AES-256-CBC
+   con SHA1); lo único que cambia es cómo se llama el cifrado en cada versión,
+   y RouterOS rechaza el nombre de la otra. */
 const ROS_PROFILES = [
-  { value: "v7", title: "RouterOS 7.4 o superior", hint: "UDP · AES-256-GCM" },
-  { value: "v6", title: "RouterOS 6.x (o 7.x < 7.4)", hint: "TCP · AES-256-CBC" },
+  { value: "v7", title: "RouterOS 7.x", hint: "cipher aes256-cbc" },
+  { value: "v6", title: "RouterOS 6.x", hint: "cipher aes256" },
 ];
 
 const VPN_STATUS = {
@@ -61,7 +61,7 @@ function TestResult({ state, result, error }) {
         <ul className="text-[11px] text-muted-foreground mt-2 list-disc pl-4 space-y-0.5">
           <li>Verifica que pegaste el script completo en el router.</li>
           <li>En el router, <span className="font-mono">/interface ovpn-client print</span> debe mostrar la bandera <b>R</b>.</li>
-          <li>Si eligió el perfil equivocado (v6 vs v7) el túnel no levanta: prueba el otro.</li>
+          <li>Si el perfil no coincide con la versión del router, el cifrado no cuadra: prueba el otro.</li>
         </ul>
       </div>
     );
@@ -207,8 +207,8 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
               </TabsList>
             </Tabs>
             <div className="text-[11px] text-muted-foreground mt-1">
-              ¿No sabes cuál? En el router, <span className="font-mono">/system resource print</span> muestra la versión.
-              Si es 7.4 o mayor usa la primera.
+              ¿No sabes cuál? En el router, <span className="font-mono">/system resource print</span> muestra
+              la versión. Si el túnel no levanta, prueba con el otro perfil.
             </div>
           </div>
 
