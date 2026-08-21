@@ -21,7 +21,7 @@ import {
 import {
   Plus, Router as RouterIcon, Pencil, Trash2, Radio, Cpu, Copy,
   CheckCircle2, XCircle, Terminal, ChevronDown, ChevronUp, KeyRound,
-  ShieldCheck, Loader2, FileCode, RefreshCw,
+  ShieldCheck, Loader2, FileCode, RefreshCw, Ban,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -118,6 +118,88 @@ function useConnectionTest(device) {
   }, []);
 
   return { state, result, error, run, reset };
+}
+
+/* ============================================================
+   Reglas de corte por mora (mismas para todos los routers)
+   ============================================================ */
+function OverdueRulesDialog({ open, onOpenChange }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) { setData(null); return; }
+    (async () => {
+      setLoading(true);
+      try {
+        const { data: d } = await api.get("/mikrotik/overdue-rules");
+        setData(d);
+      } catch (e) { toast.error(formatApiError(e)); }
+      finally { setLoading(false); }
+    })();
+  }, [open]);
+
+  const copy = async () => {
+    if (!data?.script) return;
+    if (await copyToClipboard(data.script)) toast.success("Reglas copiadas");
+    else toast.error("No se pudo copiar — selecciona el texto y usa Ctrl+C");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[95vw] max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Ban className="w-4 h-4 text-primary" />
+            Reglas de corte ISP
+          </DialogTitle>
+          <DialogDescription>
+            Cortan el servicio a los clientes en mora. El CRM mete y saca las IPs de la
+            lista <span className="font-mono">{data?.list_name || "morosos"}</span> solo;
+            estas reglas son las que hacen efectivo el corte en el router.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 min-w-0">
+          {loading && (
+            <div className="rounded-md border border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Generando…
+            </div>
+          )}
+          {!loading && data && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  lista: {data.list_name}
+                </Badge>
+                <Badge variant="outline" className="text-[10px]">
+                  el PPPoE no se toca
+                </Badge>
+                <Button size="sm" variant="outline" onClick={copy} className="ml-auto"
+                  data-testid="mk-rules-copy">
+                  <Copy className="w-3.5 h-3.5 mr-1" /> Copiar reglas
+                </Button>
+              </div>
+
+              <pre className="text-[11px] font-mono bg-background border border-border rounded p-2 whitespace-pre-wrap break-words max-h-72 overflow-y-auto select-all">
+{data.script}
+              </pre>
+
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-2 text-[11px] text-muted-foreground">
+                Al cliente cortado se le deja el DNS abierto para que pueda ver una página
+                de aviso en vez de un timeout. Su sesión PPPoE sigue levantada, así que al
+                registrar el pago recupera el servicio sin tener que reconectar.
+              </div>
+            </>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /* ============================================================
@@ -560,6 +642,7 @@ export default function Mikrotik() {
   const [editing, setEditing] = useState(null);
   const [testing, setTesting] = useState(null);
   const [scripting, setScripting] = useState(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [askDelete, setAskDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -629,9 +712,15 @@ export default function Mikrotik() {
         title="Mikrotik"
         subtitle="Gestiona los routers Mikrotik del CRM. Cada uno se conecta por OpenVPN hacia el servidor y se controla desde aquí con su usuario API."
         actions={
-          <Button onClick={startAdd} data-testid="mk-new-btn">
-            <Plus className="w-4 h-4 mr-1" /> Nuevo Mikrotik
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setRulesOpen(true)}
+              data-testid="mk-rules-btn" title="Reglas de firewall para cortar a los morosos">
+              <Ban className="w-4 h-4 mr-1" /> Reglas de corte ISP
+            </Button>
+            <Button onClick={startAdd} data-testid="mk-new-btn">
+              <Plus className="w-4 h-4 mr-1" /> Nuevo Mikrotik
+            </Button>
+          </div>
         }
       />
 
@@ -713,6 +802,11 @@ export default function Mikrotik() {
                     data-testid={`mk-script-${d.id}`} className="mr-1" title="Ver script de vinculación">
                     <FileCode className="w-3.5 h-3.5 mr-1" /> Script
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => setRulesOpen(true)}
+                    data-testid={`mk-rules-${d.id}`} className="mr-1"
+                    title="Reglas de corte por mora para pegar en este router">
+                    <Ban className="w-3.5 h-3.5 mr-1" /> Reglas de corte
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => setTesting(d)}
                     disabled={!d.host || d.host === "-" || !d.api_user}
                     data-testid={`mk-test-${d.id}`}
@@ -743,6 +837,8 @@ export default function Mikrotik() {
         initial={editing}
         onSaved={afterSave}
       />
+
+      <OverdueRulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
 
       <LinkScriptDialog
         device={scripting}

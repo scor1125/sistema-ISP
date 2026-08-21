@@ -120,3 +120,117 @@ async def connect_and_test(host: str, *, port: int = DEFAULT_API_PORT,
     return await asyncio.to_thread(
         _connect_sync, host, int(port), user, password, use_ssl, int(timeout)
     )
+
+
+# --------------------------------------------------------------------------
+# Address-list de morosos
+# --------------------------------------------------------------------------
+# El corte por falta de pago se hace metiendo la IP del cliente en una
+# address-list del router, no deshabilitando su PPPoE: así la sesión sigue
+# levantada (el cliente no ve "usuario/contraseña incorrectos", y al pagar
+# vuelve el servicio sin reconectar) y es el firewall el que decide qué dejar
+# pasar. La regla que usa esa lista la instala el script de vinculación.
+
+DEFAULT_OVERDUE_LIST = "morosos"
+
+
+def _addr_list_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                    timeout: int, action: str, address: str, list_name: str,
+                    comment: str = "") -> Dict[str, Any]:
+    """Bloqueante — se invoca desde `asyncio.to_thread`."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+        res = api.get_resource("/ip/firewall/address-list")
+
+        existing = [r for r in res.get(list=list_name)
+                    if r.get("address") == address]
+
+        if action == "add":
+            if existing:
+                return {"ok": True, "changed": False, "detail": "ya estaba en la lista"}
+            res.add(list=list_name, address=address,
+                    comment=comment or "Sistema ISP - moroso")
+            return {"ok": True, "changed": True}
+
+        if action == "remove":
+            if not existing:
+                return {"ok": True, "changed": False, "detail": "no estaba en la lista"}
+            for r in existing:
+                res.remove(id=r.get("id") or r.get(".id"))
+            return {"ok": True, "changed": True, "removed": len(existing)}
+
+        raise MikrotikRosError(f"Acción desconocida: {action}")
+
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def set_overdue(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                      address: str, blocked: bool, use_ssl: bool = False,
+                      timeout: int = 8, list_name: str = DEFAULT_OVERDUE_LIST,
+                      comment: str = "") -> Dict[str, Any]:
+    """Mete (`blocked=True`) o saca (`False`) la IP del cliente de la lista."""
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not address:
+        raise MikrotikRosError("El cliente no tiene IP asignada")
+    return await asyncio.to_thread(
+        _addr_list_sync, host, int(port), user, password, use_ssl, int(timeout),
+        "add" if blocked else "remove", address, list_name, comment,
+    )
+
+
+async def list_overdue(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                       use_ssl: bool = False, timeout: int = 8,
+                       list_name: str = DEFAULT_OVERDUE_LIST) -> Dict[str, Any]:
+    """Lee la lista tal como está en el router (para comparar con el CRM)."""
+    def _read():
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=int(port),
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = int(timeout)
+        except Exception:
+            pass
+        try:
+            rows = pool.get_api().get_resource("/ip/firewall/address-list").get(list=list_name)
+            return {"ok": True, "addresses": [r.get("address") for r in rows if r.get("address")]}
+        finally:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
+
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    try:
+        return await asyncio.to_thread(_read)
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e

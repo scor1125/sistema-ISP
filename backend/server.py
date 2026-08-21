@@ -1036,6 +1036,8 @@ OPENVPN_PROFILES = {
     },
 }
 OPENVPN_NETWORK = os.environ.get("OPENVPN_NETWORK", "172.16.10.0/24")
+# Nombre de la address-list de morosos en los routers.
+OVERDUE_LIST = os.environ.get("OVERDUE_LIST", "morosos")
 
 
 def _ovpn_slug(name: str) -> str:
@@ -1171,6 +1173,27 @@ def _ros_ascii(value: str) -> str:
     return plain.encode("ascii", "replace").decode("ascii")
 
 
+def _overdue_rules_lines() -> list:
+    """Reglas de firewall que hacen efectivo el corte por falta de pago.
+
+    El CRM solo mete y saca IPs de la address-list; quien corta es el router.
+    Se insertan con `place-before=0` en orden inverso para que queden por
+    encima de cualquier regla de accept que el router ya tenga — si quedaran
+    debajo, nunca se evaluarian y el moroso seguiria navegando.
+    Se permite DNS para que el cliente pueda resolver y ver una pagina de aviso
+    en vez de un timeout sin explicacion.
+    """
+    base = f"/ip firewall filter add chain=forward src-address-list={OVERDUE_LIST}"
+    corte = (f'{base} action=reject reject-with=icmp-admin-prohibited'
+             f' comment="Sistema ISP mora corte"')
+    dns_t = f'{base} protocol=tcp dst-port=53 action=accept comment="Sistema ISP mora dns tcp"'
+    dns_u = f'{base} protocol=udp dst-port=53 action=accept comment="Sistema ISP mora dns udp"'
+    out = ['/ip firewall filter remove [find comment~"Sistema ISP mora"]']
+    for rule in (corte, dns_t, dns_u):      # inverso: el ultimo queda arriba
+        out.append(f':do {{ {rule} place-before=0 }} on-error={{ {rule} }}')
+    return out
+
+
 def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
                        vpn_user: str, vpn_password: str, tunnel_ip: str,
                        api_user: str, api_password: str, api_port: int) -> str:
@@ -1236,10 +1259,16 @@ def _ovpn_build_script(*, version: str, device_name: str, public_ip: str,
         (f':do {{ {fw} place-before=0 comment="Sistema ISP API" }}'
          f' on-error={{ {fw} comment="Sistema ISP API" }}'),
         "",
-        "# 7) Nombre del router igual al del CRM",
+        "# 7) Corte por falta de pago: los clientes morosos entran en esta lista",
+        "#    (el CRM agrega y quita las IPs solo; aqui solo van las reglas).",
+        "#    Se permite DNS y el propio router para que el cliente pueda navegar",
+        "#    a la pagina de aviso; todo lo demas hacia internet queda cortado.",
+        *_overdue_rules_lines(),
+        "",
+        "# 8) Nombre del router igual al del CRM",
         f'/system identity set name="{name_q}"',
         "",
-        "# 8) Comprobar",
+        "# 9) Comprobar",
         "/interface ovpn-client print",
         "# Debe aparecer la bandera R (running). Espera unos 20 segundos.",
         '# Luego vuelve al CRM y presiona "Probar conexion".',
@@ -1322,6 +1351,37 @@ async def mikrotik_openvpn_provision(device_id: str, payload: OpenVpnProvisionIn
         "api_port": api_port,
         "filename": f"sistema-isp-{username}-{version}.rsc",
         "script": script,
+    }
+
+
+@api.get("/mikrotik/overdue-rules")
+async def mikrotik_overdue_rules(_: dict = Depends(get_current_user)):
+    """Solo las reglas de corte por mora, para pegarlas en un router que ya
+    esta vinculado (o que se administra por fuera de la VPN del CRM). No lleva
+    credenciales: es la misma configuracion para todos los equipos."""
+    lines = [
+        "# ============================================================",
+        "# Sistema ISP - Reglas de corte por falta de pago",
+        f'# Lista de morosos: "{OVERDUE_LIST}"  (la llena y vacia el CRM solo)',
+        "# Pega este bloque en  /system > New Terminal  del router.",
+        "# Se puede volver a pegar sin problema: reemplaza las reglas anteriores.",
+        "# ============================================================",
+        "",
+        "# 1) Crear la lista si no existe todavia (asi las reglas ya son validas)",
+        f':do {{ /ip firewall address-list add list={OVERDUE_LIST} address=127.0.0.2 comment="Sistema ISP placeholder" }} on-error={{}}',
+        "",
+        "# 2) Reglas de corte",
+        *_overdue_rules_lines(),
+        "",
+        "# 3) Comprobar",
+        '/ip firewall filter print where comment~"Sistema ISP mora"',
+        f"/ip firewall address-list print where list={OVERDUE_LIST}",
+        "",
+    ]
+    return {
+        "list_name": OVERDUE_LIST,
+        "filename": "sistema-isp-reglas-corte.rsc",
+        "script": _ros_ascii("\n".join(lines)),
     }
 
 
@@ -1993,8 +2053,16 @@ async def create_payment(payload: PaymentIn, user: dict = Depends(get_current_us
         new_due = _next_due_date(client.get("payment_day", 1), current_due)
         await db.clients.update_one(
             {"id": client["id"]},
-            {"$set": {"next_due_date": new_due, "status": "active", "updated_at": now_iso()}}
+            {"$set": {"next_due_date": new_due, "status": "active", "updated_at": now_iso()}},
         )
+        # Devolverle el servicio: si estaba cortado, sacarlo de la lista de
+        # morosos del router. Si el router no responde queda registrado para
+        # que el operador lo vea, pero el pago se registra igual.
+        unblock = await _apply_overdue_block(client, False)
+        await db.clients.update_one({"id": client["id"]}, {
+            "$set": {"overdue_block_error": "" if unblock.get("ok") else unblock.get("reason", "")[:200]},
+            "$unset": {"suspended_at": "", "suspended_reason": ""},
+        })
     doc.pop("_id", None)
     return doc
 
@@ -3382,6 +3450,7 @@ async def _run_suspend_overdue(run_id: str):
         {"_id": 0, "id": 1, "full_name": 1, "next_due_date": 1},
     )
     to_suspend = await cursor.to_list(10000)
+    blocked_ok = blocked_fail = 0
     if to_suspend:
         ids = [c["id"] for c in to_suspend]
         await db.clients.update_many(
@@ -3389,11 +3458,24 @@ async def _run_suspend_overdue(run_id: str):
             {"$set": {"status": "suspended", "updated_at": now.isoformat(),
                       "suspended_at": now.isoformat(), "suspended_reason": "billing_overdue"}}
         )
+        # El corte real: sin esto el cliente queda marcado como suspendido en
+        # el CRM pero sigue navegando igual.
+        for c in to_suspend:
+            full = await db.clients.find_one({"id": c["id"]}, {"_id": 0})
+            res = await _apply_overdue_block(full or c, True)
+            if res.get("ok"):
+                blocked_ok += 1
+            else:
+                blocked_fail += 1
+                await db.clients.update_one({"id": c["id"]}, {"$set": {
+                    "overdue_block_error": res.get("reason", "")[:200]}})
     await db.cron_runs.insert_one({
         "run_id": run_id,
         "job": "suspend-overdue",
         "started_at": now.isoformat(),
         "suspended_count": len(to_suspend),
+        "blocked_ok": blocked_ok,
+        "blocked_failed": blocked_fail,
         "sample": [c["full_name"] for c in to_suspend[:10]],
     })
     logger.info("[cron] suspend-overdue run_id=%s suspended=%d", run_id, len(to_suspend))
@@ -4219,7 +4301,63 @@ async def tuya_chat_reset_endpoint(session_id: str,
 from olt import read_onus as olt_read_onus, snmp_test as olt_snmp_test, OLTError  # noqa: E402
 
 # ---------- Mikrotik RouterOS API (routeros_api port 8728) ----------
-from mikrotik_ros import connect_and_test as ros_test_connect, MikrotikRosError  # noqa: E402
+from mikrotik_ros import (  # noqa: E402
+    connect_and_test as ros_test_connect,
+    set_overdue as ros_set_overdue,
+    list_overdue as ros_list_overdue,
+    MikrotikRosError,
+)
+
+
+# ---------- Corte por mora: address-list en el router ----------
+async def _router_for_client(client: dict) -> Optional[dict]:
+    """Router al que pertenece el cliente.
+
+    `mikrotik_server` es texto libre escrito por el operador, así que primero
+    se intenta casar con el nombre del equipo; si no hay coincidencia y solo
+    existe un router registrado, se usa ese. Devolver None significa "no sé a
+    qué router pertenece", y en ese caso no se toca nada.
+    """
+    routers = await db.devices.find({"kind": "mikrotik"}, {"_id": 0}).to_list(100)
+    routers = [r for r in routers if r.get("host") and r.get("host") != "-" and r.get("api_user")]
+    if not routers:
+        return None
+    wanted = (client.get("mikrotik_server") or "").strip().lower()
+    if wanted:
+        for r in routers:
+            if wanted in (str(r.get("name", "")).lower(), str(r.get("id", "")).lower()):
+                return r
+    return routers[0] if len(routers) == 1 else None
+
+
+async def _apply_overdue_block(client: dict, blocked: bool) -> dict:
+    """Mete o saca al cliente de la address-list de morosos.
+
+    Nunca lanza: un router caído no debe impedir que el CRM registre el pago
+    ni la suspensión. Devuelve qué pasó para poder mostrarlo y reintentar.
+    """
+    ip = (client.get("ip_address") or "").strip()
+    if not ip:
+        return {"ok": False, "reason": "el cliente no tiene IP asignada"}
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+    try:
+        res = await ros_set_overdue(
+            router["host"], port=int(router.get("api_port") or 8728),
+            user=router.get("api_user", ""),
+            password=device_secret(router, "api_password"),
+            use_ssl=bool(router.get("api_use_ssl")),
+            address=ip, blocked=blocked,
+            comment=f"Sistema ISP - {client.get('full_name', '')}"[:60],
+        )
+        return {"ok": True, "router": router.get("name"), "ip": ip, **res}
+    except MikrotikRosError as e:
+        logger.warning("[mora] %s %s en %s: %s",
+                       "bloquear" if blocked else "desbloquear",
+                       ip, router.get("name"), e)
+        return {"ok": False, "router": router.get("name"), "ip": ip, "reason": str(e)[:200]}
+
 from mikrotik_dynamic import (  # noqa: E402
     get_config as mk_dyn_get,
     get_public_config as mk_dyn_public,
