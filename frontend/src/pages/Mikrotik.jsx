@@ -264,19 +264,11 @@ function PppoeServerDialog({ device, open, onOpenChange, onDone }) {
               <Input value={interfaceName} onChange={(e) => setInterfaceName(e.target.value)}
                 placeholder="Ej: vlan-clientes" data-testid="pppoe-srv-iface-text" />
             )}
-            <div className="text-[11px] text-muted-foreground mt-1">
-              {device?.interfaces?.length
-                ? "De las interfaces ya sincronizadas de este router."
-                : 'Sin interfaces sincronizadas todavía — sincronízalas desde el campo "Interfaz" al editar un cliente, o escribe el nombre exacto.'}
-            </div>
           </div>
           <div>
             <Label className="text-xs">Rango de IPs para los clientes PPPoE</Label>
             <Input value={poolRanges} onChange={(e) => setPoolRanges(e.target.value)}
               placeholder="10.20.0.2-10.20.0.254" className="font-mono" data-testid="pppoe-srv-pool" />
-            <div className="text-[11px] text-muted-foreground mt-1">
-              Un rango que no choque con otras redes ya usadas en este router.
-            </div>
           </div>
           <div>
             <Label className="text-xs">Velocidad por defecto (quien no tenga plan con velocidad)</Label>
@@ -558,10 +550,6 @@ function LinkScriptDialog({ device, open, onOpenChange, onDone }) {
                 ))}
               </TabsList>
             </Tabs>
-            <div className="text-[11px] text-muted-foreground mt-1">
-              ¿No sabes cuál? En el router, <span className="font-mono">/system resource print</span> muestra
-              la versión. Si el túnel no levanta, prueba con el otro perfil.
-            </div>
           </div>
 
           {loading && (

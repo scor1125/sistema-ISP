@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { ChevronDown, X, Search, RefreshCw } from "lucide-react";
 
 /**
- * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,hint?,suggestions?}]
+ * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,suggestions?}]
  * type: text | number | textarea | select
  */
 export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLabel = "Guardar", open, onOpenChange, size = "lg" }) {
@@ -95,9 +95,6 @@ function Field({ field, value, onChange, values }) {
   // In full-width dialogs, the parent grid supplies the column count;
   // full-span fields still span all columns via `full: true`.
   const wrapCls = field.full ? "col-span-full" : "";
-  // `hint` can depend on other fields (e.g. which router is selected), same
-  // pattern as `options: (values) => [...]` above.
-  const hint = typeof field.hint === "function" ? field.hint(values) : field.hint;
 
   return (
     <div className={wrapCls}>
