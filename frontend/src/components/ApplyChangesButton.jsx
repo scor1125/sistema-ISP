@@ -6,7 +6,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { CheckCheck, Loader2, CheckCircle2, XCircle, Undo2, FilePlus2, FilePen, FileX2 } from "lucide-react";
+import { CheckCheck, Loader2, CheckCircle2, XCircle, Undo2, ListChecks, FilePlus2, FilePen, FileX2 } from "lucide-react";
 import { toast } from "sonner";
 
 const OP_STYLE = {
@@ -50,12 +50,20 @@ export default function ApplyChangesButton() {
 
   if (!user) return null;
 
+  // El clic en "Aplicar Cambios" ya es la confirmación: se guarda de una vez,
+  // sin preguntar de nuevo. El diálogo solo aparece si algo falló, porque un
+  // error que nadie ve es un error que nadie arregla.
   const apply = async () => {
+    if (pending.total === 0) {
+      toast.info("No hay cambios capturados por confirmar");
+      return;
+    }
     setRunning(true);
     try {
       const { data } = await api.post("/pending-changes/apply");
-      setResult(data);
       if (data.failed > 0) {
+        setResult(data);
+        setOpen(true);
         toast.error(`Guardado con ${data.failed} error(es) — revisa el detalle`);
         await refresh();
       } else {
@@ -99,34 +107,53 @@ export default function ApplyChangesButton() {
 
   return (
     <>
-      <Button
-        size="sm"
-        variant={none ? "outline" : "default"}
-        onClick={() => { setResult(null); refresh(); setOpen(true); }}
-        title={none
-          ? "No hay cambios sin confirmar"
-          : `${pending.total} cambio(s) capturados sin confirmar`}
-        data-testid="apply-changes-btn"
-      >
-        <CheckCheck className="w-3.5 h-3.5 mr-1.5" />
-        Aplicar Cambios
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant={none ? "outline" : "default"}
+          onClick={apply}
+          disabled={running || !canApply}
+          title={none
+            ? "No hay cambios sin confirmar"
+            : `Guardar en el proyecto ${pending.total} cambio(s) capturados`}
+          data-testid="apply-changes-btn"
+        >
+          {running
+            ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            : <CheckCheck className="w-3.5 h-3.5 mr-1.5" />}
+          Aplicar Cambios
+          {!none && (
+            <span className="ml-1.5 rounded-full bg-background/25 px-1.5 text-[10px] font-mono">
+              {pending.total}
+            </span>
+          )}
+        </Button>
+
+        {/* Revisar/descartar lo capturado sin estorbar el camino de confirmar. */}
         {!none && (
-          <span className="ml-1.5 rounded-full bg-background/25 px-1.5 text-[10px] font-mono">
-            {pending.total}
-          </span>
+          <Button
+            size="icon" variant="ghost"
+            onClick={() => { setResult(null); refresh(); setOpen(true); }}
+            title="Ver o descartar los cambios sin confirmar"
+            data-testid="pending-review-btn"
+          >
+            <ListChecks className="w-4 h-4 text-muted-foreground" />
+          </Button>
         )}
-      </Button>
+      </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCheck className="w-4 h-4 text-primary" />
-              Confirmar cambios capturados
+              {result
+                ? <><CheckCheck className="w-4 h-4 text-primary" /> Resultado</>
+                : <><ListChecks className="w-4 h-4 text-primary" /> Cambios sin confirmar</>}
             </DialogTitle>
             <DialogDescription>
-              Nada de esto cuenta todavía en el proyecto. Al confirmar, los datos se
-              guardan de verdad y hasta entonces se aplican en el Mikrotik.
+              {result
+                ? "Los datos ya son del proyecto. Lo que aparece abajo se guardó, pero no se pudo aplicar en el router."
+                : 'Nada de esto cuenta todavía en el proyecto. Presiona "Aplicar Cambios" para guardarlo, o descarta lo que no quieras.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -202,18 +229,10 @@ export default function ApplyChangesButton() {
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>Cerrar</Button>
             {!result && !none && canApply && (
-              <>
-                <Button variant="outline" onClick={discardAll} disabled={running}
-                  data-testid="pending-discard-all">
-                  <Undo2 className="w-3.5 h-3.5 mr-1" /> Descartar todo
-                </Button>
-                <Button onClick={apply} disabled={running} data-testid="pending-apply">
-                  {running
-                    ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                    : <CheckCheck className="w-3.5 h-3.5 mr-1" />}
-                  Sí, guardar en el proyecto
-                </Button>
-              </>
+              <Button variant="outline" onClick={discardAll} disabled={running}
+                data-testid="pending-discard-all">
+                <Undo2 className="w-3.5 h-3.5 mr-1" /> Descartar todo
+              </Button>
             )}
             {!result && !none && !canApply && (
               <span className="text-xs text-muted-foreground self-center">
