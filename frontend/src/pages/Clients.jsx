@@ -116,6 +116,7 @@ export default function Clients() {
   const [promises, setPromises] = useState([]);
   const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [editing, setEditing] = useState(null);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [detail, setDetail] = useState(null); // client whose real-time drawer is open
@@ -430,6 +431,28 @@ export default function Clients() {
     }
   };
 
+  // Botón "Sincronizar": vuelve a empujar contra el Mikrotik la cola/PPPoE de
+  // todos los clientes ya confirmados — la red de seguridad para cuando el
+  // router se reinició o alguien borró algo a mano.
+  const syncAll = async () => {
+    setSyncingAll(true);
+    try {
+      const { data } = await api.post("/clients/sync-all");
+      if (data.failed > 0) {
+        toast.error(`${data.synced} sincronizados, ${data.failed} con error — revisa el router`);
+      } else if (data.synced === 0) {
+        toast.info(`Nada por sincronizar (${data.skipped} sin IP/router/plan)`);
+      } else {
+        toast.success(`${data.synced} cliente(s) sincronizados con su Mikrotik`);
+      }
+      await load();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setSyncingAll(false);
+    }
+  };
+
   const visibleCount = COLUMNS.filter((c) => showCol(c.key)).length;
 
   return (
@@ -438,9 +461,15 @@ export default function Clients() {
         title="Clientes"
         subtitle="Gestiona altas, planes, direcciones y fechas de pago de tu cartera."
         actions={
-          <Button data-testid="new-client-btn" onClick={() => { setEditing(null); setOpen(true); }}>
-            <Plus className="w-4 h-4 mr-1" /> Nuevo cliente
-          </Button>
+          <>
+            <Button variant="outline" onClick={syncAll} disabled={syncingAll} data-testid="sync-all-btn">
+              {syncingAll ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+              Sincronizar
+            </Button>
+            <Button data-testid="new-client-btn" onClick={() => { setEditing(null); setOpen(true); }}>
+              <Plus className="w-4 h-4 mr-1" /> Nuevo cliente
+            </Button>
+          </>
         }
       />
 

@@ -2425,6 +2425,48 @@ async def delete_client(cid: str, user: dict = Depends(require_permission("clien
     return await stage_delete("clients", cid, user)
 
 
+@api.post("/clients/sync-all")
+async def sync_all_clients(_: dict = Depends(require_roles("owner", "admin"))):
+    """Botón "Sincronizar" del menú de Clientes: vuelve a empujar la cola o el
+    secret PPPoE de cada cliente ya confirmado hacia su Mikrotik.
+
+    Para cuando el router se reinició, alguien borró una cola a mano, o el
+    router estuvo caído en el momento en que un cliente se guardó — es la red
+    de seguridad, no el camino normal (eso lo hace "Aplicar Cambios" solo con
+    lo que cambió). No toca clientes con cambios sin confirmar: ese dato
+    todavía no es del proyecto.
+    """
+    clients = await db.clients.find({PENDING: {"$exists": False}}, {"_id": 0}).to_list(20000)
+    synced, failed, skipped = [], [], []
+
+    for c in clients:
+        mode = c.get("connection_mode", "queue")
+        label = c.get("full_name") or c["id"]
+
+        if mode == "pppoe":
+            if not (c.get("mikrotik_server") and c.get("plan_id")):
+                skipped.append({"name": label, "reason": "faltan router y/o plan"})
+                continue
+            res = await _sync_client_pppoe_and_persist(c)
+        else:
+            if not (c.get("ip_address") and c.get("mikrotik_server") and c.get("plan_id")):
+                skipped.append({"name": label, "reason": "faltan IP, router y/o plan"})
+                continue
+            res = await _sync_client_queue_and_persist(c)
+
+        if res.get("ok"):
+            synced.append({"name": label, "mode": mode})
+        else:
+            failed.append({"name": label, "mode": mode, "reason": res.get("reason") or "error desconocido"})
+
+    return {
+        "ok": True,
+        "total": len(clients),
+        "synced": len(synced), "failed": len(failed), "skipped": len(skipped),
+        "details": {"synced": synced, "failed": failed, "skipped": skipped},
+    }
+
+
 @api.post("/clients/{cid}/sync-queue")
 async def sync_client_queue(cid: str, _: dict = Depends(require_permission("clients", "write"))):
     """Reintento manual: crea/actualiza la Simple Queue del cliente ahora
