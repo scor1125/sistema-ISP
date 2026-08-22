@@ -14,7 +14,6 @@ import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Colum
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
-import { copyToClipboard } from "@/lib/clipboard";
 import { cidrAvailableHosts } from "@/lib/cidr";
 import { planSpeedLabel } from "@/lib/utils";
 
@@ -306,8 +305,14 @@ export default function Clients() {
       // todavía, se muestran todas las del router como antes.
       options: (v) => {
         const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
-        const list = (mk?.lan_interfaces?.length > 0 && mk.lan_interfaces)
-          || (mk?.interfaces?.length > 0 && mk.interfaces)
+        // Sin servidor elegido no hay de dónde sacar interfaces reales — nada
+        // de lista genérica de relleno. Como mucho, conservar la que el
+        // cliente ya tuviera guardada.
+        if (!mk) {
+          return v.mikrotik_interface ? [{ value: v.mikrotik_interface, label: v.mikrotik_interface }] : [];
+        }
+        const list = (mk.lan_interfaces?.length > 0 && mk.lan_interfaces)
+          || (mk.interfaces?.length > 0 && mk.interfaces)
           || ["ether1","ether2","ether3","ether4","bridge","vlan-clientes","pppoe-out1","wg-crm"];
         // Una interfaz ya guardada en el cliente no debe desaparecer del
         // selector aunque hoy no esté marcada como LAN.
@@ -372,19 +377,8 @@ export default function Clients() {
         await api.patch(`/clients/${editing.id}`, payload);
         toast.success("Cliente actualizado");
       } else {
-        const { data } = await api.post("/clients", payload);
-        if (data?.portal_pin) {
-          toast.success(`Cliente creado · PIN ${data.portal_pin}`, {
-            description: "El PIN también aparece al presionar el cliente.",
-            duration: 12000,
-            action: {
-              label: "Copiar PIN",
-              onClick: () => { copyToClipboard(data.portal_pin); toast("PIN copiado"); },
-            },
-          });
-        } else {
-          toast.success("Cliente creado");
-        }
+        await api.post("/clients", payload);
+        toast.success("Cliente creado");
       }
       setEditing(null); await load();
     } catch (e) { toast.error(formatApiError(e)); throw e; }

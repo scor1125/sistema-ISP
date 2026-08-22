@@ -271,86 +271,91 @@ function MultiSelectField({ field, value, onChange, testId, values }) {
     .filter(Boolean);
 
   return (
-    <div className="w-full">
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setOpen((o) => !o)}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); } }}
-        data-testid={testId}
-        className="w-full min-h-[40px] rounded-md border border-input bg-background px-2 py-1.5 text-sm text-left hover:bg-accent/20 transition-colors flex flex-wrap items-center gap-1 cursor-pointer"
-      >
-        {selectedOptions.length === 0 && (
-          <span className="text-muted-foreground text-xs">{field.placeholder || "Seleccionar…"}</span>
-        )}
-        {selectedOptions.map((o) => (
-          <span
-            key={o.value}
-            className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs rounded-md border bg-primary/10 border-primary/30"
-            data-testid={`${testId}-chip-${o.value}`}
-          >
-            <span className="truncate max-w-[180px]">{o.label}</span>
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => { e.stopPropagation(); remove(String(o.value)); }}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); remove(String(o.value)); } }}
-              className="ml-0.5 hover:text-red-400 cursor-pointer"
-              data-testid={`${testId}-remove-${o.value}`}
-            >
-              <X className="w-3 h-3" />
-            </span>
-          </span>
-        ))}
-        <ChevronDown className={`w-3.5 h-3.5 ml-auto text-muted-foreground shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-      </div>
-
-      {open && (
-        <div className="mt-1 border border-border rounded-md bg-background shadow-md overflow-hidden">
-          <div className="p-2 border-b border-border">
-            <Input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar…"
-              className="h-8 text-xs"
-              data-testid={`${testId}-search`}
-            />
-          </div>
-          <div className="max-h-56 overflow-y-auto py-1">
-            {filtered.length === 0 && (
-              <div className="px-3 py-4 text-xs text-muted-foreground text-center">Sin opciones</div>
-            )}
-            {filtered.map((o) => {
-              const isChecked = selected.includes(String(o.value));
-              return (
-                <label
-                  key={o.value}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-accent cursor-pointer text-sm"
-                  data-testid={`${testId}-option-${o.value}`}
-                >
-                  <Checkbox checked={isChecked} onCheckedChange={() => toggle(String(o.value))} />
-                  <span className="truncate">{o.label}</span>
-                </label>
-              );
-            })}
-          </div>
-          {selected.length > 0 && (
-            <div className="p-2 border-t border-border flex items-center justify-between text-[11px]">
-              <span className="text-muted-foreground font-mono">{selected.length} seleccionados</span>
-              <button
-                type="button"
-                onClick={() => onChange(field.name, [])}
-                className="text-muted-foreground hover:text-foreground underline"
-                data-testid={`${testId}-clear`}
-              >
-                Limpiar
-              </button>
-            </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setOpen((o) => !o)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen((o) => !o); } }}
+          data-testid={testId}
+          className="w-full min-h-[40px] rounded-md border border-input bg-background px-2 py-1.5 text-sm text-left hover:bg-accent/20 transition-colors flex flex-wrap items-center gap-1 cursor-pointer"
+        >
+          {selectedOptions.length === 0 && (
+            <span className="text-muted-foreground text-xs">{field.placeholder || "Seleccionar…"}</span>
           )}
+          {selectedOptions.map((o) => (
+            <span
+              key={o.value}
+              className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs rounded-md border bg-primary/10 border-primary/30"
+              data-testid={`${testId}-chip-${o.value}`}
+            >
+              <span className="truncate max-w-[180px]">{o.label}</span>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); remove(String(o.value)); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); remove(String(o.value)); } }}
+                className="ml-0.5 hover:text-red-400 cursor-pointer"
+                data-testid={`${testId}-remove-${o.value}`}
+              >
+                <X className="w-3 h-3" />
+              </span>
+            </span>
+          ))}
+          <ChevronDown className={`w-3.5 h-3.5 ml-auto text-muted-foreground shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
         </div>
-      )}
-    </div>
+      </PopoverTrigger>
+
+      <PopoverContent
+        className="z-[1200] p-0 w-[--radix-popover-trigger-width] min-w-[260px]"
+        align="start"
+        sideOffset={4}
+        data-testid={`${testId}-panel`}
+      >
+        <div className="p-2 border-b border-border">
+          <Input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Buscar…"
+            className="h-8 text-xs"
+            data-testid={`${testId}-search`}
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto py-1">
+          {filtered.length === 0 && (
+            <div className="px-3 py-4 text-xs text-muted-foreground text-center">Sin opciones</div>
+          )}
+          {filtered.map((o) => {
+            const isChecked = selected.includes(String(o.value));
+            return (
+              <label
+                key={o.value}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-accent cursor-pointer text-sm"
+                data-testid={`${testId}-option-${o.value}`}
+              >
+                <Checkbox checked={isChecked} onCheckedChange={() => toggle(String(o.value))} />
+                <span className="truncate">{o.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        {selected.length > 0 && (
+          <div className="p-2 border-t border-border flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground font-mono">{selected.length} seleccionados</span>
+            <button
+              type="button"
+              onClick={() => onChange(field.name, [])}
+              className="text-muted-foreground hover:text-foreground underline"
+              data-testid={`${testId}-clear`}
+            >
+              Limpiar
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
