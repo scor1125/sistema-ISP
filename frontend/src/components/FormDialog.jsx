@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,7 @@ import { SearchableSelect } from "@/components/SearchableSelect";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { api, formatApiError } from "@/lib/api";
 import { toast } from "sonner";
-import { ChevronDown, X, Search, RefreshCw } from "lucide-react";
+import { ChevronDown, X, Search, RefreshCw, ToggleLeft, ToggleRight } from "lucide-react";
 
 /**
  * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,suggestions?}]
@@ -30,6 +30,23 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
   const isOpen = open !== undefined ? open : undefined;
 
   const handleChange = (name, v) => setValues((s) => ({ ...s, [name]: v }));
+
+  /* Un campo puede declarar `tab: "Nombre"`. Si alguno lo hace, el formulario
+     se parte en pestañas; los que no lo declaran caen en la primera, así los
+     formularios de siempre siguen viéndose igual. */
+  const tabs = useMemo(() => {
+    const named = fields.filter((f) => f.tab).map((f) => f.tab);
+    if (named.length === 0) return null;
+    const first = fields.some((f) => !f.tab) ? ["General"] : [];
+    return [...first, ...named.filter((t, i) => named.indexOf(t) === i)];
+  }, [fields]);
+
+  const [tab, setTab] = useState(null);
+  useEffect(() => { if (open && tabs) setTab(tabs[0]); }, [open, tabs]);
+
+  const visible = tabs
+    ? fields.filter((f) => (f.tab || tabs[0]) === (tab || tabs[0]))
+    : fields;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -67,9 +84,28 @@ export function FormDialog({ trigger, title, fields, initial, onSubmit, submitLa
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <form onSubmit={submit} className="flex-1 flex flex-col overflow-hidden">
+          {tabs && (
+            <div className="px-6 pt-3 flex gap-1 flex-wrap border-b border-border">
+              {tabs.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTab(t)}
+                  data-testid={`form-tab-${t}`}
+                  className={`px-3 py-1.5 text-sm rounded-t-md border-b-2 transition-colors ${
+                    (tab || tabs[0]) === t
+                      ? "border-primary text-primary font-medium"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <div className={gridCls}>
-              {fields.map((f) => (
+              {visible.map((f) => (
                 <Field key={f.name} field={f} value={values[f.name] ?? ""} onChange={handleChange} values={values} />
               ))}
             </div>
@@ -138,6 +174,28 @@ function SyncableSelectRow({ field, values, select }) {
 
 function FieldControl({ field, value, onChange, inputId, values }) {
   const testId = `input-${field.name}`;
+
+  /* Interruptor de habilitado/deshabilitado: un solo botón que dice en qué
+     estado está y lo cambia al pulsarlo. Los valores viejos pueden venir como
+     texto ("true"/"false"), así que se normaliza; sin valor guardado cuenta
+     como habilitado, que es como se comportaba antes de existir el campo. */
+  if (field.type === "toggle") {
+    const on = value === "" || value == null ? true : String(value) !== "false";
+    return (
+      <Button
+        type="button"
+        variant={on ? "default" : "outline"}
+        onClick={() => onChange(field.name, !on)}
+        data-testid={testId}
+        className={`w-full justify-start ${on ? "" : "text-muted-foreground"}`}
+      >
+        {on
+          ? <ToggleRight className="w-4 h-4 mr-2" />
+          : <ToggleLeft className="w-4 h-4 mr-2" />}
+        {on ? "Habilitado" : "Deshabilitado"}
+      </Button>
+    );
+  }
 
   if (field.type === "textarea") {
     return (

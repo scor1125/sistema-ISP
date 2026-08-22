@@ -365,6 +365,9 @@ export default function Clients() {
     { name: "onu_mac", label: "MAC de la ONU", type: "mac-picker",
       placeholder: "aa:bb:cc:dd:ee:ff",
     },
+
+    { name: "billing_enabled", label: "Facturación", type: "toggle", tab: "Facturación" },
+    { name: "auto_status_enabled", label: "Estado automático", type: "toggle", tab: "Facturación" },
   ];
 
   const save = async (v) => {
@@ -380,6 +383,11 @@ export default function Clients() {
       }
       if (payload.vlan === "" || payload.vlan == null) payload.vlan = null;
       if (payload.onu_mac) payload.onu_mac = String(payload.onu_mac).trim().toLowerCase();
+      // Los interruptores pueden llegar sin tocar (undefined) o como texto;
+      // el backend espera booleanos y, sin valor, ambos cuentan como activos.
+      ["billing_enabled", "auto_status_enabled"].forEach((k) => {
+        payload[k] = payload[k] === "" || payload[k] == null ? true : String(payload[k]) !== "false";
+      });
       if (editing) {
         await api.patch(`/clients/${editing.id}`, payload);
         toast.success("Cliente actualizado");
@@ -744,7 +752,8 @@ export default function Clients() {
               // se ve como Habilitado hasta que se toque a mano.
               status: editing.status === "suspended" ? "suspended" : "active",
             }
-          : { payment_day: 1, status: "active", installer_ids: [], connection_mode: "queue" }}
+          : { payment_day: 1, status: "active", installer_ids: [], connection_mode: "queue",
+              billing_enabled: true, auto_status_enabled: true }}
         onSubmit={save}
         size="full"
       />

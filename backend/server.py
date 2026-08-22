@@ -455,6 +455,11 @@ class ClientIn(BaseModel):
     vlan: Optional[int] = None
     onu_mac: Optional[str] = ""
     status: Literal["active","suspended","offline","new"] = "new"
+    # Facturación: si está apagada, el cliente queda fuera del cobro (ni
+    # recordatorios ni corte por mora). "Estado automático" es lo que deja que
+    # el ciclo mensual le cambie el estado solo; apagarlo lo congela como esté.
+    billing_enabled: bool = True
+    auto_status_enabled: bool = True
     notes: Optional[str] = ""
 
 class ClientUpdate(BaseModel):
@@ -485,6 +490,8 @@ class ClientUpdate(BaseModel):
     vlan: Optional[int] = None
     onu_mac: Optional[str] = None
     status: Optional[str] = None
+    billing_enabled: Optional[bool] = None
+    auto_status_enabled: Optional[bool] = None
     notes: Optional[str] = None
 
 class PaymentIn(BaseModel):
@@ -3628,7 +3635,8 @@ async def preview_reminders(days_before: Optional[int] = None,
     target = (now + timedelta(days=n)).date()
     # Find clients whose next_due_date falls on the target date
     cursor = db.clients.find(
-        {"status": {"$in": ["active", "new", "offline"]}, "phone": {"$ne": ""}},
+        {"status": {"$in": ["active", "new", "offline"]}, "phone": {"$ne": ""},
+         "billing_enabled": {"$ne": False}},
         {"_id": 0, "id": 1, "full_name": 1, "phone": 1, "next_due_date": 1, "plan_id": 1, "status": 1}
     )
     all_clients = await cursor.to_list(5000)
@@ -3706,7 +3714,8 @@ async def _run_send_reminders(run_id: str):
     portal_base = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/") + "/portal"
 
     cursor = db.clients.find(
-        {"status": {"$in": ["active", "new", "offline"]}, "phone": {"$ne": ""}, "next_due_date": {"$ne": None}},
+        {"status": {"$in": ["active", "new", "offline"]}, "phone": {"$ne": ""}, "next_due_date": {"$ne": None},
+         "billing_enabled": {"$ne": False}},
         {"_id": 0}
     )
     all_clients = await cursor.to_list(5000)
@@ -4011,7 +4020,8 @@ async def _run_suspend_overdue(run_id: str):
         return
     now = datetime.now(timezone.utc)
     cursor = db.clients.find(
-        {"status": {"$in": ["active", "new"]}, "next_due_date": {"$lt": now.isoformat(), "$ne": None}},
+        {"status": {"$in": ["active", "new"]}, "next_due_date": {"$lt": now.isoformat(), "$ne": None},
+         "billing_enabled": {"$ne": False}, "auto_status_enabled": {"$ne": False}},
         {"_id": 0, "id": 1, "full_name": 1, "next_due_date": 1},
     )
     to_suspend = await cursor.to_list(10000)
