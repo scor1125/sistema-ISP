@@ -4640,6 +4640,7 @@ from mikrotik_ros import (  # noqa: E402
     remove_ppp_secret as ros_remove_ppp_secret,
     get_queue_rate as ros_get_queue_rate,
     get_pppoe_rate as ros_get_pppoe_rate,
+    interface_traffic as ros_interface_traffic,
     MikrotikRosError,
 )
 
@@ -4892,6 +4893,42 @@ async def _sync_client_pppoe_and_persist(client: dict) -> dict:
         fields["mikrotik_pppoe_synced_at"] = now_iso()
     await db.clients.update_one({"id": client["id"]}, {"$set": fields})
     return res
+
+
+@api.get("/mikrotik/wan-traffic")
+async def mikrotik_wan_traffic(_: dict = Depends(get_current_user)):
+    """Consumo de internet en vivo de cada Mikrotik: mide sus interfaces WAN
+    (las marcadas en Mikrotik → Interfaces) y devuelve la suma, para la gráfica
+    del panel de control.
+
+    Se mide en paralelo y con timeout corto: el panel refresca seguido y un
+    router lento no debe dejar esperando a los demás. Un router que no
+    responde se reporta con su motivo en vez de tumbar la respuesta.
+    """
+    devices = await db.devices.find({"kind": "mikrotik"}, {"_id": 0}).to_list(200)
+
+    async def measure(d: dict) -> dict:
+        base = {"id": d.get("id"), "name": d.get("name"),
+                "wan_interfaces": d.get("wan_interfaces") or []}
+        if not base["wan_interfaces"]:
+            return {**base, "ok": False,
+                    "reason": "sin interfaces WAN marcadas — márcalas en Mikrotik → Interfaces"}
+        host, api_user = d.get("host") or "", d.get("api_user") or ""
+        pwd = device_secret(d, "api_password")
+        if not host or host == "-" or not api_user or not pwd:
+            return {**base, "ok": False, "reason": "el router aún no está vinculado"}
+        try:
+            res = await ros_interface_traffic(
+                host, port=int(d.get("api_port") or 8728), user=api_user, password=pwd,
+                use_ssl=bool(d.get("api_use_ssl")), interfaces=base["wan_interfaces"],
+                timeout=5,
+            )
+            return {**base, **res}
+        except MikrotikRosError as e:
+            return {**base, "ok": False, "reason": str(e)[:200]}
+
+    results = await asyncio.gather(*(measure(d) for d in devices))
+    return {"routers": list(results), "at": now_iso()}
 
 
 # --------------------------------------------------------------------------

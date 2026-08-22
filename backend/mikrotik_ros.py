@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import routeros_api
 
@@ -835,4 +835,66 @@ async def get_pppoe_rate(host: str, *, port: int = DEFAULT_API_PORT, user: str, 
         raise MikrotikRosError("El cliente no tiene usuario PPPoE")
     return await asyncio.to_thread(
         _pppoe_rate_sync, host, int(port), user, password, use_ssl, int(timeout), username,
+    )
+
+
+def _interface_traffic_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                            timeout: int, interfaces: List[str]) -> Dict[str, Any]:
+    """Consumo en vivo de varias interfaces a la vez. RouterOS acepta la lista
+    separada por comas en un solo `monitor-traffic`, así que se mide todo en
+    una llamada en vez de una por interfaz."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        bres = pool.get_api().get_binary_resource("/interface")
+        rows = list(bres.call("monitor-traffic", {
+            "once": b"", "interface": ",".join(interfaces).encode(),
+        }))
+        per_iface, rx_total, tx_total = [], 0.0, 0.0
+        for row in rows:
+            name = row.get("name")
+            if isinstance(name, bytes):
+                name = name.decode()
+            rx = _bps_to_mbps(row.get("rx-bits-per-second", 0))
+            tx = _bps_to_mbps(row.get("tx-bits-per-second", 0))
+            rx_total += rx
+            tx_total += tx
+            per_iface.append({"interface": name, "rx_mbps": rx, "tx_mbps": tx})
+        return {"ok": True, "rx_mbps": round(rx_total, 2), "tx_mbps": round(tx_total, 2),
+                "interfaces": per_iface}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def interface_traffic(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                            interfaces: List[str], use_ssl: bool = False,
+                            timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not interfaces:
+        raise MikrotikRosError("No se indicó ninguna interfaz que medir")
+    return await asyncio.to_thread(
+        _interface_traffic_sync, host, int(port), user, password, use_ssl, int(timeout),
+        list(interfaces),
     )

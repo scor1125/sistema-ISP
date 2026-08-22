@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Users, UserX, Sparkles, DollarSign, Router as RouterIcon, Radio, Calendar } from "lucide-react";
 import PaymentsTimeline from "@/components/PaymentsTimeline";
+import WanTrafficCard from "@/components/WanTrafficCard";
 
 const AXIS = "hsl(240 5% 55%)";
 const GRID = "hsl(240 10% 15%)";
@@ -56,6 +57,8 @@ export default function ControlPanel() {
           </ResponsiveContainer>
         </div>
       </section>
+
+      <WanTrafficCard />
 
       <PaymentsTimeline />
 
