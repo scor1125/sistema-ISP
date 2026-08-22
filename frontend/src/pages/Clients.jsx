@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp, RefreshCw, HandCoins } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
@@ -110,6 +110,7 @@ export default function Clients() {
   const [onus, setOnus] = useState([]);
   const [lugares, setLugares] = useState([]);
   const [colaboradores, setColaboradores] = useState([]);
+  const [promises, setPromises] = useState([]);
   const [ipPool, setIpPool] = useState({ available: [], used: [], cidr: "", total: 0 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -134,7 +135,7 @@ export default function Clients() {
   };
 
   const load = useCallback(async () => {
-    const [c, p, n, ip, d, u, o, lg, tr] = await Promise.all([
+    const [c, p, n, ip, d, u, o, lg, tr, pay] = await Promise.all([
       api.get("/clients"),
       api.get("/plans"),
       api.get("/nap-boxes"),
@@ -144,6 +145,7 @@ export default function Clients() {
       api.get("/onus"),
       api.get("/lugares").catch(() => ({ data: [] })),
       api.get("/trabajadores").catch(() => ({ data: [] })),
+      api.get("/payments").catch(() => ({ data: [] })),
     ]);
     setClients(c.data); setPlans(p.data); setNaps(n.data); setIpPool(ip.data);
     setMikrotiks(d.data.filter((x) => x.kind === "mikrotik"));
@@ -151,7 +153,21 @@ export default function Clients() {
     setOnus(o.data);
     setLugares(lg.data);
     setColaboradores(tr.data);
+    setPromises(pay.data.filter((x) => x.is_promise));
   }, []);
+
+  // Promesa de pago vigente por cliente (la de fecha comprometida más lejana,
+  // si tuviera más de una activa a la vez) — para el aviso bajo su nombre.
+  const activePromiseByClient = useMemo(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const m = new Map();
+    promises.forEach((p) => {
+      if (!p.client_id || !p.promise_date || p.promise_date < todayIso) return;
+      const prev = m.get(p.client_id);
+      if (!prev || p.promise_date > prev.promise_date) m.set(p.client_id, p);
+    });
+    return m;
+  }, [promises]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -624,6 +640,20 @@ export default function Clients() {
                     <TableCell>
                       <div className="font-medium flex items-center gap-2">{c.full_name}<PendingBadge row={c} /></div>
                       <div className="text-xs text-muted-foreground">{c.community || c.address || ""}</div>
+                      {(() => {
+                        const promise = activePromiseByClient.get(c.id);
+                        if (!promise) return null;
+                        const days = promise.extension_days ?? Math.round(
+                          (new Date(promise.promise_date) - new Date((promise.created_at || "").slice(0, 10))) / 86400000
+                        );
+                        return (
+                          <div className="text-[11px] text-amber-500 flex items-center gap-1 mt-0.5"
+                            title={`Fecha comprometida: ${promise.promise_date}`}>
+                            <HandCoins className="w-3 h-3" />
+                            Activo en promesa de pago por {days} día{days === 1 ? "" : "s"}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                   )}
                   {showCol("contact") && (
