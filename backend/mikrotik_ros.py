@@ -1377,3 +1377,76 @@ async def arp_status(host: str, *, port: int = DEFAULT_API_PORT, user: str, pass
     return await asyncio.to_thread(
         _arp_status_sync, host, int(port), user, password, use_ssl, int(timeout),
     )
+
+
+def _arp_bind_all_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                       timeout: int, interface: str) -> Dict[str, Any]:
+    """Convierte en amarres estáticos todos los equipos que ahora mismo están
+    vivos en una interfaz — una foto del ARP tal como está.
+
+    Amarra la MAC que esté conectada en ese momento: si ya hay un impostor
+    puesto, lo que se amarra es su MAC. El aviso de eso va en la interfaz de
+    usuario, antes de llegar aquí.
+
+    Esta versión de RouterOS no trae `make-static`, así que cada entrada se
+    borra y se vuelve a crear estática con la misma MAC — el hueco entre una
+    cosa y la otra es de milisegundos y el tráfico sigue yendo a la misma MAC.
+    """
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/ip/arp")
+
+        bound, failed, already = [], [], 0
+        for r in res.get(interface=interface):
+            if str(r.get("dynamic")).lower() == "false":
+                already += 1
+                continue
+            # Una entrada incompleta es una consulta ARP que nunca tuvo
+            # respuesta: no hay MAC que amarrar.
+            if str(r.get("complete")).lower() != "true":
+                continue
+            ip = str(r.get("address") or "")
+            mac = _norm_mac(r.get("mac-address"))
+            if not ip or not mac:
+                continue
+            try:
+                res.remove(id=r.get("id") or r.get(".id"))
+                res.add(address=ip, **{"mac-address": mac}, interface=interface)
+                bound.append({"address": ip, "mac": mac})
+            except Exception as e:  # noqa: BLE001 — uno que falle no para al resto
+                failed.append({"address": ip, "reason": f"{type(e).__name__}: {e}"[:120]})
+        return {"ok": True, "interface": interface, "bound": bound,
+                "already_bound": already, "failed": failed}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def arp_bind_all(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                       interface: str, use_ssl: bool = False, timeout: int = 180) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not interface:
+        raise MikrotikRosError("No se indicó la interfaz")
+    return await asyncio.to_thread(
+        _arp_bind_all_sync, host, int(port), user, password, use_ssl, int(timeout), interface,
+    )

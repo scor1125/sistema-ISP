@@ -22,7 +22,7 @@ import {
 import {
   Plus, Router as RouterIcon, Pencil, Trash2, Radio, Cpu, Copy,
   CheckCircle2, XCircle, Terminal, ChevronDown, ChevronUp, KeyRound,
-  ShieldCheck, Loader2, FileCode, RefreshCw, Ban, Wifi, Network, Globe,
+  ShieldCheck, Loader2, FileCode, RefreshCw, Ban, Wifi, Network, Globe, Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -353,6 +353,31 @@ function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
     finally { setArpBusy(""); }
   };
 
+  /* Amarra de golpe todo lo que esté vivo en la interfaz, como está ahora.
+     Es lo que permite luego bloquear por MAC sin dejar a nadie fuera. */
+  const bindAll = async (name) => {
+    const st = arp[name] || {};
+    if (!window.confirm(
+      `Se amarrarán los ${st.unbound} equipo(s) conectados en "${name}", cada uno a la MAC ` +
+      "que tenga puesta en este momento.\n\n" +
+      "Si alguien ya está usando una IP que no le toca, se le amarra su MAC como si fuera " +
+      "el bueno — conviene revisar antes que no haya intrusos.\n\n¿Amarrar todos?"
+    )) return;
+    setArpBusy(name);
+    try {
+      const { data } = await api.post(`/devices/${dev.id}/arp-bind-all`, { interface: name });
+      const n = data.bound?.length || 0;
+      toast.success(
+        `${n} equipo(s) amarrados en ${name}` +
+        (data.clients_updated ? ` · ${data.clients_updated} ficha(s) de cliente actualizadas` : ""),
+        data.failed?.length ? { description: `${data.failed.length} no se pudieron amarrar` } : undefined,
+      );
+      await loadArp(dev);
+      onDone?.();
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setArpBusy(""); }
+  };
+
   // Las que el router reporta, más las guardadas que ya no existen (para
   // poder verlas y quitarlas en vez de que desaparezcan calladas).
   const rows = useMemo(() => {
@@ -467,25 +492,39 @@ function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
                         : (net || "sin IP configurada")}
                     </div>
                     {!stale && role !== "wan" && arp[name] && (
-                      <Button
-                        size="sm"
-                        variant={arp[name].blocking ? "default" : "outline"}
-                        className={`h-6 mt-1 text-[10px] ${arp[name].blocking ? "border border-red-500/40" : ""}`}
-                        onClick={() => toggleMacBlock(name)}
-                        disabled={arpBusy === name}
-                        data-testid={`mk-macblock-${name}`}
-                        title={arp[name].blocking
-                          ? "Solo dan servicio los equipos con su IP amarrada a su MAC. Click para apagar."
-                          : `Al activarlo, ${arp[name].unbound} equipo(s) sin amarrar se quedan sin internet`}
-                      >
-                        {arpBusy === name
-                          ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                          : <ShieldCheck className="w-3 h-3 mr-1" />}
-                        Bloquear tráfico por MAC
-                        <span className="ml-1.5 opacity-70">
-                          {arp[name].blocking ? "· activo" : `· ${arp[name].bound}/${arp[name].live} amarrados`}
-                        </span>
-                      </Button>
+                      <div className="flex items-center gap-1 mt-1 flex-wrap">
+                        <Button
+                          size="sm"
+                          variant={arp[name].blocking ? "default" : "outline"}
+                          className={`h-6 text-[10px] ${arp[name].blocking ? "border border-red-500/40" : ""}`}
+                          onClick={() => toggleMacBlock(name)}
+                          disabled={arpBusy === name}
+                          data-testid={`mk-macblock-${name}`}
+                          title={arp[name].blocking
+                            ? "Solo dan servicio los equipos con su IP amarrada a su MAC. Click para apagar."
+                            : `Al activarlo, ${arp[name].unbound} equipo(s) sin amarrar se quedan sin internet`}
+                        >
+                          {arpBusy === name
+                            ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            : <ShieldCheck className="w-3 h-3 mr-1" />}
+                          Bloquear tráfico por MAC
+                          <span className="ml-1.5 opacity-70">
+                            {arp[name].blocking ? "· activo" : `· ${arp[name].bound}/${arp[name].live} amarrados`}
+                          </span>
+                        </Button>
+                        {arp[name].unbound > 0 && (
+                          <Button
+                            size="sm" variant="outline" className="h-6 text-[10px]"
+                            onClick={() => bindAll(name)}
+                            disabled={arpBusy === name}
+                            data-testid={`mk-bindall-${name}`}
+                            title={`Amarrar los ${arp[name].unbound} equipos conectados a la MAC que tienen ahora`}
+                          >
+                            <Link2 className="w-3 h-3 mr-1" />
+                            Amarrar todos ({arp[name].unbound})
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="flex gap-1 shrink-0">

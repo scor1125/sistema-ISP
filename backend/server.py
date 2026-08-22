@@ -1611,6 +1611,56 @@ async def device_arp_status(device_id: str, _: dict = Depends(get_current_user))
         return {"ok": False, "reason": str(e)[:200], "interfaces": {}}
 
 
+class BindAllIn(BaseModel):
+    interface: str
+
+
+@api.post("/devices/{device_id}/arp-bind-all")
+async def device_arp_bind_all(device_id: str, payload: BindAllIn,
+                              _: dict = Depends(require_roles("owner", "admin"))):
+    """Amarra de golpe todos los equipos vivos de una interfaz, tomando una
+    foto del ARP tal como está en este momento.
+
+    Es el paso previo a poder bloquear por MAC sin dejar a nadie fuera. Ojo:
+    amarra la MAC que esté conectada ahora, así que un impostor ya presente
+    queda amarrado como si fuera el bueno.
+    """
+    dev = await db.devices.find_one({"id": device_id}, {"_id": 0})
+    if not dev:
+        raise HTTPException(404, "Dispositivo no encontrado")
+    if payload.interface in set(dev.get("wan_interfaces") or []):
+        raise HTTPException(400,
+            "No se amarra la WAN: si el equipo del proveedor cambia de MAC, "
+            "el router se quedaría sin internet")
+    try:
+        res = await ros_arp_bind_all(
+            dev["host"], port=int(dev.get("api_port") or 8728),
+            user=dev.get("api_user", ""),
+            password=device_secret(dev, "api_password"),
+            use_ssl=bool(dev.get("api_use_ssl")), interface=payload.interface,
+        )
+    except MikrotikRosError as e:
+        raise HTTPException(502, str(e)[:200])
+
+    # Lo amarrado en el router se refleja en la ficha de los clientes que
+    # tengan esa IP: la MAC capturada solo se rellena si estaba vacía, para no
+    # pisar lo que el operador haya puesto a mano.
+    matched = 0
+    for b in res.get("bound", []):
+        c = await db.clients.find_one({"ip_address": b["address"]}, {"_id": 0, "id": 1, "onu_mac": 1})
+        if not c:
+            continue
+        fields = {"arp_bound_mac": b["mac"], "arp_bound_at": now_iso(), "arp_bind_error": ""}
+        if not (c.get("onu_mac") or "").strip():
+            fields["onu_mac"] = b["mac"].lower()
+        await db.clients.update_one({"id": c["id"]}, {"$set": fields})
+        matched += 1
+
+    logger.warning("[arp-bind-all] %s/%s: %d amarrados, %d clientes actualizados",
+                   dev.get("name"), payload.interface, len(res.get("bound", [])), matched)
+    return {**res, "clients_updated": matched}
+
+
 @api.put("/devices/{device_id}/mac-block")
 async def set_device_mac_block(device_id: str, payload: MacBlockIn,
                                _: dict = Depends(require_roles("owner", "admin"))):
@@ -4948,6 +4998,7 @@ from mikrotik_ros import (  # noqa: E402
     arp_unbind as ros_arp_unbind,
     arp_status as ros_arp_status,
     set_interface_arp as ros_set_interface_arp,
+    arp_bind_all as ros_arp_bind_all,
     MikrotikRosError,
 )
 
