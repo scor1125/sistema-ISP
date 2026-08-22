@@ -2186,6 +2186,49 @@ async def sync_client_pppoe(cid: str, _: dict = Depends(require_permission("clie
         raise HTTPException(424, res.get("reason") or "No se pudo sincronizar el PPPoE")
     return res
 
+
+@api.post("/clients/apply-changes")
+async def apply_all_client_changes(_: dict = Depends(require_roles("owner", "admin"))):
+    """Botón "Aplicar Cambios": recorre todos los clientes y sincroniza su
+    cola o su secret PPPoE contra el Mikrotik, según sus datos actuales.
+
+    Es la misma sincronización que ya corre sola al guardar un cliente — este
+    botón es la red de seguridad para cuando algo no se aplicó en su momento
+    (por ejemplo, un cliente que no tenía plan asignado todavía). Se hace uno
+    por uno y no se detiene si alguno falla, para que un router caído no deje
+    sin revisar al resto.
+    """
+    clients = await db.clients.find({}, {"_id": 0}).to_list(5000)
+    synced, failed, skipped = [], [], []
+
+    for c in clients:
+        mode = c.get("connection_mode", "queue")
+        label = c.get("full_name") or c["id"]
+
+        if mode == "pppoe":
+            if not (c.get("mikrotik_server") and c.get("plan_id")):
+                skipped.append({"name": label, "reason": "faltan router y/o plan"})
+                continue
+            res = await _sync_client_pppoe_and_persist(c)
+        else:
+            if not (c.get("ip_address") and c.get("mikrotik_server") and c.get("plan_id")):
+                skipped.append({"name": label, "reason": "faltan IP, router y/o plan"})
+                continue
+            res = await _sync_client_queue_and_persist(c)
+
+        if res.get("ok"):
+            synced.append({"name": label, "mode": mode})
+        else:
+            failed.append({"name": label, "mode": mode, "reason": res.get("reason") or "error desconocido"})
+
+    return {
+        "ok": True,
+        "total": len(clients),
+        "synced": len(synced), "failed": len(failed), "skipped": len(skipped),
+        "details": {"synced": synced, "failed": failed, "skipped": skipped},
+    }
+
+
 # ---------- Payments ----------
 @api.get("/payments")
 async def list_payments(client_id: Optional[str] = None,

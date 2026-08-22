@@ -25,6 +25,7 @@ import ServersStatus from "@/components/ServersStatus";
 import PendingBadges from "@/components/PendingBadges";
 import InboxWidget from "@/components/InboxWidget";
 import CalculatorWidget from "@/components/CalculatorWidget";
+import ApplyChangesButton from "@/components/ApplyChangesButton";
 
 const NAV = [
   { to: "/panel", label: "Panel de control", icon: LayoutDashboard, group: "Operación" },
@@ -293,6 +294,7 @@ export default function Layout() {
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
             <div className="hidden sm:flex items-center gap-2">
+              <ApplyChangesButton />
               <CalculatorWidget />
               <ThemePicker />
             </div>
