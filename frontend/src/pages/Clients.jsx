@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow } from "@/components/Common";
+import { PageHeader, EmptyRow, PendingBadge } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -616,7 +616,7 @@ export default function Clients() {
                 >
                   {showCol("client") && (
                     <TableCell>
-                      <div className="font-medium">{c.full_name}</div>
+                      <div className="font-medium flex items-center gap-2">{c.full_name}<PendingBadge row={c} /></div>
                       <div className="text-xs text-muted-foreground">{c.community || c.address || ""}</div>
                     </TableCell>
                   )}

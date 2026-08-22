@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -6,36 +6,61 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { CloudUpload, Loader2, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
+import { CheckCheck, Loader2, CheckCircle2, XCircle, Undo2, FilePlus2, FilePen, FileX2 } from "lucide-react";
 import { toast } from "sonner";
 
+const OP_STYLE = {
+  Alta:    { cls: "border-emerald-500/40 text-emerald-500", Icon: FilePlus2 },
+  Edición: { cls: "border-sky-500/40 text-sky-400",         Icon: FilePen },
+  Baja:    { cls: "border-red-500/40 text-red-500",         Icon: FileX2 },
+};
+
 /**
- * Botón global "Aplicar Cambios": recorre todos los clientes y sincroniza su
- * cola/PPPoE contra el Mikrotik según sus datos actuales. Es la misma
- * sincronización que ya corre sola al guardar un cliente — sirve de red de
- * seguridad para cuando algo no se aplicó en su momento (ej. un cliente
- * quedó sin plan y por eso nunca sincronizó).
+ * Botón global "Aplicar Cambios": nada de lo que se captura en el CRM cuenta
+ * como definitivo hasta que se confirma aquí. Mientras tanto los registros
+ * viven marcados como pendientes y no salen hacia el Mikrotik.
+ *
+ * Al confirmar se recarga la página: los datos ya son otros en todas las
+ * pantallas abiertas y es más honesto refrescarlas que dejarlas desfasadas.
  */
 export default function ApplyChangesButton() {
   const { user } = useAuth();
+  const [pending, setPending] = useState({ total: 0, items: [], by_module: {} });
+  const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
-  const [open, setOpen] = useState(false);
 
-  // Solo owner/admin — el endpoint exige el mismo nivel para no dejar que
-  // cualquier rol dispare cambios de configuración en los routers.
-  if (!["owner", "admin"].includes(user?.role)) return null;
+  const canApply = ["owner", "admin"].includes(user?.role);
 
-  const run = async () => {
+  const refresh = useCallback(async () => {
+    try {
+      const { data } = await api.get("/pending-changes");
+      setPending(data);
+    } catch {
+      /* si falla, el contador simplemente no se actualiza */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    refresh();
+    const t = setInterval(refresh, 20000);
+    return () => clearInterval(t);
+  }, [user, refresh]);
+
+  if (!user) return null;
+
+  const apply = async () => {
     setRunning(true);
     try {
-      const { data } = await api.post("/clients/apply-changes");
+      const { data } = await api.post("/pending-changes/apply");
       setResult(data);
-      setOpen(true);
       if (data.failed > 0) {
-        toast.error(`Aplicado con ${data.failed} error(es) — revisa el detalle`);
+        toast.error(`Guardado con ${data.failed} error(es) — revisa el detalle`);
+        await refresh();
       } else {
-        toast.success(`Cambios aplicados: ${data.synced} sincronizados`);
+        toast.success(`${data.applied} cambio(s) guardados en el proyecto`);
+        setTimeout(() => window.location.reload(), 900);
       }
     } catch (e) {
       toast.error(formatApiError(e));
@@ -44,81 +69,157 @@ export default function ApplyChangesButton() {
     }
   };
 
+  const discardAll = async () => {
+    if (!window.confirm(
+      `Se descartarán los ${pending.total} cambio(s) sin confirmar.\n\n` +
+      "Lo capturado se pierde: las altas se borran, las ediciones vuelven a como estaban " +
+      "y las bajas se cancelan. ¿Continuar?"
+    )) return;
+    setRunning(true);
+    try {
+      const { data } = await api.post("/pending-changes/discard", {});
+      toast.success(`${data.discarded} cambio(s) descartados`);
+      setTimeout(() => window.location.reload(), 700);
+    } catch (e) {
+      toast.error(formatApiError(e));
+      setRunning(false);
+    }
+  };
+
+  const discardOne = async (it) => {
+    if (!window.confirm(`¿Descartar "${it.title}" (${it.op_label.toLowerCase()})?`)) return;
+    try {
+      await api.post("/pending-changes/discard", { collection: it.collection, id: it.id });
+      toast.success("Descartado");
+      await refresh();
+    } catch (e) { toast.error(formatApiError(e)); }
+  };
+
+  const none = pending.total === 0;
+
   return (
     <>
       <Button
         size="sm"
-        variant="outline"
-        onClick={run}
-        disabled={running}
-        title="Sincroniza todos los clientes con el Mikrotik ahora mismo"
+        variant={none ? "outline" : "default"}
+        onClick={() => { setResult(null); refresh(); setOpen(true); }}
+        title={none
+          ? "No hay cambios sin confirmar"
+          : `${pending.total} cambio(s) capturados sin confirmar`}
         data-testid="apply-changes-btn"
       >
-        {running ? (
-          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-        ) : (
-          <CloudUpload className="w-3.5 h-3.5 mr-1.5" />
-        )}
+        <CheckCheck className="w-3.5 h-3.5 mr-1.5" />
         Aplicar Cambios
+        {!none && (
+          <span className="ml-1.5 rounded-full bg-background/25 px-1.5 text-[10px] font-mono">
+            {pending.total}
+          </span>
+        )}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="w-[95vw] max-w-lg">
+        <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CloudUpload className="w-4 h-4 text-primary" />
-              Cambios aplicados
+              <CheckCheck className="w-4 h-4 text-primary" />
+              Confirmar cambios capturados
             </DialogTitle>
             <DialogDescription>
-              Se revisaron {result?.total ?? 0} clientes y se sincronizó su cola o PPPoE
-              contra el Mikrotik según sus datos actuales.
+              Nada de esto cuenta todavía en el proyecto. Al confirmar, los datos se
+              guardan de verdad y hasta entonces se aplican en el Mikrotik.
             </DialogDescription>
           </DialogHeader>
 
-          {result && (
+          {result ? (
             <div className="space-y-3">
               <div className="flex flex-wrap gap-2">
                 <Badge variant="outline" className="border-emerald-500/40 text-emerald-500">
-                  <CheckCircle2 className="w-3 h-3 mr-1" /> {result.synced} sincronizados
+                  <CheckCircle2 className="w-3 h-3 mr-1" /> {result.applied} guardados
                 </Badge>
-                <Badge variant="outline" className="border-red-500/40 text-red-500">
-                  <XCircle className="w-3 h-3 mr-1" /> {result.failed} con error
-                </Badge>
-                <Badge variant="outline" className="text-muted-foreground">
-                  <MinusCircle className="w-3 h-3 mr-1" /> {result.skipped} sin datos suficientes
-                </Badge>
+                {result.failed > 0 && (
+                  <Badge variant="outline" className="border-red-500/40 text-red-500">
+                    <XCircle className="w-3 h-3 mr-1" /> {result.failed} con problema
+                  </Badge>
+                )}
               </div>
-
               {result.details?.failed?.length > 0 && (
                 <div>
-                  <div className="text-xs font-semibold text-red-500 mb-1">Con error:</div>
-                  <ul className="text-xs space-y-1 max-h-40 overflow-y-auto">
+                  <div className="text-xs font-semibold text-red-500 mb-1">
+                    Se guardaron, pero no se pudieron aplicar en el router:
+                  </div>
+                  <ul className="text-xs space-y-1 max-h-56 overflow-y-auto">
                     {result.details.failed.map((f, i) => (
                       <li key={i} className="rounded border border-red-500/20 bg-red-500/5 p-1.5">
-                        <b>{f.name}</b> ({f.mode}) — {f.reason}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {result.details?.skipped?.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground mb-1">Sin datos suficientes:</div>
-                  <ul className="text-xs space-y-1 max-h-40 overflow-y-auto">
-                    {result.details.skipped.map((s, i) => (
-                      <li key={i} className="rounded border border-border/60 p-1.5 text-muted-foreground">
-                        <b>{s.name}</b> — {s.reason}
+                        <b>{f.title}</b> · {f.module} · {f.op_label} — {f.reason}
                       </li>
                     ))}
                   </ul>
                 </div>
               )}
             </div>
+          ) : none ? (
+            <div className="rounded-md border border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+              No hay nada capturado sin confirmar. Todo lo que ves en el CRM ya es definitivo.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(pending.by_module).map(([m, n]) => (
+                  <Badge key={m} variant="outline" className="text-[10px]">{m}: {n}</Badge>
+                ))}
+              </div>
+              <div className="rounded-md border border-border divide-y divide-border max-h-[45vh] overflow-y-auto">
+                {pending.items.map((it) => {
+                  const style = OP_STYLE[it.op_label] || OP_STYLE.Edición;
+                  const { Icon } = style;
+                  return (
+                    <div key={`${it.collection}-${it.id}`}
+                      className="flex items-center justify-between gap-3 p-2">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${style.cls}`}>
+                          <Icon className="w-2.5 h-2.5 mr-1" /> {it.op_label}
+                        </Badge>
+                        <div className="min-w-0">
+                          <div className="text-sm truncate">{it.title}</div>
+                          <div className="text-[11px] text-muted-foreground font-mono truncate">
+                            {it.module}
+                            {it.changed_fields?.length > 0 && ` · ${it.changed_fields.length} campo(s)`}
+                            {it.by_name && ` · ${it.by_name}`}
+                          </div>
+                        </div>
+                      </div>
+                      <Button size="icon" variant="ghost" onClick={() => discardOne(it)}
+                        title="Descartar este cambio" data-testid={`pending-discard-${it.id}`}>
+                        <Undo2 className="w-4 h-4 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>Cerrar</Button>
+            {!result && !none && canApply && (
+              <>
+                <Button variant="outline" onClick={discardAll} disabled={running}
+                  data-testid="pending-discard-all">
+                  <Undo2 className="w-3.5 h-3.5 mr-1" /> Descartar todo
+                </Button>
+                <Button onClick={apply} disabled={running} data-testid="pending-apply">
+                  {running
+                    ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                    : <CheckCheck className="w-3.5 h-3.5 mr-1" />}
+                  Sí, guardar en el proyecto
+                </Button>
+              </>
+            )}
+            {!result && !none && !canApply && (
+              <span className="text-xs text-muted-foreground self-center">
+                Solo un administrador puede confirmar.
+              </span>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

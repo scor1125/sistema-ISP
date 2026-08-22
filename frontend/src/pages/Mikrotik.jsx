@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
 import { copyToClipboard } from "@/lib/clipboard";
-import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm, PendingBadge } from "@/components/Common";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1040,6 +1040,7 @@ export default function Mikrotik() {
                         {d.ros_version}
                       </Badge>
                     )}
+                    <PendingBadge row={d} />
                   </div>
                   {d.notes && <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{d.notes}</div>}
                   {(d.lan_interfaces?.length > 0 || d.wan_interfaces?.length > 0) && (

@@ -866,6 +866,102 @@ async def delete_user(uid: str, current: dict = Depends(require_roles("owner","a
     await db.users.delete_one({"id": uid})
     return {"ok": True}
 
+# ---------- Cambios pendientes de confirmar ("Aplicar Cambios") ----------
+# Todo lo que se captura queda marcado como pendiente y NO surte efecto real
+# hasta que el operador lo confirma desde el botón "Aplicar Cambios". Mientras
+# está pendiente el registro ya vive en su colección (para que se vea en las
+# listas, marcado), pero los efectos que salen del CRM — sobre todo escribir
+# en el Mikrotik — se posponen hasta la confirmación.
+PENDING = "_pending"
+
+# Colecciones sujetas a confirmación, con cómo nombrar cada registro en el
+# resumen que ve el operador.
+STAGED_COLLECTIONS = {
+    "clients":      {"label": "Clientes",          "title": "full_name"},
+    "plans":        {"label": "Planes",            "title": "name"},
+    "devices":      {"label": "Mikrotik / OLT",    "title": "name"},
+    "payments":     {"label": "Pagos",             "title": "concept"},
+    "nap_boxes":    {"label": "Cajas NAP",         "title": "name"},
+    "extras":       {"label": "Servicios extras",  "title": "name"},
+    "leads":        {"label": "Prospectos",        "title": "name"},
+    "tasks":        {"label": "Tareas",            "title": "title"},
+    "vpn_connections": {"label": "VPN",            "title": "name"},
+    "lugares":      {"label": "Lugares",           "title": "name"},
+    "trabajadores": {"label": "Colaboradores",     "title": "name"},
+    "inventory_products": {"label": "Inventario",  "title": "name"},
+    "energy_plants": {"label": "Energía",          "title": "name"},
+}
+# Fuera a propósito: el Mapa (guarda solo al arrastrar un nodo o reformar un
+# cable, dejarlo pendiente llenaría la lista de ruido), los Usuarios del
+# sistema (afecta quién puede entrar) y la Configuración global.
+
+OP_LABEL = {"create": "Alta", "update": "Edición", "delete": "Baja"}
+
+
+def _pending_meta(op: str, user: Optional[dict], prev: Optional[dict] = None) -> dict:
+    meta = {
+        "op": op,
+        "by": (user or {}).get("id"),
+        "by_name": (user or {}).get("name") or (user or {}).get("email") or "",
+        "at": now_iso(),
+    }
+    if prev is not None:
+        meta["prev"] = prev
+    return meta
+
+
+async def stage_create(collection: str, doc: dict, user: Optional[dict]) -> dict:
+    """Inserta el registro ya marcado como alta pendiente."""
+    doc[PENDING] = _pending_meta("create", user)
+    await db[collection].insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def stage_update(collection: str, item_id: str, changes: dict,
+                       user: Optional[dict]) -> Optional[dict]:
+    """Aplica los cambios al documento pero lo deja marcado como pendiente,
+    guardando el valor anterior de cada campo tocado para poder descartar."""
+    cur = await db[collection].find_one({"id": item_id}, {"_id": 0})
+    if not cur:
+        return None
+    prev_meta = cur.get(PENDING) or {}
+    if prev_meta.get("op") == "create":
+        # Sigue siendo un alta sin confirmar: descartarla borra el registro
+        # completo, así que no hay valores anteriores que guardar.
+        meta = prev_meta
+    else:
+        prev = dict(prev_meta.get("prev") or {})
+        for k in changes:
+            # Solo la primera vez que se toca cada campo: si se edita dos veces
+            # antes de confirmar, el original sigue siendo el de la primera.
+            if k not in prev:
+                prev[k] = cur.get(k)
+        meta = _pending_meta("update", user, prev)
+    await db[collection].update_one({"id": item_id}, {"$set": {**changes, PENDING: meta}})
+    return await db[collection].find_one({"id": item_id}, {"_id": 0})
+
+
+async def stage_delete(collection: str, item_id: str, user: Optional[dict]) -> dict:
+    """Marca la baja como pendiente. Si el registro era un alta sin confirmar,
+    se borra de una vez: nunca llegó a existir para el proyecto."""
+    cur = await db[collection].find_one({"id": item_id}, {"_id": 0})
+    if not cur:
+        return {"ok": True, "pending": False}
+    if (cur.get(PENDING) or {}).get("op") == "create":
+        await db[collection].delete_one({"id": item_id})
+        return {"ok": True, "pending": False, "discarded": True}
+    await db[collection].update_one(
+        {"id": item_id}, {"$set": {PENDING: _pending_meta("delete", user)}})
+    return {"ok": True, "pending": True}
+
+
+def strip_pending(payload: dict) -> dict:
+    """El navegador nunca debe poder escribir la marca de pendiente."""
+    payload.pop(PENDING, None)
+    return payload
+
+
 # ---------- Generic collection helpers ----------
 def crud_router(prefix: str, model_in, collection: str, extra_defaults=None,
                 permission_module: Optional[str] = None,
@@ -895,30 +991,40 @@ def crud_router(prefix: str, model_in, collection: str, extra_defaults=None,
         items = await db[collection].find({}, {"_id": 0, **hide}).sort("created_at", -1).to_list(2000)
         return items
 
+    staged = collection in STAGED_COLLECTIONS
+
     @r.post("")
-    async def _create(payload: model_in, _: dict = _dep("write")):
-        doc = _protect(payload.dict())
+    async def _create(payload: model_in, user: dict = _dep("write")):
+        doc = _protect(strip_pending(payload.dict()))
         doc["id"] = new_id()
         doc["created_at"] = now_iso()
         doc["updated_at"] = now_iso()
         if extra_defaults:
             for k, v in extra_defaults.items():
                 doc.setdefault(k, v)
-        await db[collection].insert_one(doc)
+        if staged:
+            await stage_create(collection, doc, user)
+        else:
+            await db[collection].insert_one(doc)
         doc.pop("_id", None)
         for f in (hidden_fields or ()):
             doc.pop(f, None)
         return doc
 
     @r.patch("/{item_id}")
-    async def _update(item_id: str, payload: dict, _: dict = _dep("write")):
-        payload = _protect({k: v for k, v in payload.items() if v is not None})
+    async def _update(item_id: str, payload: dict, user: dict = _dep("write")):
+        payload = _protect(strip_pending({k: v for k, v in payload.items() if v is not None}))
         payload["updated_at"] = now_iso()
-        await db[collection].update_one({"id": item_id}, {"$set": payload})
+        if staged:
+            await stage_update(collection, item_id, payload, user)
+        else:
+            await db[collection].update_one({"id": item_id}, {"$set": payload})
         return await db[collection].find_one({"id": item_id}, {"_id": 0, **hide})
 
     @r.delete("/{item_id}")
-    async def _delete(item_id: str, _: dict = _dep("delete")):
+    async def _delete(item_id: str, user: dict = _dep("delete")):
+        if staged:
+            return await stage_delete(collection, item_id, user)
         await db[collection].delete_one({"id": item_id})
         return {"ok": True}
 
@@ -2140,10 +2246,10 @@ async def get_client(cid: str, user: dict = Depends(require_permission("clients"
     return c
 
 @api.post("/clients")
-async def create_client(payload: ClientIn, _: dict = Depends(require_permission("clients", "write"))):
+async def create_client(payload: ClientIn, user: dict = Depends(require_permission("clients", "write"))):
     if payload.nap_box_id:
         await _check_nap_capacity(payload.nap_box_id)
-    doc = payload.dict()
+    doc = strip_pending(payload.dict())
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
     doc["updated_at"] = now_iso()
@@ -2156,71 +2262,29 @@ async def create_client(payload: ClientIn, _: dict = Depends(require_permission(
     # modifiable via the UI.
     pin_plain = await generate_portal_pin()
     doc["portal_pin"] = pin_plain
-    await db.clients.insert_one(doc)
-    doc.pop("_id", None)
-
-    mode = doc.get("connection_mode", "queue")
-    if mode == "queue" and doc.get("ip_address") and doc.get("mikrotik_server") and doc.get("plan_id"):
-        await _sync_client_queue_and_persist(doc)
-        fresh = await db.clients.find_one({"id": doc["id"]}, {"_id": 0})
-        if fresh:
-            doc = fresh
-    elif mode == "pppoe" and doc.get("mikrotik_server") and doc.get("plan_id"):
-        await _sync_client_pppoe_and_persist(doc)
-        fresh = await db.clients.find_one({"id": doc["id"]}, {"_id": 0})
-        if fresh:
-            doc = fresh
-    return doc
+    # El alta queda pendiente: no se toca el router hasta que el operador
+    # confirme desde "Aplicar Cambios".
+    return await stage_create("clients", doc, user)
 
 @api.patch("/clients/{cid}")
-async def update_client(cid: str, payload: ClientUpdate, _: dict = Depends(require_permission("clients", "write"))):
+async def update_client(cid: str, payload: ClientUpdate, user: dict = Depends(require_permission("clients", "write"))):
     before = await db.clients.find_one({"id": cid}, {"_id": 0})
     if not before:
         raise HTTPException(404, "Cliente no encontrado")
-    updates = payload.dict(exclude_none=True)
+    updates = strip_pending(payload.dict(exclude_none=True))
     if updates.get("nap_box_id"):
         await _check_nap_capacity(updates["nap_box_id"], exclude_client_id=cid)
     if "payment_day" in updates:
         updates["next_due_date"] = _next_due_date(updates["payment_day"])
     updates["updated_at"] = now_iso()
-    await db.clients.update_one({"id": cid}, {"$set": updates})
-
-    # La cola del router depende de la IP, el router y la velocidad del plan;
-    # si alguno cambió, hay que reflejarlo. Si el cliente se quedó sin IP o
-    # sin router, la cola que tenía ya no aplica y se retira.
-    sync_relevant = {"ip_address", "mikrotik_server", "mikrotik_interface", "plan_id",
-                     "connection_mode", "pppoe_user", "pppoe_password", "pppoe_profile"}
-    if sync_relevant & updates.keys():
-        merged = {**before, **updates, "id": cid}
-        mode = merged.get("connection_mode", "queue")
-
-        if mode == "queue" and merged.get("ip_address") and merged.get("mikrotik_server") and merged.get("plan_id"):
-            await _sync_client_queue_and_persist(merged)
-        elif before.get("mikrotik_queue_name"):
-            await _remove_client_queue(before)
-            await db.clients.update_one({"id": cid}, {"$unset": {
-                "mikrotik_queue_name": "", "mikrotik_queue_synced_at": "",
-            }, "$set": {"mikrotik_queue_error": ""}})
-
-        if mode == "pppoe" and merged.get("mikrotik_server") and merged.get("plan_id"):
-            await _sync_client_pppoe_and_persist(merged)
-        elif before.get("mikrotik_pppoe_secret_name"):
-            await _remove_client_pppoe(before)
-            await db.clients.update_one({"id": cid}, {"$unset": {
-                "mikrotik_pppoe_secret_name": "", "mikrotik_pppoe_synced_at": "",
-            }, "$set": {"mikrotik_pppoe_error": ""}})
-
-    return await db.clients.find_one({"id": cid}, {"_id": 0})
+    # La cola/PPPoE del router se recalcula al confirmar, no aquí.
+    return await stage_update("clients", cid, updates, user)
 
 @api.delete("/clients/{cid}")
-async def delete_client(cid: str, _: dict = Depends(require_permission("clients", "delete"))):
-    client = await db.clients.find_one({"id": cid}, {"_id": 0})
-    if client and client.get("mikrotik_queue_name"):
-        await _remove_client_queue(client)
-    if client and client.get("mikrotik_pppoe_secret_name"):
-        await _remove_client_pppoe(client)
-    await db.clients.delete_one({"id": cid})
-    return {"ok": True}
+async def delete_client(cid: str, user: dict = Depends(require_permission("clients", "delete"))):
+    # La baja también se confirma: el cliente sigue con servicio hasta que se
+    # aplique, y ahí se le retira la cola o el secret PPPoE del router.
+    return await stage_delete("clients", cid, user)
 
 
 @api.post("/clients/{cid}/sync-queue")
@@ -2279,47 +2343,6 @@ async def client_live_traffic(cid: str, _: dict = Depends(require_permission("cl
         return {"ok": False, "reason": str(e)[:200]}
 
 
-@api.post("/clients/apply-changes")
-async def apply_all_client_changes(_: dict = Depends(require_roles("owner", "admin"))):
-    """Botón "Aplicar Cambios": recorre todos los clientes y sincroniza su
-    cola o su secret PPPoE contra el Mikrotik, según sus datos actuales.
-
-    Es la misma sincronización que ya corre sola al guardar un cliente — este
-    botón es la red de seguridad para cuando algo no se aplicó en su momento
-    (por ejemplo, un cliente que no tenía plan asignado todavía). Se hace uno
-    por uno y no se detiene si alguno falla, para que un router caído no deje
-    sin revisar al resto.
-    """
-    clients = await db.clients.find({}, {"_id": 0}).to_list(5000)
-    synced, failed, skipped = [], [], []
-
-    for c in clients:
-        mode = c.get("connection_mode", "queue")
-        label = c.get("full_name") or c["id"]
-
-        if mode == "pppoe":
-            if not (c.get("mikrotik_server") and c.get("plan_id")):
-                skipped.append({"name": label, "reason": "faltan router y/o plan"})
-                continue
-            res = await _sync_client_pppoe_and_persist(c)
-        else:
-            if not (c.get("ip_address") and c.get("mikrotik_server") and c.get("plan_id")):
-                skipped.append({"name": label, "reason": "faltan IP, router y/o plan"})
-                continue
-            res = await _sync_client_queue_and_persist(c)
-
-        if res.get("ok"):
-            synced.append({"name": label, "mode": mode})
-        else:
-            failed.append({"name": label, "mode": mode, "reason": res.get("reason") or "error desconocido"})
-
-    return {
-        "ok": True,
-        "total": len(clients),
-        "synced": len(synced), "failed": len(failed), "skipped": len(skipped),
-        "details": {"synced": synced, "failed": failed, "skipped": skipped},
-    }
-
 
 # ---------- Payments ----------
 @api.get("/payments")
@@ -2354,37 +2377,46 @@ async def create_payment(payload: PaymentIn, user: dict = Depends(get_current_us
     client = await db.clients.find_one({"id": payload.client_id})
     if not client:
         raise HTTPException(404, "Cliente no encontrado")
-    doc = payload.dict()
+    doc = strip_pending(payload.dict())
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
     doc["updated_at"] = now_iso()
     doc["created_by"] = user.get("id")
     doc["created_by_name"] = user.get("name")
-    await db.payments.insert_one(doc)
-    if not payload.is_promise:
-        current_due = client.get("next_due_date") or now_iso()
-        new_due = _next_due_date(client.get("payment_day", 1), current_due)
-        await db.clients.update_one(
-            {"id": client["id"]},
-            {"$set": {"next_due_date": new_due, "status": "active", "updated_at": now_iso()}},
-        )
-        # Devolverle el servicio: si estaba cortado, sacarlo de la lista de
-        # morosos del router. Si el router no responde queda registrado para
-        # que el operador lo vea, pero el pago se registra igual.
-        unblock = await _apply_overdue_block(client, False)
-        await db.clients.update_one({"id": client["id"]}, {
-            "$set": {"overdue_block_error": "" if unblock.get("ok") else unblock.get("reason", "")[:200]},
-            "$unset": {"suspended_at": "", "suspended_reason": ""},
-        })
-    doc.pop("_id", None)
-    return doc
+    # El pago queda pendiente: la fecha de vencimiento del cliente y su
+    # reactivación en el router se aplican al confirmar (`_apply_payment_effects`).
+    return await stage_create("payments", doc, user)
+
+
+async def _apply_payment_effects(payment: dict) -> None:
+    """Efectos reales de un pago ya confirmado: le corre el vencimiento al
+    cliente y, si estaba cortado por mora, le devuelve el servicio."""
+    if payment.get("is_promise"):
+        return
+    client = await db.clients.find_one({"id": payment.get("client_id")})
+    if not client:
+        return
+    current_due = client.get("next_due_date") or now_iso()
+    new_due = _next_due_date(client.get("payment_day", 1), current_due)
+    await db.clients.update_one(
+        {"id": client["id"]},
+        {"$set": {"next_due_date": new_due, "status": "active", "updated_at": now_iso()}},
+    )
+    # Si el router no responde queda registrado para que el operador lo vea,
+    # pero el pago se confirma igual.
+    unblock = await _apply_overdue_block(client, False)
+    await db.clients.update_one({"id": client["id"]}, {
+        "$set": {"overdue_block_error": "" if unblock.get("ok") else unblock.get("reason", "")[:200]},
+        "$unset": {"suspended_at": "", "suspended_reason": ""},
+    })
 
 @api.post("/payments/bulk-delete")
-async def bulk_delete_payments(payload: BulkDeleteIn, _: dict = Depends(require_permission("payments", "delete"))):
+async def bulk_delete_payments(payload: BulkDeleteIn, user: dict = Depends(require_permission("payments", "delete"))):
     if not payload.ids:
         return {"deleted": 0}
-    res = await db.payments.delete_many({"id": {"$in": payload.ids}})
-    return {"deleted": res.deleted_count}
+    for pid in payload.ids:
+        await stage_delete("payments", pid, user)
+    return {"deleted": len(payload.ids), "pending": True}
 
 @api.patch("/payments/{pid}")
 async def update_payment(pid: str, payload: dict, user: dict = Depends(get_current_user)):
@@ -2403,9 +2435,7 @@ async def update_payment(pid: str, payload: dict, user: dict = Depends(get_curre
     if not changes:
         return existing
     changes["updated_at"] = now_iso()
-    await db.payments.update_one({"id": pid}, {"$set": changes})
-    updated = await db.payments.find_one({"id": pid}, {"_id": 0})
-    return updated
+    return await stage_update("payments", pid, changes, user)
 
 @api.delete("/payments/{pid}")
 async def delete_payment(pid: str, user: dict = Depends(get_current_user)):
@@ -2414,8 +2444,7 @@ async def delete_payment(pid: str, user: dict = Depends(get_current_user)):
     perms = user.get("permissions") or default_perms_for(user.get("role"))
     if user.get("role") not in ("owner","admin") and not perms.get(module, {}).get("delete"):
         raise HTTPException(403, f"Permiso denegado: requiere {module}.delete")
-    await db.payments.delete_one({"id": pid})
-    return {"ok": True}
+    return await stage_delete("payments", pid, user)
 
 # ---------- Arqueos de caja ----------
 @api.get("/arqueos")
@@ -3494,43 +3523,36 @@ async def list_lugares(_: dict = Depends(get_current_user)):
     return items
 
 @api.post("/lugares")
-async def create_lugar(payload: LugarIn, _: dict = Depends(require_roles("owner","admin"))):
+async def create_lugar(payload: LugarIn, user: dict = Depends(require_roles("owner","admin"))):
     existing = await db.lugares.find_one({"name": payload.name}, {"_id": 0, "id": 1})
     if existing:
         raise HTTPException(400, f"Ya existe un lugar con el nombre '{payload.name}'")
-    doc = payload.dict()
+    doc = strip_pending(payload.dict())
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
-    await db.lugares.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await stage_create("lugares", doc, user)
 
 @api.patch("/lugares/{lid}")
 async def update_lugar(lid: str, payload: LugarUpdate,
-                       _: dict = Depends(require_permission("lugares", "write"))):
-    update = {k: v for k, v in payload.dict().items() if v is not None}
+                       user: dict = Depends(require_permission("lugares", "write"))):
+    update = strip_pending({k: v for k, v in payload.dict().items() if v is not None})
     if not update:
         raise HTTPException(400, "Nada que actualizar")
     update["updated_at"] = now_iso()
     old = await db.lugares.find_one({"id": lid}, {"_id": 0, "name": 1})
     if not old:
         raise HTTPException(404, "Lugar no encontrado")
-    await db.lugares.update_one({"id": lid}, {"$set": update})
-    # Rename cascades to clients that referenced this place by name
-    if "name" in update and update["name"] != old["name"]:
-        await db.clients.update_many({"community": old["name"]}, {"$set": {"community": update["name"]}})
-    return await db.lugares.find_one({"id": lid}, {"_id": 0})
+    # El arrastre del nombre a los clientes ocurre al confirmar.
+    return await stage_update("lugares", lid, update, user)
 
 @api.delete("/lugares/{lid}")
-async def delete_lugar(lid: str, _: dict = Depends(require_permission("lugares", "delete"))):
+async def delete_lugar(lid: str, user: dict = Depends(require_permission("lugares", "delete"))):
     doc = await db.lugares.find_one({"id": lid}, {"_id": 0, "name": 1})
     if not doc:
         raise HTTPException(404, "Lugar no encontrado")
     used = await db.clients.count_documents({"community": doc["name"]})
-    r = await db.lugares.delete_one({"id": lid})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Lugar no encontrado")
-    return {"ok": True, "clients_affected": used}
+    res = await stage_delete("lugares", lid, user)
+    return {**res, "clients_affected": used}
 
 # ---------- Trabajadores (workforce roster) ----------
 @api.get("/trabajadores")
@@ -3539,32 +3561,27 @@ async def list_trabajadores(_: dict = Depends(get_current_user)):
     return items
 
 @api.post("/trabajadores")
-async def create_trabajador(payload: TrabajadorIn, _: dict = Depends(require_roles("owner","admin"))):
-    doc = payload.dict()
+async def create_trabajador(payload: TrabajadorIn, user: dict = Depends(require_roles("owner","admin"))):
+    doc = strip_pending(payload.dict())
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
-    await db.trabajadores.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await stage_create("trabajadores", doc, user)
 
 @api.patch("/trabajadores/{tid}")
 async def update_trabajador(tid: str, payload: TrabajadorUpdate,
-                            _: dict = Depends(require_roles("owner","admin"))):
-    update = {k: v for k, v in payload.dict().items() if v is not None}
+                            user: dict = Depends(require_roles("owner","admin"))):
+    update = strip_pending({k: v for k, v in payload.dict().items() if v is not None})
     if not update:
         raise HTTPException(400, "Nada que actualizar")
     update["updated_at"] = now_iso()
-    r = await db.trabajadores.update_one({"id": tid}, {"$set": update})
-    if r.matched_count == 0:
+    res = await stage_update("trabajadores", tid, update, user)
+    if res is None:
         raise HTTPException(404, "Trabajador no encontrado")
-    return await db.trabajadores.find_one({"id": tid}, {"_id": 0})
+    return res
 
 @api.delete("/trabajadores/{tid}")
-async def delete_trabajador(tid: str, _: dict = Depends(require_roles("owner","admin"))):
-    r = await db.trabajadores.delete_one({"id": tid})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Trabajador no encontrado")
-    return {"ok": True}
+async def delete_trabajador(tid: str, user: dict = Depends(require_roles("owner","admin"))):
+    return await stage_delete("trabajadores", tid, user)
 
 
 class WorkDayIn(BaseModel):
@@ -3678,32 +3695,27 @@ async def list_energy_plants(_: dict = Depends(get_current_user)):
 
 @api.post("/energia/plants")
 async def create_energy_plant(payload: EnergyPlantIn,
-                              _: dict = Depends(require_roles("owner","admin"))):
-    doc = payload.dict()
+                              user: dict = Depends(require_roles("owner","admin"))):
+    doc = strip_pending(payload.dict())
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
-    await db.energy_plants.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await stage_create("energy_plants", doc, user)
 
 @api.patch("/energia/plants/{pid}")
 async def update_energy_plant(pid: str, payload: EnergyPlantUpdate,
-                              _: dict = Depends(require_roles("owner","admin"))):
-    update = {k: v for k, v in payload.dict().items() if v is not None}
+                              user: dict = Depends(require_roles("owner","admin"))):
+    update = strip_pending({k: v for k, v in payload.dict().items() if v is not None})
     if not update:
         raise HTTPException(400, "Nada que actualizar")
     update["updated_at"] = now_iso()
-    r = await db.energy_plants.update_one({"id": pid}, {"$set": update})
-    if r.matched_count == 0:
+    res = await stage_update("energy_plants", pid, update, user)
+    if res is None:
         raise HTTPException(404, "Planta no encontrada")
-    return await db.energy_plants.find_one({"id": pid}, {"_id": 0})
+    return res
 
 @api.delete("/energia/plants/{pid}")
-async def delete_energy_plant(pid: str, _: dict = Depends(require_roles("owner","admin"))):
-    r = await db.energy_plants.delete_one({"id": pid})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Planta no encontrada")
-    return {"ok": True}
+async def delete_energy_plant(pid: str, user: dict = Depends(require_roles("owner","admin"))):
+    return await stage_delete("energy_plants", pid, user)
 
 @api.get("/energia/estado")
 async def energia_estado(plant: Optional[str] = None, force: bool = False,
@@ -4882,6 +4894,150 @@ async def _sync_client_pppoe_and_persist(client: dict) -> dict:
     return res
 
 
+# --------------------------------------------------------------------------
+# "Aplicar Cambios": confirmar (o descartar) lo capturado
+# --------------------------------------------------------------------------
+async def _effects_on_confirm(collection: str, doc: dict, op: str) -> Optional[str]:
+    """Lo que recién al confirmar sale del CRM hacia afuera. Devuelve un texto
+    de error si algo no se pudo aplicar (el registro se confirma igual: el dato
+    ya es del proyecto, lo que falló es el router, y eso se reintenta)."""
+    if collection == "clients":
+        if op == "delete":
+            if doc.get("mikrotik_queue_name"):
+                await _remove_client_queue(doc)
+            if doc.get("mikrotik_pppoe_secret_name"):
+                await _remove_client_pppoe(doc)
+            return None
+        mode = doc.get("connection_mode", "queue")
+        if mode == "pppoe":
+            if not (doc.get("mikrotik_server") and doc.get("plan_id")):
+                return None
+            res = await _sync_client_pppoe_and_persist(doc)
+        else:
+            if not (doc.get("ip_address") and doc.get("mikrotik_server") and doc.get("plan_id")):
+                return None
+            res = await _sync_client_queue_and_persist(doc)
+        return None if res.get("ok") else (res.get("reason") or "no se pudo aplicar en el router")
+
+    if collection == "payments" and op == "create":
+        await _apply_payment_effects(doc)
+        return None
+
+    if collection == "lugares" and op == "update":
+        # Renombrar un lugar arrastra a los clientes que lo tenían.
+        prev_name = ((doc.get(PENDING) or {}).get("prev") or {}).get("name")
+        if prev_name and prev_name != doc.get("name"):
+            await db.clients.update_many({"community": prev_name},
+                                         {"$set": {"community": doc.get("name")}})
+        return None
+
+    return None
+
+
+def _pending_title(collection: str, doc: dict) -> str:
+    field = STAGED_COLLECTIONS.get(collection, {}).get("title") or "name"
+    return str(doc.get(field) or doc.get("full_name") or doc.get("name") or doc.get("id") or "—")
+
+
+async def _collect_pending() -> List[dict]:
+    out = []
+    for coll, meta in STAGED_COLLECTIONS.items():
+        docs = await db[coll].find({PENDING: {"$exists": True}}, {"_id": 0}).to_list(2000)
+        for d in docs:
+            p = d.get(PENDING) or {}
+            out.append({
+                "collection": coll,
+                "module": meta["label"],
+                "id": d.get("id"),
+                "title": _pending_title(coll, d),
+                "op": p.get("op"),
+                "op_label": OP_LABEL.get(p.get("op"), p.get("op")),
+                "by_name": p.get("by_name") or "",
+                "at": p.get("at"),
+                "changed_fields": sorted((p.get("prev") or {}).keys()) if p.get("op") == "update" else [],
+            })
+    out.sort(key=lambda x: x.get("at") or "")
+    return out
+
+
+@api.get("/pending-changes")
+async def list_pending_changes(_: dict = Depends(get_current_user)):
+    """Todo lo capturado que todavía no se ha confirmado."""
+    items = await _collect_pending()
+    by_module: Dict[str, int] = {}
+    for it in items:
+        by_module[it["module"]] = by_module.get(it["module"], 0) + 1
+    return {"total": len(items), "by_module": by_module, "items": items}
+
+
+@api.post("/pending-changes/apply")
+async def apply_pending_changes(_: dict = Depends(require_roles("owner", "admin"))):
+    """Confirma lo capturado: a partir de aquí los datos son del proyecto y se
+    aplican hacia afuera (colas y secrets del Mikrotik, vencimientos, etc.).
+
+    No se detiene si un registro falla: un router caído no debe dejar sin
+    confirmar al resto — el dato queda guardado y el error se reporta.
+    """
+    applied, failed = [], []
+    for coll in STAGED_COLLECTIONS:
+        docs = await db[coll].find({PENDING: {"$exists": True}}, {"_id": 0}).to_list(2000)
+        for d in docs:
+            op = (d.get(PENDING) or {}).get("op")
+            label = _pending_title(coll, d)
+            try:
+                err = await _effects_on_confirm(coll, d, op)
+                if op == "delete":
+                    await db[coll].delete_one({"id": d["id"]})
+                else:
+                    await db[coll].update_one({"id": d["id"]}, {"$unset": {PENDING: ""}})
+                entry = {"module": STAGED_COLLECTIONS[coll]["label"], "title": label,
+                         "op_label": OP_LABEL.get(op, op)}
+                if err:
+                    failed.append({**entry, "reason": err})
+                else:
+                    applied.append(entry)
+            except Exception as e:  # noqa: BLE001 — un registro no tumba el lote
+                logger.exception("[aplicar-cambios] %s/%s", coll, d.get("id"))
+                failed.append({"module": STAGED_COLLECTIONS[coll]["label"], "title": label,
+                               "op_label": OP_LABEL.get(op, op), "reason": f"{type(e).__name__}: {e}"[:200]})
+    return {"ok": True, "applied": len(applied), "failed": len(failed),
+            "details": {"applied": applied, "failed": failed}}
+
+
+class DiscardPendingIn(BaseModel):
+    collection: Optional[str] = None
+    id: Optional[str] = None
+
+
+@api.post("/pending-changes/discard")
+async def discard_pending_changes(payload: DiscardPendingIn,
+                                  _: dict = Depends(require_roles("owner", "admin"))):
+    """Deshace lo capturado sin confirmar: las altas se borran, las ediciones
+    vuelven a su valor anterior y las bajas se cancelan. Sin cuerpo descarta
+    todo; con `collection` e `id`, solo ese registro."""
+    discarded = 0
+    for coll in STAGED_COLLECTIONS:
+        if payload.collection and coll != payload.collection:
+            continue
+        q = {PENDING: {"$exists": True}}
+        if payload.id:
+            q["id"] = payload.id
+        docs = await db[coll].find(q, {"_id": 0}).to_list(2000)
+        for d in docs:
+            p = d.get(PENDING) or {}
+            op = p.get("op")
+            if op == "create":
+                await db[coll].delete_one({"id": d["id"]})
+            elif op == "update":
+                restore = p.get("prev") or {}
+                await db[coll].update_one({"id": d["id"]},
+                                          {"$set": restore, "$unset": {PENDING: ""}})
+            else:  # delete pendiente: se cancela la baja
+                await db[coll].update_one({"id": d["id"]}, {"$unset": {PENDING: ""}})
+            discarded += 1
+    return {"ok": True, "discarded": discarded}
+
+
 async def _apply_overdue_block(client: dict, blocked: bool) -> dict:
     """Mete o saca al cliente de la address-list de morosos.
 
@@ -5228,37 +5384,31 @@ async def inv_list_products(_: dict = Depends(get_current_user)):
 
 @api.post("/inventory/products")
 async def inv_create_product(p: InventoryProductIn,
-                             _: dict = Depends(require_roles("owner", "admin"))):
-    doc = p.dict()
+                             user: dict = Depends(require_roles("owner", "admin"))):
+    doc = strip_pending(p.dict())
     doc["id"] = new_id()
     doc["created_at"] = now_iso()
     doc["updated_at"] = now_iso()
-    await db.inventory_products.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await stage_create("inventory_products", doc, user)
 
 
 @api.patch("/inventory/products/{pid}")
 async def inv_update_product(pid: str, p: InventoryProductUpdate,
-                             _: dict = Depends(require_roles("owner", "admin"))):
-    update = {k: v for k, v in p.dict().items() if v is not None}
+                             user: dict = Depends(require_roles("owner", "admin"))):
+    update = strip_pending({k: v for k, v in p.dict().items() if v is not None})
     if not update:
         raise HTTPException(400, "Nada que actualizar")
     update["updated_at"] = now_iso()
-    r = await db.inventory_products.update_one({"id": pid}, {"$set": update})
-    if r.matched_count == 0:
+    res = await stage_update("inventory_products", pid, update, user)
+    if res is None:
         raise HTTPException(404, "Producto no encontrado")
-    doc = await db.inventory_products.find_one({"id": pid}, {"_id": 0})
-    return doc
+    return res
 
 
 @api.delete("/inventory/products/{pid}")
 async def inv_delete_product(pid: str,
-                             _: dict = Depends(require_roles("owner", "admin"))):
-    r = await db.inventory_products.delete_one({"id": pid})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Producto no encontrado")
-    return {"ok": True}
+                             user: dict = Depends(require_roles("owner", "admin"))):
+    return await stage_delete("inventory_products", pid, user)
 
 
 @api.get("/inventory/customers")

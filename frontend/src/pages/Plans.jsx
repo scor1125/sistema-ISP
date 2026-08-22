@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
 import { planSpeedLabel } from "@/lib/utils";
-import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm, PendingBadge } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -99,7 +99,10 @@ export default function Plans() {
             {filtered.length===0 && <EmptyRow colSpan={6} text={items.length===0 ? "Sin planes. Crea el primero." : "Nada coincide con la búsqueda."} />}
             {filtered.map(p=>(
               <TableRow key={p.id}>
-                <TableCell><div className="font-medium">{p.name}</div><div className="text-xs text-muted-foreground">{p.description}</div></TableCell>
+                <TableCell>
+                  <div className="font-medium flex items-center gap-2">{p.name}<PendingBadge row={p} /></div>
+                  <div className="text-xs text-muted-foreground">{p.description}</div>
+                </TableCell>
                 <TableCell className="font-mono text-xs">
                   <div>{planSpeedLabel(p)}</div>
                   {p.burst_enabled && (

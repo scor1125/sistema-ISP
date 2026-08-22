@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, formatApiError } from "@/lib/api";
-import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
+import { PageHeader, EmptyRow, SearchBar, norm, PendingBadge } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -116,7 +116,9 @@ export default function Payments() {
             return (
               <TableRow key={p.id}>
                 <TableCell className="font-mono text-xs">{p.created_at.slice(0,10)}</TableCell>
-                <TableCell>{client?.full_name || "—"}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">{client?.full_name || "—"}<PendingBadge row={p} /></div>
+                </TableCell>
                 <TableCell className="font-mono">${p.amount}</TableCell>
                 <TableCell><Badge variant="outline">{methodLabel[p.method] || p.method}</Badge></TableCell>
                 <TableCell>{p.concept}{p.is_promise && <Badge className="ml-2 bg-amber-500/10 text-amber-400 border border-amber-500/30" variant="outline">Promesa · {p.promise_date}</Badge>}</TableCell>

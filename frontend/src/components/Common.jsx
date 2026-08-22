@@ -1,5 +1,29 @@
 import { Input } from "@/components/ui/input";
-import { Search, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Search, X, FilePlus2, FilePen, FileX2 } from "lucide-react";
+
+const PENDING_OPS = {
+  create: { label: "Alta sin confirmar",    cls: "border-emerald-500/40 text-emerald-500", Icon: FilePlus2 },
+  update: { label: "Edición sin confirmar", cls: "border-sky-500/40 text-sky-400",         Icon: FilePen },
+  delete: { label: "Baja sin confirmar",    cls: "border-red-500/40 text-red-500",         Icon: FileX2 },
+};
+
+/**
+ * Marca un registro que se capturó pero todavía no se confirma desde
+ * "Aplicar Cambios" — mientras tenga esta etiqueta no cuenta como definitivo
+ * y no se ha aplicado en el Mikrotik.
+ */
+export function PendingBadge({ row }) {
+  const op = row?._pending?.op;
+  if (!op) return null;
+  const s = PENDING_OPS[op] || PENDING_OPS.update;
+  const { Icon } = s;
+  return (
+    <Badge variant="outline" className={`text-[9px] ${s.cls}`} title={s.label}>
+      <Icon className="w-2.5 h-2.5 mr-1" /> {s.label}
+    </Badge>
+  );
+}
 
 export function PageHeader({ title, subtitle, actions }) {
   return (
