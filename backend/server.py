@@ -369,10 +369,24 @@ class TimeRestrictionsPatchIn(BaseModel):
 
 class PlanIn(BaseModel):
     name: str
-    speed_mbps: int
+    upload_mbps: int
+    download_mbps: int
     price: float
+    install_price: Optional[float] = 0
     description: Optional[str] = ""
     active: bool = True
+    # Ráfaga (burst): por un tiempo corto el cliente puede navegar más rápido
+    # que su velocidad contratada, mientras el promedio se mantenga bajo. Útil
+    # para que cargas de páginas/streaming arranquen más fluidas sin subirle
+    # la velocidad contratada de forma permanente.
+    burst_enabled: bool = False
+    burst_upload_mbps: Optional[int] = None
+    burst_download_mbps: Optional[int] = None
+    # % de la velocidad normal por debajo del cual se permite la ráfaga.
+    burst_threshold_percent: Optional[int] = 80
+    # Ventana (segundos) sobre la que se calcula el promedio para decidir si
+    # la ráfaga sigue permitida — no es "cuánto dura la ráfaga".
+    burst_time_seconds: Optional[int] = 8
 
 class NapBoxIn(BaseModel):
     name: str
@@ -3103,7 +3117,8 @@ async def portal_logout(response: Response):
 async def portal_me(client: dict = Depends(get_portal_client)):
     plan = None
     if client.get("plan_id"):
-        plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0, "name": 1, "speed_mbps": 1, "price": 1})
+        plan = await db.plans.find_one({"id": client["plan_id"]},
+            {"_id": 0, "name": 1, "speed_mbps": 1, "upload_mbps": 1, "download_mbps": 1, "price": 1})
     return {"client": _sanitize_client_portal(client), "plan": plan}
 
 @api.get("/portal/payments")
@@ -4567,6 +4582,49 @@ def _queue_name_for(client: dict) -> str:
     return f"isp-{base}-{(client.get('id') or '')[:6]}"[:32]
 
 
+def _plan_rates(plan: dict) -> dict:
+    """Sube/baja del plan (con `speed_mbps` como respaldo de planes viejos,
+    antes de que existiera upload/download por separado) más, si aplica, los
+    valores de ráfaga ya armados en el formato que pide cada modo:
+      - Queue: burst-limit/burst-threshold/burst-time son propiedades separadas
+        (mismo orden subida/bajada que max-limit).
+      - PPPoE: todo va en una sola cadena de texto posicional
+        (`rx` = subida del cliente, `tx` = bajada — así lo define RouterOS).
+    El umbral de ráfaga se calcula como % de la velocidad normal; RouterOS
+    exige que sea menor a la velocidad normal para que la ráfaga tenga efecto.
+    """
+    legacy = plan.get("speed_mbps")
+    upload = int(plan.get("upload_mbps") or legacy or 0)
+    download = int(plan.get("download_mbps") or legacy or upload)
+    max_limit = f"{upload}M/{download}M"
+    ppp_rate_limit = max_limit
+
+    # Siempre se devuelven las 3 propiedades de ráfaga (con "0/0" = deshabilitada
+    # en vez de omitirlas): burst-limit/threshold/time son propiedades sueltas en
+    # Simple Queue, y si no se mandan en el `set`, RouterOS deja el valor viejo tal
+    # cual — un plan que pasa de ráfaga a sin-ráfaga quedaría con la ráfaga vieja
+    # pegada en el router.
+    burst = {"burst_limit": "0/0", "burst_threshold": "0/0", "burst_time": "0/0"}
+    if plan.get("burst_enabled") and plan.get("burst_upload_mbps") and plan.get("burst_download_mbps"):
+        b_up = int(plan["burst_upload_mbps"])
+        b_down = int(plan["burst_download_mbps"])
+        pct = min(int(plan.get("burst_threshold_percent") or 80), 95)
+        t_up = max(1, round(upload * pct / 100))
+        t_down = max(1, round(download * pct / 100))
+        secs = int(plan.get("burst_time_seconds") or 8)
+        burst = {
+            "burst_limit": f"{b_up}M/{b_down}M",
+            "burst_threshold": f"{t_up}M/{t_down}M",
+            "burst_time": f"{secs}/{secs}",
+        }
+        ppp_rate_limit = f"{max_limit} {b_up}M/{b_down}M {t_up}M/{t_down}M {secs}/{secs}"
+
+    return {
+        "upload": upload, "download": download, "max_limit": max_limit,
+        "burst": burst, "ppp_rate_limit": ppp_rate_limit,
+    }
+
+
 async def _apply_client_queue(client: dict) -> dict:
     """Crea o actualiza la Simple Queue del cliente según su plan. Nunca
     lanza: un router caído no debe impedir crear/editar el cliente en el CRM."""
@@ -4577,15 +4635,14 @@ async def _apply_client_queue(client: dict) -> dict:
         return {"ok": False, "reason": "el cliente no tiene IP asignada"}
     if not client.get("plan_id"):
         return {"ok": False, "reason": "el cliente no tiene plan asignado"}
-    plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0, "speed_mbps": 1})
-    if not plan or not plan.get("speed_mbps"):
+    plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0})
+    if not plan or not (plan.get("upload_mbps") or plan.get("download_mbps") or plan.get("speed_mbps")):
         return {"ok": False, "reason": "el plan del cliente no tiene velocidad definida"}
     router = await _router_for_client(client)
     if not router:
         return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
 
-    speed = int(plan["speed_mbps"])
-    max_limit = f"{speed}M/{speed}M"
+    rates = _plan_rates(plan)
     name = client.get("mikrotik_queue_name") or _queue_name_for(client)
     try:
         res = await ros_set_queue(
@@ -4593,10 +4650,12 @@ async def _apply_client_queue(client: dict) -> dict:
             user=router.get("api_user", ""),
             password=device_secret(router, "api_password"),
             use_ssl=bool(router.get("api_use_ssl")),
-            name=name, target=f"{ip}/32", max_limit=max_limit,
+            name=name, target=f"{ip}/32", max_limit=rates["max_limit"],
             comment=f"Sistema ISP - {client.get('full_name', '')}"[:60],
+            **rates["burst"],
         )
-        return {"ok": True, "router": router.get("name"), "queue_name": name, "max_limit": max_limit, **res}
+        return {"ok": True, "router": router.get("name"), "queue_name": name,
+                "max_limit": rates["max_limit"], **res}
     except MikrotikRosError as e:
         logger.warning("[queue] sync %s (%s) en %s: %s", ip, name, router.get("name"), e)
         return {"ok": False, "router": router.get("name"), "queue_name": name, "reason": str(e)[:200]}
@@ -4642,7 +4701,8 @@ def _ppp_profile_name_for_plan(plan: dict) -> str:
     """Un perfil PPP por velocidad de plan, compartido por todos sus clientes
     — igual que en Queue, cambiar la velocidad del plan actualiza a todos los
     que lo usan de una sola vez."""
-    return f"isp-plan-{int(plan['speed_mbps'])}m"
+    rates = _plan_rates(plan)
+    return f"isp-plan-{rates['upload']}x{rates['download']}m"
 
 
 async def _apply_client_pppoe(client: dict) -> dict:
@@ -4654,8 +4714,8 @@ async def _apply_client_pppoe(client: dict) -> dict:
         return {"ok": False, "reason": "el cliente no está en modo PPPoE"}
     if not client.get("plan_id"):
         return {"ok": False, "reason": "el cliente no tiene plan asignado"}
-    plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0, "speed_mbps": 1})
-    if not plan or not plan.get("speed_mbps"):
+    plan = await db.plans.find_one({"id": client["plan_id"]}, {"_id": 0})
+    if not plan or not (plan.get("upload_mbps") or plan.get("download_mbps") or plan.get("speed_mbps")):
         return {"ok": False, "reason": "el plan del cliente no tiene velocidad definida"}
     router = await _router_for_client(client)
     if not router:
@@ -4665,8 +4725,7 @@ async def _apply_client_pppoe(client: dict) -> dict:
     secret_password = (client.get("pppoe_password") or "").strip() or _ovpn_random_secret()
     profile = (client.get("pppoe_profile") or "").strip() or _ppp_profile_name_for_plan(plan)
     remote_address = (client.get("ip_address") or "").strip()
-    speed = int(plan["speed_mbps"])
-    rate_limit = f"{speed}M/{speed}M"
+    rate_limit = _plan_rates(plan)["ppp_rate_limit"]
 
     router_kwargs = dict(
         host=router["host"], port=int(router.get("api_port") or 8728),

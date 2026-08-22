@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatApiError } from "@/lib/api";
+import { planSpeedLabel } from "@/lib/utils";
 import { PageHeader, EmptyRow, SearchBar, norm } from "@/components/Common";
 import { FormDialog } from "@/components/FormDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import { Plus, Trash2, Pencil, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Plans() {
@@ -20,20 +21,60 @@ export default function Plans() {
   const filtered = useMemo(() => {
     const nq = norm(q);
     if (!nq) return items;
-    return items.filter((p) => norm(`${p.name} ${p.description} ${p.speed_mbps} ${p.price}`).includes(nq));
+    return items.filter((p) => norm(`${p.name} ${p.description} ${planSpeedLabel(p)} ${p.price}`).includes(nq));
   }, [items, q]);
 
   const fields = [
     { name: "name", label: "Nombre", required: true, full: true },
-    { name: "speed_mbps", label: "Velocidad (Mbps)", type: "number", required: true },
-    { name: "price", label: "Precio", type: "number", required: true },
+    { name: "upload_mbps", label: "Máx. subida (Mbps)", type: "number", required: true },
+    { name: "download_mbps", label: "Máx. bajada (Mbps)", type: "number", required: true },
+    { name: "price", label: "Precio mensual", type: "number", required: true },
+    { name: "install_price", label: "Precio de instalación", type: "number",
+      hint: "Cobro único al contratar. Déjalo en 0 si no aplica." },
     { name: "description", label: "Descripción", type: "textarea", full: true },
+
+    { name: "burst_enabled", label: "Ráfaga de velocidad (burst)", type: "select",
+      options: [{ value: "true", label: "Habilitada" }, { value: "false", label: "Deshabilitada" }],
+      hint: "Por un rato corto el cliente navega más rápido que lo contratado, mientras el promedio se mantenga bajo — ideal para que las páginas carguen más fluidas sin subirle la velocidad de forma permanente.",
+    },
+    { name: "burst_upload_mbps", label: "Ráfaga subida (Mbps)", type: "number",
+      hidden: (v) => String(v.burst_enabled) !== "true",
+      hint: "Debe ser mayor a la subida contratada.",
+    },
+    { name: "burst_download_mbps", label: "Ráfaga bajada (Mbps)", type: "number",
+      hidden: (v) => String(v.burst_enabled) !== "true",
+      hint: "Debe ser mayor a la bajada contratada.",
+    },
+    { name: "burst_threshold_percent", label: "Umbral de ráfaga (%)", type: "number",
+      hidden: (v) => String(v.burst_enabled) !== "true",
+      placeholder: "80",
+      hint: "Mientras el promedio de uso esté por debajo de este % de lo contratado, sigue permitida la ráfaga.",
+    },
+    { name: "burst_time_seconds", label: "Ventana de cálculo (segundos)", type: "number",
+      hidden: (v) => String(v.burst_enabled) !== "true",
+      placeholder: "8",
+      hint: "Tiempo sobre el que se calcula el promedio — no es cuánto dura la ráfaga en sí.",
+    },
+
     { name: "active", label: "Activo", type: "select", options: [{value:"true",label:"Sí"},{value:"false",label:"No"}] },
   ];
 
   const save = async (v) => {
     try {
-      const payload = { ...v, active: String(v.active) !== "false" };
+      const payload = {
+        ...v,
+        active: String(v.active) !== "false",
+        burst_enabled: String(v.burst_enabled) === "true",
+        upload_mbps: Number(v.upload_mbps) || 0,
+        download_mbps: Number(v.download_mbps) || 0,
+        install_price: Number(v.install_price) || 0,
+      };
+      if (payload.burst_enabled) {
+        payload.burst_upload_mbps = Number(v.burst_upload_mbps) || null;
+        payload.burst_download_mbps = Number(v.burst_download_mbps) || null;
+        payload.burst_threshold_percent = Number(v.burst_threshold_percent) || 80;
+        payload.burst_time_seconds = Number(v.burst_time_seconds) || 8;
+      }
       if (editing) await api.patch(`/plans/${editing.id}`, payload);
       else await api.post("/plans", payload);
       toast.success("Guardado"); setEditing(null); await load();
@@ -50,16 +91,27 @@ export default function Plans() {
       <div className="rounded-md border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader><TableRow>
-            <TableHead>Nombre</TableHead><TableHead>Velocidad</TableHead><TableHead>Precio</TableHead>
+            <TableHead>Nombre</TableHead><TableHead>Velocidad</TableHead>
+            <TableHead>Precio</TableHead><TableHead>Instalación</TableHead>
             <TableHead>Estado</TableHead><TableHead className="text-right">Acciones</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {filtered.length===0 && <EmptyRow colSpan={5} text={items.length===0 ? "Sin planes. Crea el primero." : "Nada coincide con la búsqueda."} />}
+            {filtered.length===0 && <EmptyRow colSpan={6} text={items.length===0 ? "Sin planes. Crea el primero." : "Nada coincide con la búsqueda."} />}
             {filtered.map(p=>(
               <TableRow key={p.id}>
                 <TableCell><div className="font-medium">{p.name}</div><div className="text-xs text-muted-foreground">{p.description}</div></TableCell>
-                <TableCell className="font-mono">{p.speed_mbps} Mbps</TableCell>
+                <TableCell className="font-mono text-xs">
+                  <div>{planSpeedLabel(p)}</div>
+                  {p.burst_enabled && (
+                    <Badge variant="outline" className="mt-1 text-[10px] border-amber-500/40 text-amber-500">
+                      <Zap className="w-2.5 h-2.5 mr-1" /> ráfaga {p.burst_upload_mbps}↑/{p.burst_download_mbps}↓
+                    </Badge>
+                  )}
+                </TableCell>
                 <TableCell className="font-mono">${p.price}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {p.install_price ? `$${p.install_price}` : "—"}
+                </TableCell>
                 <TableCell>{p.active !== false ? <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" variant="outline">Activo</Badge> : <Badge variant="outline">Inactivo</Badge>}</TableCell>
                 <TableCell className="text-right">
                   <Button size="icon" variant="ghost" onClick={()=>{ setEditing(p); setOpen(true); }}><Pencil className="w-4 h-4" /></Button>
@@ -71,7 +123,11 @@ export default function Plans() {
         </Table>
       </div>
       <FormDialog open={open} onOpenChange={(v)=>{ setOpen(v); if(!v) setEditing(null); }}
-        title={editing ? "Editar plan" : "Nuevo plan"} fields={fields} initial={editing || {active:true}} onSubmit={save} />
+        title={editing ? "Editar plan" : "Nuevo plan"} fields={fields}
+        initial={editing
+          ? { ...editing, active: editing.active !== false, burst_enabled: !!editing.burst_enabled }
+          : { active: true, burst_enabled: false, burst_threshold_percent: 80, burst_time_seconds: 8 }}
+        onSubmit={save} size="xl" />
     </div>
   );
 }

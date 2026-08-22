@@ -344,7 +344,8 @@ async def list_interfaces_and_addresses(host: str, *, port: int = DEFAULT_API_PO
 # --------------------------------------------------------------------------
 def _queue_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
                 timeout: int, action: str, name: str, target: str = "",
-                max_limit: str = "", comment: str = "") -> Dict[str, Any]:
+                max_limit: str = "", comment: str = "", burst_limit: str = "",
+                burst_threshold: str = "", burst_time: str = "") -> Dict[str, Any]:
     pool = None
     try:
         pool = routeros_api.RouterOsApiPool(
@@ -367,11 +368,19 @@ def _queue_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
             return {"ok": True, "changed": True, "removed": len(existing)}
 
         if action == "set":
+            burst_kwargs = {}
+            if burst_limit:
+                burst_kwargs["burst-limit"] = burst_limit
+            if burst_threshold:
+                burst_kwargs["burst-threshold"] = burst_threshold
+            if burst_time:
+                burst_kwargs["burst-time"] = burst_time
             if existing:
                 res.set(id=existing[0].get("id"), target=target, comment=comment,
-                        **{"max-limit": max_limit})
+                        **{"max-limit": max_limit}, **burst_kwargs)
                 return {"ok": True, "changed": True, "action": "updated"}
-            res.add(name=name, target=target, comment=comment, **{"max-limit": max_limit})
+            res.add(name=name, target=target, comment=comment,
+                    **{"max-limit": max_limit}, **burst_kwargs)
             return {"ok": True, "changed": True, "action": "created"}
 
         raise MikrotikRosError(f"Acción desconocida: {action}")
@@ -395,6 +404,7 @@ def _queue_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
 
 async def set_queue(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
                     name: str, target: str, max_limit: str, comment: str = "",
+                    burst_limit: str = "", burst_threshold: str = "", burst_time: str = "",
                     use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
     """Crea o actualiza la Simple Queue de un cliente (por nombre; se identifica
     por nombre y no por IP porque la IP puede cambiar)."""
@@ -404,7 +414,7 @@ async def set_queue(host: str, *, port: int = DEFAULT_API_PORT, user: str, passw
         raise MikrotikRosError("El cliente no tiene IP asignada")
     return await asyncio.to_thread(
         _queue_sync, host, int(port), user, password, use_ssl, int(timeout),
-        "set", name, target, max_limit, comment,
+        "set", name, target, max_limit, comment, burst_limit, burst_threshold, burst_time,
     )
 
 

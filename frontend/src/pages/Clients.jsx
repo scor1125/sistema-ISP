@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
 import { copyToClipboard } from "@/lib/clipboard";
 import { cidrAvailableHosts } from "@/lib/cidr";
+import { planSpeedLabel } from "@/lib/utils";
 
 const statusMap = {
   active: { label: "Activo", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
@@ -247,7 +248,7 @@ export default function Clients() {
         ? "Elige de la lista de lugares registrados en el módulo Lugares."
         : "Aún no hay lugares. Ve al módulo Lugares y crea el primero.",
     },
-    { name: "plan_id", label: "Plan", type: "select", options: plans.map((p) => ({ value: p.id, label: `${p.name} · ${p.speed_mbps}M · $${p.price}` })) },
+    { name: "plan_id", label: "Plan", type: "select", options: plans.map((p) => ({ value: p.id, label: `${p.name} · ${planSpeedLabel(p)} · $${p.price}` })) },
     { name: "nap_box_id", label: "Caja NAP", type: "select",
       options: naps.map((n) => {
         const cap = n.port_type === "1x8" ? 8 : (n.port_type === "1x16" ? 16 : (n.capacity || 16));
@@ -632,7 +633,7 @@ export default function Clients() {
                       <div className="text-xs text-muted-foreground">{c.tag || ""}</div>
                     </TableCell>
                   )}
-                  {showCol("plan") && <TableCell>{plan ? `${plan.name} · ${plan.speed_mbps}M` : "—"}</TableCell>}
+                  {showCol("plan") && <TableCell>{plan ? `${plan.name} · ${planSpeedLabel(plan)}` : "—"}</TableCell>}
                   {showCol("nap") && <TableCell>{nap?.name || "—"}</TableCell>}
                   {showCol("ip") && <TableCell className="font-mono text-xs">{c.ip_address || "—"}</TableCell>}
                   {showCol("power") && (

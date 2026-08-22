@@ -13,6 +13,7 @@ import {
   Activity, Signal, Calendar, Phone, LogIn as LogInIcon,
   Eye, EyeOff, MessageCircle,
 } from "lucide-react";
+import { planSpeedLabel } from "@/lib/utils";
 
 const PORTAL_API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const portalApi = axios.create({ baseURL: PORTAL_API, withCredentials: true });
@@ -245,7 +246,7 @@ function PortalDashboard({ initialClient, onLogout }) {
                 <StatusIcon className="w-6 h-6" /> {status.label}
               </div>
               {plan && (
-                <div className="mt-1 text-sm text-slate-300">Plan: <b>{plan.name}</b> · {plan.speed_mbps} Mbps</div>
+                <div className="mt-1 text-sm text-slate-300">Plan: <b>{plan.name}</b> · {planSpeedLabel(plan)}</div>
               )}
             </div>
             <Badge variant="outline" className={`${status.cls} text-xs`}>{status.label}</Badge>
