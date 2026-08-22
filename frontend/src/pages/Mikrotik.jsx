@@ -310,6 +310,17 @@ function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
   // Copia local del router: al sincronizar dentro del diálogo se actualiza
   // aquí mismo sin tener que cerrarlo y recargar toda la tabla.
   const [dev, setDev] = useState(device);
+  // Estado del bloqueo por MAC en el router, por interfaz.
+  const [arp, setArp] = useState({});
+  const [arpBusy, setArpBusy] = useState("");
+
+  const loadArp = useCallback(async (d) => {
+    if (!d?.id) return;
+    try {
+      const { data } = await api.get(`/devices/${d.id}/arp-status`);
+      setArp(data.interfaces || {});
+    } catch { setArp({}); }
+  }, []);
 
   useEffect(() => {
     if (!open || !device) return;
@@ -318,7 +329,29 @@ function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
     (device.lan_interfaces || []).forEach((i) => { next[i] = "lan"; });
     (device.wan_interfaces || []).forEach((i) => { next[i] = "wan"; });
     setRoles(next);
-  }, [open, device]);
+    loadArp(device);
+  }, [open, device, loadArp]);
+
+  /* Enciende/apaga `arp=reply-only` en una interfaz. Va directo al router (no
+     pasa por "Aplicar Cambios"): es un interruptor de red, no un dato
+     capturado. Antes de encender avisa a cuántos equipos vivos dejaría sin
+     servicio, que son los que todavía no tienen su IP amarrada a su MAC. */
+  const toggleMacBlock = async (name) => {
+    const st = arp[name] || {};
+    const turningOn = !st.blocking;
+    if (turningOn && st.unbound > 0 && !window.confirm(
+      `En "${name}" hay ${st.unbound} equipo(s) conectados sin su MAC amarrada.\n\n` +
+      "Al bloquear por MAC se quedan SIN INTERNET de inmediato, y no vuelven " +
+      "hasta que cada uno tenga su amarre.\n\n¿Bloquear de todas formas?"
+    )) return;
+    setArpBusy(name);
+    try {
+      await api.put(`/devices/${dev.id}/mac-block`, { interfaces: [name], enabled: turningOn });
+      toast.success(turningOn ? `Bloqueo por MAC activado en ${name}` : `Bloqueo por MAC apagado en ${name}`);
+      await loadArp(dev);
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setArpBusy(""); }
+  };
 
   // Las que el router reporta, más las guardadas que ya no existen (para
   // poder verlas y quitarlas en vez de que desaparezcan calladas).
@@ -433,6 +466,27 @@ function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
                         ? <span className="text-amber-500">ya no existe en el router</span>
                         : (net || "sin IP configurada")}
                     </div>
+                    {!stale && role !== "wan" && arp[name] && (
+                      <Button
+                        size="sm"
+                        variant={arp[name].blocking ? "default" : "outline"}
+                        className={`h-6 mt-1 text-[10px] ${arp[name].blocking ? "border border-red-500/40" : ""}`}
+                        onClick={() => toggleMacBlock(name)}
+                        disabled={arpBusy === name}
+                        data-testid={`mk-macblock-${name}`}
+                        title={arp[name].blocking
+                          ? "Solo dan servicio los equipos con su IP amarrada a su MAC. Click para apagar."
+                          : `Al activarlo, ${arp[name].unbound} equipo(s) sin amarrar se quedan sin internet`}
+                      >
+                        {arpBusy === name
+                          ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          : <ShieldCheck className="w-3 h-3 mr-1" />}
+                        Bloquear tráfico por MAC
+                        <span className="ml-1.5 opacity-70">
+                          {arp[name].blocking ? "· activo" : `· ${arp[name].bound}/${arp[name].live} amarrados`}
+                        </span>
+                      </Button>
+                    )}
                   </div>
                   <div className="flex gap-1 shrink-0">
                     {ROLE_OPTS.map((o) => (

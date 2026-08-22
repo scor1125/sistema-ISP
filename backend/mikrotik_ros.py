@@ -1220,3 +1220,160 @@ async def arp_unbind(host: str, *, port: int = DEFAULT_API_PORT, user: str, pass
     return await asyncio.to_thread(
         _arp_unbind_sync, host, int(port), user, password, use_ssl, int(timeout), address,
     )
+
+
+# RouterOS no deja tocar `arp` desde el recurso genérico /interface: hay que
+# entrar por el recurso propio de cada tipo.
+_IFACE_TYPE_PATHS = {
+    "ether": "/interface/ethernet",
+    "ethernet": "/interface/ethernet",
+    "vlan": "/interface/vlan",
+    "bridge": "/interface/bridge",
+    "bond": "/interface/bonding",
+    "wlan": "/interface/wireless",
+    "vrrp": "/interface/vrrp",
+}
+
+
+def _iface_arp_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                    timeout: int, interfaces: List[str], mode: str) -> Dict[str, Any]:
+    """Pone el modo ARP de unas interfaces. `reply-only` hace que el router solo
+    atienda a las IP/MAC que tenga amarradas de forma estática: cualquier equipo
+    que no esté amarrado, o que use una IP que no le toca, se queda sin salida."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+        # El tipo real de cada interfaz sale del listado genérico.
+        types = {}
+        for r in api.get_resource("/interface").get():
+            name = r.get("name")
+            if isinstance(name, bytes):
+                name = name.decode()
+            types[str(name)] = str(r.get("type") or "")
+
+        done, failed = [], []
+        for name in interfaces:
+            t = types.get(name, "")
+            path = _IFACE_TYPE_PATHS.get(t)
+            if not path:
+                failed.append({"interface": name,
+                               "reason": f"tipo de interfaz no soportado ({t or 'desconocido'})"})
+                continue
+            try:
+                res = api.get_resource(path)
+                rows = list(res.get(name=name))
+                if not rows:
+                    failed.append({"interface": name, "reason": "ya no existe en el router"})
+                    continue
+                rid = rows[0].get("id") or rows[0].get(".id")
+                res.set(id=rid, arp=mode)
+                done.append(name)
+            except Exception as e:  # noqa: BLE001 — una interfaz no tumba al resto
+                failed.append({"interface": name, "reason": f"{type(e).__name__}: {e}"[:150]})
+        return {"ok": not failed, "mode": mode, "applied": done, "failed": failed}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def set_interface_arp(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                            interfaces: List[str], reply_only: bool, use_ssl: bool = False,
+                            timeout: int = 12) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not interfaces:
+        raise MikrotikRosError("No se indicó ninguna interfaz")
+    return await asyncio.to_thread(
+        _iface_arp_sync, host, int(port), user, password, use_ssl, int(timeout),
+        list(interfaces), "reply-only" if reply_only else "enabled",
+    )
+
+
+def _arp_status_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                     timeout: int) -> Dict[str, Any]:
+    """Por interfaz: en qué modo ARP está y cuántos equipos tiene amarrados
+    frente a cuántos hay vivos. Es lo que deja avisar, antes de bloquear, a
+    cuánta gente dejaría sin servicio."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+        stats: Dict[str, Dict[str, Any]] = {}
+        for r in api.get_resource("/ip/arp").get():
+            iface = str(r.get("interface") or "")
+            if not iface:
+                continue
+            s = stats.setdefault(iface, {"bound": 0, "live": 0})
+            s["live"] += 1
+            if str(r.get("dynamic")).lower() == "false":
+                s["bound"] += 1
+
+        modes: Dict[str, str] = {}
+        for t, path in set((t, p) for t, p in _IFACE_TYPE_PATHS.items()):
+            try:
+                for e in api.get_resource(path).get():
+                    name = e.get("name")
+                    if isinstance(name, bytes):
+                        name = name.decode()
+                    if name:
+                        modes[str(name)] = str(e.get("arp") or "enabled")
+            except Exception:
+                continue
+
+        out = {}
+        for name, mode in modes.items():
+            s = stats.get(name, {"bound": 0, "live": 0})
+            out[name] = {"arp": mode, "blocking": mode == "reply-only", **s,
+                         "unbound": max(0, s["live"] - s["bound"])}
+        return {"ok": True, "interfaces": out}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def arp_status(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                     use_ssl: bool = False, timeout: int = 12) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _arp_status_sync, host, int(port), user, password, use_ssl, int(timeout),
+    )

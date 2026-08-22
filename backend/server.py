@@ -1587,6 +1587,68 @@ class InterfaceRolesIn(BaseModel):
     wan: List[str] = []
 
 
+class MacBlockIn(BaseModel):
+    interfaces: List[str]
+    enabled: bool
+
+
+@api.get("/devices/{device_id}/arp-status")
+async def device_arp_status(device_id: str, _: dict = Depends(get_current_user)):
+    """Por interfaz: si el bloqueo por MAC está puesto, y cuántos equipos hay
+    amarrados frente a los que están vivos — que es lo que dice a cuánta gente
+    dejaría sin servicio activarlo ahora mismo."""
+    dev = await db.devices.find_one({"id": device_id}, {"_id": 0})
+    if not dev:
+        raise HTTPException(404, "Dispositivo no encontrado")
+    try:
+        return await ros_arp_status(
+            dev["host"], port=int(dev.get("api_port") or 8728),
+            user=dev.get("api_user", ""),
+            password=device_secret(dev, "api_password"),
+            use_ssl=bool(dev.get("api_use_ssl")),
+        )
+    except MikrotikRosError as e:
+        return {"ok": False, "reason": str(e)[:200], "interfaces": {}}
+
+
+@api.put("/devices/{device_id}/mac-block")
+async def set_device_mac_block(device_id: str, payload: MacBlockIn,
+                               _: dict = Depends(require_roles("owner", "admin"))):
+    """Enciende o apaga el bloqueo de tráfico por MAC (`arp=reply-only`) en las
+    interfaces indicadas.
+
+    Con el bloqueo puesto, la interfaz solo atiende a los equipos que tengan su
+    IP amarrada a su MAC: quien no esté amarrado, o quien ponga la IP de otro
+    en su ONU, se queda sin internet. Se aplica al momento, no espera a
+    "Aplicar Cambios": es un interruptor de red, no un dato capturado.
+    """
+    dev = await db.devices.find_one({"id": device_id}, {"_id": 0})
+    if not dev:
+        raise HTTPException(404, "Dispositivo no encontrado")
+    if not payload.interfaces:
+        raise HTTPException(400, "No se indicó ninguna interfaz")
+    # La WAN nunca: dejaría al router sin salida hacia internet.
+    wan = set(dev.get("wan_interfaces") or [])
+    blocked = [i for i in payload.interfaces if i in wan]
+    if blocked:
+        raise HTTPException(400,
+            f"No se puede bloquear por MAC en la WAN ({', '.join(blocked)}): "
+            "dejaría al router sin internet")
+    try:
+        res = await ros_set_interface_arp(
+            dev["host"], port=int(dev.get("api_port") or 8728),
+            user=dev.get("api_user", ""),
+            password=device_secret(dev, "api_password"),
+            use_ssl=bool(dev.get("api_use_ssl")),
+            interfaces=payload.interfaces, reply_only=payload.enabled,
+        )
+    except MikrotikRosError as e:
+        raise HTTPException(502, str(e)[:200])
+    logger.warning("[mac-block] %s en %s -> %s", dev.get("name"),
+                   payload.interfaces, "reply-only" if payload.enabled else "enabled")
+    return res
+
+
 @api.put("/devices/{device_id}/interface-roles")
 async def mikrotik_set_interface_roles(device_id: str, payload: InterfaceRolesIn,
                                        _: dict = Depends(require_roles("owner", "admin"))):
@@ -4884,6 +4946,8 @@ from mikrotik_ros import (  # noqa: E402
     arp_lookup as ros_arp_lookup,
     arp_bind as ros_arp_bind,
     arp_unbind as ros_arp_unbind,
+    arp_status as ros_arp_status,
+    set_interface_arp as ros_set_interface_arp,
     MikrotikRosError,
 )
 
