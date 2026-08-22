@@ -675,8 +675,8 @@ export default function Clients() {
                         )}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button size="sm" variant="ghost" title="Más acciones" data-testid={`more-${c.id}`}>
-                              <MoreHorizontal className="w-4 h-4 mr-1" /> Más acciones
+                            <Button size="icon" variant="ghost" title="Más acciones" data-testid={`more-${c.id}`}>
+                              <MoreHorizontal className="w-4 h-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
