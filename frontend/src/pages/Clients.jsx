@@ -260,9 +260,6 @@ export default function Clients() {
     { name: "community", label: "Lugar", type: "select",
       placeholder: lugares.length ? "Selecciona un lugar" : "Registra lugares en el módulo Lugares",
       options: lugares.map((l) => ({ value: l.name, label: l.name })),
-      hint: lugares.length
-        ? "Elige de la lista de lugares registrados en el módulo Lugares."
-        : "Aún no hay lugares. Ve al módulo Lugares y crea el primero.",
     },
     { name: "plan_id", label: "Plan", type: "select", options: plans.map((p) => ({ value: p.id, label: `${p.name} · ${planSpeedLabel(p)} · $${p.price}` })) },
     { name: "nap_box_id", label: "Caja NAP", type: "select",
@@ -278,16 +275,12 @@ export default function Clients() {
     { name: "payment_day", label: "Día de pago (1-28)", type: "number", required: true },
     { name: "mikrotik_server", label: "Servidor Mikrotik", type: "select",
       options: mikrotiks.map((m) => ({ value: m.name, label: `${m.name} · ${m.host}${m.port ? ":" + m.port : ""} · ${m.connection}` })),
-      hint: mikrotiks.length ? undefined : "Ve a Mikrotik y registra al menos un router para poder asignarlo aquí.",
     },
     { name: "connection_mode", label: "Modo de conexión", type: "select",
       options: [
         { value: "queue", label: "Simple Queue (IP fija)" },
         { value: "pppoe", label: "PPPoE" },
       ],
-      hint: (v) => v.connection_mode === "pppoe"
-        ? "El cliente entra por usuario/contraseña PPPoE; no necesita IP asignada por el CRM."
-        : "El CRM le asigna una IP fija y crea/actualiza su Simple Queue solo, según su plan.",
     },
     { name: "pppoe_profile", label: "Perfil PPP", type: "select",
       hidden: (v) => v.connection_mode !== "pppoe",
@@ -296,23 +289,14 @@ export default function Clients() {
         return (mk?.ppp_profiles || []).map((p) => ({ value: p, label: p }));
       },
       placeholder: "(automático según el plan)",
-      hint: (v) => {
-        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
-        if (!mk) return "Elige primero el servidor Mikrotik.";
-        return mk.ppp_profiles?.length
-          ? "Déjalo vacío para que el CRM administre uno según la velocidad del plan, o elige uno existente del router."
-          : 'Sin perfiles sincronizados — ve a Mikrotik → Interfaces y presiona "Sincronizar del router".';
-      },
     },
     { name: "pppoe_user", label: "Usuario PPPoE",
       hidden: (v) => v.connection_mode !== "pppoe",
       placeholder: "(se genera solo si lo dejas vacío)",
-      hint: (v) => v.pppoe_user ? undefined : "Vacío = el CRM genera uno único al guardar.",
     },
     { name: "pppoe_password", label: "Contraseña PPPoE",
       hidden: (v) => v.connection_mode !== "pppoe",
       placeholder: "(se genera sola si la dejas vacía)",
-      hint: (v) => v.pppoe_password ? undefined : "Vacío = el CRM genera una segura al guardar.",
     },
     { name: "mikrotik_interface", label: "Interfaz", type: "select",
       hidden: (v) => v.connection_mode === "pppoe",
@@ -331,16 +315,6 @@ export default function Clients() {
           : list;
         return withCurrent.map((i) => ({ value: i, label: i }));
       },
-      hint: (v) => {
-        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
-        if (!mk) return "Elige primero el servidor Mikrotik.";
-        if (mk.lan_interfaces?.length) {
-          return `${mk.lan_interfaces.length} interfaces LAN de "${mk.name}" · cámbialas en el menú Mikrotik → Interfaces.`;
-        }
-        return mk.interfaces?.length
-          ? `${mk.interfaces.length} interfaces reales de "${mk.name}"${mk.interfaces_synced_at ? " · sincronizado " + new Date(mk.interfaces_synced_at).toLocaleString() : ""}. Marca cuáles son LAN en el menú Mikrotik → Interfaces.`
-          : `Ve a Mikrotik → Interfaces y presiona "Sincronizar del router" para traer las interfaces reales de "${mk.name}".`;
-      },
     },
     { name: "ip_address", label: "IP",
       hidden: (v) => v.connection_mode === "pppoe",
@@ -357,18 +331,6 @@ export default function Clients() {
         if (editing?.ip_address && !list.includes(editing.ip_address)) return [editing.ip_address, ...list];
         return list;
       },
-      hint: (v) => {
-        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
-        const net = mk?.interface_networks?.[v.mikrotik_interface]?.[0];
-        if (net) {
-          const excluded = [...(ipPool.used || []), ...(ipPool.reserved || []), net.split("/")[0]];
-          const count = cidrAvailableHosts(net, excluded, { cap: 5000 }).length;
-          return `Red ${net} de la interfaz "${v.mikrotik_interface}" · ${count} disponibles`;
-        }
-        return ipPool.cidr
-          ? `Red ${ipPool.cidr} · ${ipPool.available?.length || 0} disponibles / ${ipPool.total} totales · usadas: ${ipPool.used?.length || 0}`
-          : "Elige un Mikrotik con la interfaz sincronizada, o define tu red (CIDR) en Configuración.";
-      },
       placeholder: ipPool.available?.[0] || "10.10.0.10",
     },
     { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
@@ -378,7 +340,6 @@ export default function Clients() {
         { value: "active", label: "Habilitado" },
         { value: "suspended", label: "Deshabilitado" },
       ],
-      hint: "El corte automático por mora y la reactivación al pagar siguen funcionando solos; esto es para habilitar o deshabilitar el servicio a mano.",
     },
     { name: "tag", label: "Etiqueta", placeholder: "Ej: VIP, Moroso, Preferente…" },
     { name: "installer_ids", label: "Técnicos que instalaron", type: "multiselect",
@@ -386,16 +347,10 @@ export default function Clients() {
       options: colaboradores
         .filter((c) => c.active !== false)
         .map((c) => ({ value: c.id, label: `${c.full_name}${c.role ? " · " + c.role : ""}` })),
-      hint: colaboradores.length
-        ? "Puedes elegir varios colaboradores que participaron en la instalación."
-        : "Aún no hay colaboradores. Ve al módulo Colaboradores y registra al equipo.",
     },
-    { name: "vlan", label: "VLAN", type: "number", placeholder: "Ej: 100",
-      hint: "Número de VLAN asignada al cliente en el switch/Mikrotik.",
-    },
+    { name: "vlan", label: "VLAN", type: "number", placeholder: "Ej: 100" },
     { name: "onu_mac", label: "MAC de la ONU", type: "mac-picker",
       placeholder: "aa:bb:cc:dd:ee:ff",
-      hint: "Usa el botón Buscar para elegir de las MACs detectadas por la OLT (o pega manualmente).",
     },
   ];
 

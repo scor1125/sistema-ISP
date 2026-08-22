@@ -38,7 +38,6 @@ const NAP_FIELDS = [
       { value: "1x8", label: "1x8 (8 clientes máximo)" },
       { value: "1x16", label: "1x16 (16 clientes máximo)" },
     ],
-    hint: "Determina la capacidad máxima de clientes que puede alojar.",
   },
   { name: "lat", label: "Latitud", type: "number", required: true },
   { name: "lng", label: "Longitud", type: "number", required: true },

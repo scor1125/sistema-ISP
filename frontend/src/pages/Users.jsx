@@ -378,12 +378,10 @@ export default function Users() {
     { name: "phone", label: "Teléfono" },
     { name: "role", label: "Rol", type: "select", required: true,
       options: ROLES,
-      hint: "Cobrador arranca con permisos mínimos (solo escribir pagos). Puedes ampliar después con los interruptores.",
     },
     { name: "password", label: "Contraseña temporal", required: true, type: "password" },
     { name: "ttl_hours", label: "Vigencia en horas (opcional)", type: "number",
       placeholder: "Ej: 72 = 3 días demo",
-      hint: "Después de este tiempo el usuario queda inactivo automáticamente.",
     },
   ];
 

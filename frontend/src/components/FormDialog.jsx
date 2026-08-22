@@ -105,9 +105,6 @@ function Field({ field, value, onChange, values }) {
     <div className={wrapCls}>
       <Label htmlFor={key}>{field.label}</Label>
       <FieldControl field={field} value={value} onChange={onChange} inputId={key} values={values} />
-      {hint && (
-        <div className="mt-1 text-[11px] text-muted-foreground font-mono">{hint}</div>
-      )}
     </div>
   );
 }

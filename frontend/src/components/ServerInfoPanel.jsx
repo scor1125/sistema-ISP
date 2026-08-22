@@ -10,17 +10,17 @@ import { toast } from "sonner";
 import { copyToClipboard } from "@/lib/clipboard";
 
 const FIELDS = [
-  { key: "public_ip",         label: "IP pública / Host",         icon: Globe,       hint: "El router usará esto como Endpoint (ejemplo: 190.10.20.30 o vpn.miisp.com)" },
-  { key: "public_hostname",   label: "Hostname alternativo",      icon: Globe,       hint: "Opcional. Usa DNS si tu IP es dinámica." },
-  { key: "wireguard_port",    label: "Puerto WireGuard (UDP)",    icon: Network,     hint: "Debe estar abierto en firewall y NAT del proveedor." },
-  { key: "l2tp_port",         label: "Puerto L2TP (UDP)",         icon: Network,     hint: "Sólo si usas L2TP/IPsec." },
-  { key: "openvpn_port",      label: "Puerto OpenVPN (UDP)",      icon: Network,     hint: "Sólo si usas OpenVPN." },
-  { key: "server_public_key", label: "Public Key del servidor",   icon: Key,         hint: "El router lo pega en `/interface wireguard peers public-key`." },
-  { key: "tunnel_network",    label: "Red del túnel",             icon: ShieldCheck, hint: "Rango CIDR de la red interna (ejemplo: 10.100.0.0/24)." },
+  { key: "public_ip",         label: "IP pública / Host",         icon: Globe },
+  { key: "public_hostname",   label: "Hostname alternativo",      icon: Globe },
+  { key: "wireguard_port",    label: "Puerto WireGuard (UDP)",    icon: Network },
+  { key: "l2tp_port",         label: "Puerto L2TP (UDP)",         icon: Network },
+  { key: "openvpn_port",      label: "Puerto OpenVPN (UDP)",      icon: Network },
+  { key: "server_public_key", label: "Public Key del servidor",   icon: Key },
+  { key: "tunnel_network",    label: "Red del túnel",             icon: ShieldCheck },
   { key: "server_tunnel_ip",  label: "IP servidor en el túnel",   icon: ShieldCheck },
-  { key: "client_tunnel_ip",  label: "IP recomendada para el router", icon: ShieldCheck, hint: "El router se debe autoasignar dentro de la red del túnel." },
+  { key: "client_tunnel_ip",  label: "IP recomendada para el router", icon: ShieldCheck },
   { key: "dns",               label: "DNS a usar",                icon: Globe },
-  { key: "api_endpoint",      label: "URL del CRM (API)",         icon: Server,      hint: "El Mikrotik podrá consumir esta URL en scripts de reporte." },
+  { key: "api_endpoint",      label: "URL del CRM (API)",         icon: Server },
 ];
 
 const CONN_STEPS = [
@@ -108,7 +108,6 @@ export default function ServerInfoPanel() {
                   <Copy className="w-3.5 h-3.5" />
                 </Button>
               </div>
-              {f.hint && <div className="text-[11px] text-muted-foreground mt-1 leading-snug">{f.hint}</div>}
             </div>
           );
         })}
@@ -140,7 +139,6 @@ export default function ServerInfoPanel() {
                   onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
                   data-testid={`input-${f.key}`}
                 />
-                {f.hint && <div className="text-[11px] text-muted-foreground mt-1">{f.hint}</div>}
               </div>
             ))}
           </div>
