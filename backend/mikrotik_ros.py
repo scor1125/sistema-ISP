@@ -898,3 +898,143 @@ async def interface_traffic(host: str, *, port: int = DEFAULT_API_PORT, user: st
         _interface_traffic_sync, host, int(port), user, password, use_ssl, int(timeout),
         list(interfaces),
     )
+
+
+def _ping_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+               timeout: int, address: str, count: int) -> Dict[str, Any]:
+    """Hace ping desde el router hacia una IP. Se pide desde el router y no
+    desde el CRM porque el CRM normalmente no tiene ruta hacia la red del
+    cliente — el router sí, está colgado de ella."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        bres = pool.get_api().get_binary_resource("/")
+        rows = list(bres.call("ping", {
+            "address": address.encode(), "count": str(int(count)).encode(),
+        }))
+        if not rows:
+            return {"ok": False, "reason": "el router no devolvió respuesta al ping"}
+
+        def _s(row, key, default=""):
+            v = row.get(key, default)
+            return v.decode() if isinstance(v, bytes) else (v if v is not None else default)
+
+        # La última fila trae el acumulado (sent/received/packet-loss/avg-rtt).
+        last = rows[-1]
+        sent = int(_s(last, "sent", "0") or 0)
+        received = int(_s(last, "received", "0") or 0)
+        loss = int(_s(last, "packet-loss", "100") or 0)
+        return {
+            "ok": True,
+            "alive": received > 0,
+            "address": address,
+            "sent": sent,
+            "received": received,
+            "packet_loss": loss,
+            "avg_rtt": _s(last, "avg-rtt"),
+            "min_rtt": _s(last, "min-rtt"),
+            "max_rtt": _s(last, "max-rtt"),
+        }
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def ping(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+               address: str, count: int = 4, use_ssl: bool = False,
+               timeout: int = 15) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not address:
+        raise MikrotikRosError("No se indicó la dirección a la que hacer ping")
+    return await asyncio.to_thread(
+        _ping_sync, host, int(port), user, password, use_ssl, int(timeout),
+        address, int(count),
+    )
+
+
+def _split_counter(raw: Any) -> tuple:
+    """`bytes` de una Simple Queue viene como "subida/bajada" en bytes."""
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    up, _, down = str(raw or "0/0").partition("/")
+    try:
+        return int(up or 0), int(down or 0)
+    except ValueError:
+        return 0, 0
+
+
+def _queue_counters_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                         timeout: int) -> Dict[str, Any]:
+    """Contadores acumulados de todas las Simple Queues del router, de una sola
+    llamada. Sirve para medir consumo: la diferencia entre dos lecturas es lo
+    que el cliente gastó en ese rato."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        rows = list(pool.get_api().get_resource("/queue/simple").get())
+        out = []
+        for r in rows:
+            up, down = _split_counter(r.get("bytes"))
+            # `target` puede traer varias redes separadas por coma; para el
+            # cruce con el cliente basta la primera, sin la máscara.
+            target = str(r.get("target") or "").split(",")[0].split("/")[0]
+            out.append({
+                "name": str(r.get("name") or ""),
+                "target": target,
+                "upload_bytes": up,
+                "download_bytes": down,
+            })
+        return {"ok": True, "queues": out}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def queue_counters(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                         use_ssl: bool = False, timeout: int = 12) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _queue_counters_sync, host, int(port), user, password, use_ssl, int(timeout),
+    )

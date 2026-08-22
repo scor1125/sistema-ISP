@@ -10,7 +10,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp, RefreshCw, HandCoins } from "lucide-react";
+import { Plus, Trash2, Pencil, DollarSign, Search, X, ArrowUpDown, Filter, Columns3, Activity, ChevronDown, ChevronUp, RefreshCw, HandCoins, MoreHorizontal, Radio, History, BarChart3, ExternalLink } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { PingDialog, AuditDialog, ConsumptionDialog } from "@/components/ClientActions";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import ClientDetail from "@/components/ClientDetail";
@@ -115,6 +119,9 @@ export default function Clients() {
   const [editing, setEditing] = useState(null);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [detail, setDetail] = useState(null); // client whose real-time drawer is open
+  const [pingFor, setPingFor] = useState(null);
+  const [auditFor, setAuditFor] = useState(null);
+  const [consumptionFor, setConsumptionFor] = useState(null);
   const [visibleCols, setVisibleCols] = useState(() => {
     const stored = loadColsFromStorage();
     return stored || new Set(COLUMNS.filter((c) => c.default).map((c) => c.key));
@@ -666,8 +673,43 @@ export default function Clients() {
                             <RefreshCw className="w-4 h-4 text-amber-500" />
                           </Button>
                         )}
-                        <Button size="icon" variant="ghost" title="Tráfico en vivo" onClick={() => setDetail(c)} data-testid={`traffic-${c.id}`}><Activity className="w-4 h-4" /></Button>
-                        <Button size="icon" variant="ghost" title="Registrar pago" onClick={() => navigate(`/pagos?client=${c.id}`)}><DollarSign className="w-4 h-4" /></Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="sm" variant="ghost" title="Más acciones" data-testid={`more-${c.id}`}>
+                              <MoreHorizontal className="w-4 h-4 mr-1" /> Más acciones
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem onClick={() => setDetail(c)} data-testid={`traffic-${c.id}`}>
+                              <Activity className="w-4 h-4 mr-2" /> Tráfico en vivo
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setConsumptionFor(c)} data-testid={`consumption-${c.id}`}>
+                              <BarChart3 className="w-4 h-4 mr-2" /> Resumen de consumo
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              disabled={!c.ip_address}
+                              onClick={() => window.open(`http://${c.ip_address}/`, "_blank", "noopener,noreferrer")}
+                              data-testid={`onu-${c.id}`}
+                            >
+                              <ExternalLink className="w-4 h-4 mr-2" /> Acceso a la ONU
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!c.ip_address}
+                              onClick={() => setPingFor(c)}
+                              data-testid={`ping-${c.id}`}
+                            >
+                              <Radio className="w-4 h-4 mr-2" /> Ping
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => setAuditFor(c)} data-testid={`audit-${c.id}`}>
+                              <History className="w-4 h-4 mr-2" /> Auditoría
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => navigate(`/pagos?client=${c.id}`)} data-testid={`pay-${c.id}`}>
+                              <DollarSign className="w-4 h-4 mr-2" /> Registrar pago
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                         <Button size="icon" variant="ghost" onClick={() => { setEditing(c); setOpen(true); }} data-testid={`edit-${c.id}`}><Pencil className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" onClick={() => remove(c.id)} data-testid={`delete-${c.id}`}><Trash2 className="w-4 h-4 text-destructive" /></Button>
                       </div>
@@ -712,6 +754,16 @@ export default function Clients() {
         open={!!detail}
         onOpenChange={(v) => { if (!v) setDetail(null); }}
       />
+
+      {pingFor && (
+        <PingDialog client={pingFor} open onOpenChange={(v) => { if (!v) setPingFor(null); }} />
+      )}
+      {auditFor && (
+        <AuditDialog client={auditFor} open onOpenChange={(v) => { if (!v) setAuditFor(null); }} />
+      )}
+      {consumptionFor && (
+        <ConsumptionDialog client={consumptionFor} open onOpenChange={(v) => { if (!v) setConsumptionFor(null); }} />
+      )}
     </div>
   );
 }

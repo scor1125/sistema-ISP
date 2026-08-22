@@ -2332,6 +2332,82 @@ async def sync_client_pppoe(cid: str, _: dict = Depends(require_permission("clie
     return res
 
 
+@api.post("/clients/{cid}/ping")
+async def ping_client(cid: str, _: dict = Depends(get_current_user)):
+    """Ping a la ONU del cliente, lanzado desde su propio router: el CRM no
+    tiene ruta hacia la red del cliente, el Mikrotik sí."""
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+    ip = (client.get("ip_address") or "").strip()
+    if not ip:
+        return {"ok": False, "reason": "el cliente no tiene IP asignada"}
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+    try:
+        return await ros_ping(
+            router["host"], port=int(router.get("api_port") or 8728),
+            user=router.get("api_user", ""),
+            password=device_secret(router, "api_password"),
+            use_ssl=bool(router.get("api_use_ssl")),
+            address=ip, count=4,
+        )
+    except MikrotikRosError as e:
+        return {"ok": False, "reason": str(e)[:200]}
+
+
+@api.get("/clients/{cid}/audit")
+async def client_audit(cid: str, _: dict = Depends(get_current_user)):
+    """Historial de cambios confirmados sobre este cliente, del más reciente
+    al más antiguo."""
+    items = await db.audit_log.find(
+        {"collection": "clients", "doc_id": cid}, {"_id": 0},
+    ).sort("at", -1).to_list(500)
+    return {"items": items}
+
+
+@api.get("/clients/{cid}/consumption")
+async def client_consumption(cid: str, _: dict = Depends(get_current_user)):
+    """Consumo del cliente por día, semana y mes, a partir de lo que el
+    recolector viene acumulando (`/cron/collect-traffic`)."""
+    client = await db.clients.find_one({"id": cid}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+
+    today = datetime.now(timezone.utc).date()
+    days = await db.traffic_daily.find(
+        {"client_id": cid}, {"_id": 0, "date": 1, "upload_bytes": 1, "download_bytes": 1},
+    ).sort("date", -1).to_list(400)
+    by_date = {d["date"]: d for d in days}
+
+    def total(since_date) -> dict:
+        iso = since_date.isoformat()
+        up = sum(d.get("upload_bytes", 0) for d in days if d["date"] >= iso)
+        down = sum(d.get("download_bytes", 0) for d in days if d["date"] >= iso)
+        return {"upload_bytes": up, "download_bytes": down, "total_bytes": up + down}
+
+    d0 = by_date.get(today.isoformat(), {})
+    # Últimos 14 días para la gráfica, del más antiguo al más nuevo.
+    series = [
+        {
+            "date": (today - timedelta(days=i)).isoformat(),
+            "upload_bytes": by_date.get((today - timedelta(days=i)).isoformat(), {}).get("upload_bytes", 0),
+            "download_bytes": by_date.get((today - timedelta(days=i)).isoformat(), {}).get("download_bytes", 0),
+        }
+        for i in range(13, -1, -1)
+    ]
+    return {
+        "has_data": bool(days),
+        "today": {"upload_bytes": d0.get("upload_bytes", 0),
+                  "download_bytes": d0.get("download_bytes", 0),
+                  "total_bytes": d0.get("upload_bytes", 0) + d0.get("download_bytes", 0)},
+        "week": total(today - timedelta(days=6)),
+        "month": total(today - timedelta(days=29)),
+        "series": series,
+    }
+
+
 @api.get("/clients/{cid}/live-traffic")
 async def client_live_traffic(cid: str, _: dict = Depends(require_permission("clients", "read"))):
     """Sube/baja real del cliente ahora mismo, leída directo del Mikrotik
@@ -3843,6 +3919,90 @@ async def cron_suspend_overdue(request: Request):
     asyncio.create_task(_run_suspend_overdue(run_id))
     return {"ok": True, "queued_run_id": run_id}
 
+async def _run_collect_traffic() -> dict:
+    """Lee los contadores de todas las Simple Queues de cada router y acumula
+    lo consumido desde la lectura anterior en el bucket del día de cada cliente.
+
+    Se guarda el contador crudo por cliente (`traffic_counters`) y solo el
+    incremento va al día (`traffic_daily`), así el histórico ocupa un documento
+    por cliente y día en vez de una muestra cada pocos minutos. Si el contador
+    baja (el router se reinició o se recreó la cola) ese tramo se descarta en
+    vez de restar.
+    """
+    routers = await db.devices.find({"kind": "mikrotik"}, {"_id": 0}).to_list(200)
+    clients = await db.clients.find(
+        {}, {"_id": 0, "id": 1, "ip_address": 1, "mikrotik_queue_name": 1,
+             "mikrotik_pppoe_secret_name": 1, "pppoe_user": 1},
+    ).to_list(20000)
+
+    by_queue_name, by_ip = {}, {}
+    for c in clients:
+        for key in (c.get("mikrotik_queue_name"), c.get("mikrotik_pppoe_secret_name"),
+                    c.get("pppoe_user")):
+            if key:
+                by_queue_name[str(key)] = c["id"]
+        if c.get("ip_address"):
+            by_ip[c["ip_address"]] = c["id"]
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    matched = errors = 0
+    for r in routers:
+        host, api_user = r.get("host") or "", r.get("api_user") or ""
+        pwd = device_secret(r, "api_password")
+        if not host or host == "-" or not api_user or not pwd:
+            continue
+        try:
+            res = await ros_queue_counters(
+                host, port=int(r.get("api_port") or 8728), user=api_user, password=pwd,
+                use_ssl=bool(r.get("api_use_ssl")),
+            )
+        except MikrotikRosError as e:
+            errors += 1
+            logger.warning("[consumo] %s: %s", r.get("name"), e)
+            continue
+
+        for q in res.get("queues", []):
+            # Las colas del CRM llevan su nombre; las dinámicas de PPPoE se
+            # llaman como el usuario, a veces entre <>. Si nada de eso cuadra,
+            # queda la IP de destino.
+            raw = q["name"].strip().strip("<>")
+            cid = by_queue_name.get(q["name"]) or by_queue_name.get(raw) or by_ip.get(q["target"])
+            if not cid:
+                continue
+            matched += 1
+            prev = await db.traffic_counters.find_one({"client_id": cid}, {"_id": 0})
+            up_delta = down_delta = 0
+            if prev:
+                up_delta = max(0, q["upload_bytes"] - prev.get("upload_bytes", 0))
+                down_delta = max(0, q["download_bytes"] - prev.get("download_bytes", 0))
+            await db.traffic_counters.update_one(
+                {"client_id": cid},
+                {"$set": {"client_id": cid, "upload_bytes": q["upload_bytes"],
+                          "download_bytes": q["download_bytes"], "at": now_iso()}},
+                upsert=True,
+            )
+            if up_delta or down_delta:
+                await db.traffic_daily.update_one(
+                    {"client_id": cid, "date": today},
+                    {"$inc": {"upload_bytes": up_delta, "download_bytes": down_delta},
+                     "$set": {"updated_at": now_iso()}},
+                    upsert=True,
+                )
+
+    return {"ok": True, "routers": len(routers), "matched": matched, "router_errors": errors}
+
+
+@api.post("/cron/collect-traffic")
+async def cron_collect_traffic(request: Request):
+    import hmac
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:] if auth.lower().startswith("bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(401, "Unauthorized cron webhook")
+    return await _run_collect_traffic()
+
+
 @api.get("/cron/runs")
 async def list_cron_runs(_: dict = Depends(require_roles("owner","admin"))):
     """Recent cron run history so the operator can see when auto-billing ran
@@ -3908,6 +4068,9 @@ async def seed():
     await db.clients.create_index("status")
     await db.clients.create_index("portal_pin", unique=True, sparse=True)
     await db.payments.create_index("client_id")
+    await db.audit_log.create_index([("collection", 1), ("doc_id", 1), ("at", -1)])
+    await db.traffic_counters.create_index("client_id", unique=True)
+    await db.traffic_daily.create_index([("client_id", 1), ("date", -1)])
     await db.whatsapp_funnels.create_index("id", unique=True)
     await db.whatsapp_conversations.create_index("phone", unique=True)
     await db.whatsapp.create_index("provider_message_id", sparse=True)
@@ -4684,6 +4847,8 @@ from mikrotik_ros import (  # noqa: E402
     get_queue_rate as ros_get_queue_rate,
     get_pppoe_rate as ros_get_pppoe_rate,
     interface_traffic as ros_interface_traffic,
+    ping as ros_ping,
+    queue_counters as ros_queue_counters,
     MikrotikRosError,
 )
 
@@ -5014,6 +5179,43 @@ async def _effects_on_confirm(collection: str, doc: dict, op: str) -> Optional[s
     return None
 
 
+# Campos que no vale la pena mostrar en la auditoría (ruido de máquina) o que
+# no deben quedar registrados en claro.
+AUDIT_SKIP_FIELDS = {"updated_at", "created_at", PENDING, "portal_pin",
+                     "pppoe_password", "wifi_password",
+                     "mikrotik_queue_synced_at", "mikrotik_pppoe_synced_at",
+                     "mikrotik_queue_error", "mikrotik_pppoe_error"}
+
+
+async def _write_audit(collection: str, doc: dict, op: str) -> None:
+    """Deja constancia de un cambio ya confirmado. Se escribe al confirmar y no
+    al capturar: lo que se descarta nunca pasó, así que no se audita."""
+    meta = doc.get(PENDING) or {}
+    prev = meta.get("prev") or {}
+    changes = []
+    if op == "update":
+        for field, before in prev.items():
+            if field in AUDIT_SKIP_FIELDS:
+                continue
+            after = doc.get(field)
+            if before == after:
+                continue
+            changes.append({"field": field, "from": before, "to": after})
+        if not changes:
+            return  # solo cambió metadata: no ensuciar el historial
+    await db.audit_log.insert_one({
+        "id": new_id(),
+        "collection": collection,
+        "doc_id": doc.get("id"),
+        "op": op,
+        "title": _pending_title(collection, doc),
+        "by": meta.get("by"),
+        "by_name": meta.get("by_name") or "",
+        "at": now_iso(),
+        "changes": changes,
+    })
+
+
 def _pending_title(collection: str, doc: dict) -> str:
     field = STAGED_COLLECTIONS.get(collection, {}).get("title") or "name"
     return str(doc.get(field) or doc.get("full_name") or doc.get("name") or doc.get("id") or "—")
@@ -5066,6 +5268,7 @@ async def apply_pending_changes(_: dict = Depends(require_roles("owner", "admin"
             label = _pending_title(coll, d)
             try:
                 err = await _effects_on_confirm(coll, d, op)
+                await _write_audit(coll, d, op)
                 if op == "delete":
                     await db[coll].delete_one({"id": d["id"]})
                 else:
