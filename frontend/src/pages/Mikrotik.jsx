@@ -22,7 +22,7 @@ import {
 import {
   Plus, Router as RouterIcon, Pencil, Trash2, Radio, Cpu, Copy,
   CheckCircle2, XCircle, Terminal, ChevronDown, ChevronUp, KeyRound,
-  ShieldCheck, Loader2, FileCode, RefreshCw, Ban, Wifi,
+  ShieldCheck, Loader2, FileCode, RefreshCw, Ban, Wifi, Network, Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -295,6 +295,176 @@ function PppoeServerDialog({ device, open, onOpenChange, onDone }) {
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
           <Button onClick={submit} disabled={saving} data-testid="pppoe-srv-save">
             {saving ? "Configurando…" : "Configurar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ============================================================
+   Qué interfaces usa este router y con qué papel (LAN / WAN)
+   ============================================================ */
+const ROLE_OPTS = [
+  { value: "none", label: "No usar", cls: "" },
+  { value: "lan",  label: "LAN",     cls: "bg-sky-500/15 text-sky-400 border-sky-500/40" },
+  { value: "wan",  label: "WAN",     cls: "bg-amber-500/15 text-amber-400 border-amber-500/40" },
+];
+
+function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
+  const [roles, setRoles] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // Copia local del router: al sincronizar dentro del diálogo se actualiza
+  // aquí mismo sin tener que cerrarlo y recargar toda la tabla.
+  const [dev, setDev] = useState(device);
+
+  useEffect(() => {
+    if (!open || !device) return;
+    setDev(device);
+    const next = {};
+    (device.lan_interfaces || []).forEach((i) => { next[i] = "lan"; });
+    (device.wan_interfaces || []).forEach((i) => { next[i] = "wan"; });
+    setRoles(next);
+  }, [open, device]);
+
+  // Las que el router reporta, más las guardadas que ya no existen (para
+  // poder verlas y quitarlas en vez de que desaparezcan calladas).
+  const rows = useMemo(() => {
+    const real = dev?.interfaces || [];
+    const saved = Object.keys(roles);
+    const stale = saved.filter((i) => !real.includes(i));
+    return [
+      ...real.map((name) => ({ name, stale: false })),
+      ...stale.map((name) => ({ name, stale: true })),
+    ];
+  }, [dev, roles]);
+
+  const counts = useMemo(() => {
+    const vals = Object.values(roles);
+    return { lan: vals.filter((v) => v === "lan").length, wan: vals.filter((v) => v === "wan").length };
+  }, [roles]);
+
+  const setRole = (name, value) =>
+    setRoles((r) => {
+      const next = { ...r };
+      if (value === "none") delete next[name];
+      else next[name] = value;
+      return next;
+    });
+
+  const sync = async () => {
+    if (!dev) return;
+    setSyncing(true);
+    try {
+      const { data } = await api.post(`/devices/${dev.id}/sync-interfaces`);
+      setDev((d) => ({
+        ...d, interfaces: data.interfaces, interface_networks: data.interface_networks,
+        interfaces_synced_at: data.synced_at,
+      }));
+      toast.success(`${data.interfaces.length} interfaces traídas del router`);
+      onDone?.();
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setSyncing(false); }
+  };
+
+  const submit = async () => {
+    const lan = Object.keys(roles).filter((k) => roles[k] === "lan");
+    const wan = Object.keys(roles).filter((k) => roles[k] === "wan");
+    if (lan.length === 0 &&
+        !window.confirm(
+          "No marcaste ninguna interfaz como LAN.\n\n" +
+          "Sin interfaces LAN, al dar de alta un cliente en este router se " +
+          "mostrarán todas las del router. ¿Guardar así?"
+        )) return;
+    setSaving(true);
+    try {
+      await api.put(`/devices/${dev.id}/interface-roles`, { lan, wan });
+      toast.success(`Guardado: ${lan.length} LAN · ${wan.length} WAN`);
+      onDone?.();
+      onOpenChange(false);
+    } catch (e) { toast.error(formatApiError(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Network className="w-4 h-4 text-primary" />
+            Interfaces de "{dev?.name}"
+          </DialogTitle>
+          <DialogDescription>
+            Marca solo las interfaces que de verdad usas en este router. Las{" "}
+            <b className="text-sky-400">LAN</b> son donde cuelgan los clientes: son las
+            únicas que aparecerán en el campo "Interfaz" al dar de alta un cliente en
+            este servidor. Las <b className="text-amber-400">WAN</b> son las salidas a
+            internet — puedes marcar varias si tienes redundancia.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 text-xs">
+            <Badge variant="outline" className="border-sky-500/40 text-sky-400">
+              <Network className="w-3 h-3 mr-1" /> {counts.lan} LAN
+            </Badge>
+            <Badge variant="outline" className="border-amber-500/40 text-amber-400">
+              <Globe className="w-3 h-3 mr-1" /> {counts.wan} WAN
+            </Badge>
+          </div>
+          <Button size="sm" variant="outline" onClick={sync} disabled={syncing}
+            data-testid="mk-iface-sync" title="Traer las interfaces reales del router">
+            {syncing
+              ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+            Sincronizar del router
+          </Button>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="rounded-md border border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+            Sin interfaces todavía — presiona <b>Sincronizar del router</b> para traerlas.
+          </div>
+        ) : (
+          <div className="rounded-md border border-border divide-y divide-border">
+            {rows.map(({ name, stale }) => {
+              const net = dev?.interface_networks?.[name]?.join(", ");
+              const role = roles[name] || "none";
+              return (
+                <div key={name} className="flex items-center justify-between gap-3 p-2 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="font-mono text-sm truncate">{name}</div>
+                    <div className="text-[11px] text-muted-foreground font-mono">
+                      {stale
+                        ? <span className="text-amber-500">ya no existe en el router</span>
+                        : (net || "sin IP configurada")}
+                    </div>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    {ROLE_OPTS.map((o) => (
+                      <Button
+                        key={o.value}
+                        size="sm"
+                        variant={role === o.value ? "default" : "outline"}
+                        className={role === o.value && o.cls ? `border ${o.cls}` : ""}
+                        onClick={() => setRole(name, o.value)}
+                        data-testid={`mk-iface-${name}-${o.value}`}
+                      >
+                        {o.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={submit} disabled={saving || rows.length === 0} data-testid="mk-iface-save">
+            {saving ? "Guardando…" : "Guardar"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -744,6 +914,7 @@ export default function Mikrotik() {
   const [scripting, setScripting] = useState(null);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [pppoeSrvDevice, setPppoeSrvDevice] = useState(null);
+  const [ifaceDevice, setIfaceDevice] = useState(null);
   const [askDelete, setAskDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -870,6 +1041,20 @@ export default function Mikrotik() {
                     )}
                   </div>
                   {d.notes && <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{d.notes}</div>}
+                  {(d.lan_interfaces?.length > 0 || d.wan_interfaces?.length > 0) && (
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      {d.lan_interfaces?.length > 0 && (
+                        <Badge variant="outline" className="text-[9px] border-sky-500/40 text-sky-400">
+                          {d.lan_interfaces.length} LAN
+                        </Badge>
+                      )}
+                      {d.wan_interfaces?.length > 0 && (
+                        <Badge variant="outline" className="text-[9px] border-amber-500/40 text-amber-400">
+                          {d.wan_interfaces.length} WAN
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="font-mono text-xs">
                   {d.host && d.host !== "-" ? d.host : <span className="text-muted-foreground italic">sin vincular</span>}
@@ -908,6 +1093,11 @@ export default function Mikrotik() {
                     title="Reglas de corte por mora para pegar en este router">
                     <Ban className="w-3.5 h-3.5 mr-1" /> Reglas de corte
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => setIfaceDevice(d)}
+                    data-testid={`mk-ifaces-${d.id}`} className="mr-1"
+                    title="Elegir qué interfaces usa este router y cuáles son LAN o WAN">
+                    <Network className="w-3.5 h-3.5 mr-1" /> Interfaces
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => setPppoeSrvDevice(d)}
                     data-testid={`mk-pppoe-srv-${d.id}`} className="mr-1"
                     title="Configurar el servidor PPPoE de este router (una vez)">
@@ -945,6 +1135,9 @@ export default function Mikrotik() {
       />
 
       <OverdueRulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
+
+      <InterfaceRolesDialog device={ifaceDevice} open={!!ifaceDevice}
+        onOpenChange={(v) => { if (!v) setIfaceDevice(null); }} onDone={load} />
 
       <PppoeServerDialog device={pppoeSrvDevice} open={!!pppoeSrvDevice}
         onOpenChange={(v) => { if (!v) setPppoeSrvDevice(null); }} onDone={load} />

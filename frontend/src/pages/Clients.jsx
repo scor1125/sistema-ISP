@@ -300,18 +300,29 @@ export default function Clients() {
     },
     { name: "mikrotik_interface", label: "Interfaz", type: "select",
       hidden: (v) => v.connection_mode === "pppoe",
+      // Si en el menú Mikrotik ya se marcó qué interfaces son LAN, solo esas
+      // aparecen aquí (es donde cuelgan los clientes). Si no se marcó nada
+      // todavía, se muestran todas las del router como antes.
       options: (v) => {
         const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
-        const list = (mk?.interfaces && mk.interfaces.length > 0)
-          ? mk.interfaces
-          : ["ether1","ether2","ether3","ether4","bridge","vlan-clientes","pppoe-out1","wg-crm"];
-        return list.map((i) => ({ value: i, label: i }));
+        const list = (mk?.lan_interfaces?.length > 0 && mk.lan_interfaces)
+          || (mk?.interfaces?.length > 0 && mk.interfaces)
+          || ["ether1","ether2","ether3","ether4","bridge","vlan-clientes","pppoe-out1","wg-crm"];
+        // Una interfaz ya guardada en el cliente no debe desaparecer del
+        // selector aunque hoy no esté marcada como LAN.
+        const withCurrent = v.mikrotik_interface && !list.includes(v.mikrotik_interface)
+          ? [v.mikrotik_interface, ...list]
+          : list;
+        return withCurrent.map((i) => ({ value: i, label: i }));
       },
       hint: (v) => {
         const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
         if (!mk) return "Elige primero el servidor Mikrotik.";
+        if (mk.lan_interfaces?.length) {
+          return `${mk.lan_interfaces.length} interfaces LAN de "${mk.name}" · cámbialas en el menú Mikrotik → Interfaces.`;
+        }
         return mk.interfaces?.length
-          ? `${mk.interfaces.length} interfaces reales de "${mk.name}"${mk.interfaces_synced_at ? " · sincronizado " + new Date(mk.interfaces_synced_at).toLocaleString() : ""}.`
+          ? `${mk.interfaces.length} interfaces reales de "${mk.name}"${mk.interfaces_synced_at ? " · sincronizado " + new Date(mk.interfaces_synced_at).toLocaleString() : ""}. Marca cuáles son LAN en el menú Mikrotik → Interfaces.`
           : `Mostrando una lista genérica — presiona sincronizar para traer las interfaces reales de "${mk.name}".`;
       },
       syncTitle: "Traer las interfaces reales del router",

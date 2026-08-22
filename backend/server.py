@@ -1460,6 +1460,54 @@ async def mikrotik_sync_interfaces(device_id: str,
     }
 
 
+class InterfaceRolesIn(BaseModel):
+    lan: List[str] = []
+    wan: List[str] = []
+
+
+@api.put("/devices/{device_id}/interface-roles")
+async def mikrotik_set_interface_roles(device_id: str, payload: InterfaceRolesIn,
+                                       _: dict = Depends(require_roles("owner", "admin"))):
+    """Guarda qué interfaces del router se usan de verdad y con qué papel.
+
+    Un router puede tener veinte interfaces y el operador usar dos. Aquí se
+    marca cuáles son LAN (donde cuelgan los clientes — son las únicas que
+    aparecen luego en el selector "Interfaz" del cliente) y cuáles WAN (salidas
+    a internet; se permiten varias para redundancia)."""
+    d = await db.devices.find_one({"id": device_id, "kind": "mikrotik"}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Mikrotik no encontrado")
+
+    def _clean(names: List[str]) -> List[str]:
+        seen, out = set(), []
+        for n in names:
+            n = (n or "").strip()
+            if n and n not in seen:
+                seen.add(n)
+                out.append(n)
+        return out
+
+    lan, wan = _clean(payload.lan), _clean(payload.wan)
+
+    both = [n for n in lan if n in set(wan)]
+    if both:
+        raise HTTPException(400, f"Una interfaz no puede ser LAN y WAN a la vez: {', '.join(both)}")
+
+    # Solo se valida contra el router si ya se sincronizaron sus interfaces;
+    # si todavía no, se guarda tal cual para no bloquear la configuración.
+    known = d.get("interfaces") or []
+    if known:
+        unknown = [n for n in lan + wan if n not in set(known)]
+        if unknown:
+            raise HTTPException(400, f"Estas interfaces no existen en el router: {', '.join(unknown)}")
+
+    await db.devices.update_one({"id": device_id}, {"$set": {
+        "lan_interfaces": lan, "wan_interfaces": wan,
+        "interface_roles_set_at": now_iso(), "updated_at": now_iso(),
+    }})
+    return {"ok": True, "lan_interfaces": lan, "wan_interfaces": wan}
+
+
 @api.post("/devices/{device_id}/pppoe-server")
 async def mikrotik_create_pppoe_server(device_id: str, payload: dict,
                                        _: dict = Depends(require_roles("owner", "admin"))):
