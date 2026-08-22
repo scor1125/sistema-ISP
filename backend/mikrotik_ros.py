@@ -717,3 +717,122 @@ async def remove_ppp_secret(host: str, *, port: int = DEFAULT_API_PORT, user: st
     return await asyncio.to_thread(
         _ppp_secret_sync, host, int(port), user, password, use_ssl, int(timeout), "remove", name,
     )
+
+
+# --------------------------------------------------------------------------
+# Tráfico en vivo (panel "Tráfico en vivo" de cada cliente)
+# --------------------------------------------------------------------------
+def _bps_to_mbps(raw) -> float:
+    try:
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        return round(int(raw) / 1_000_000, 2)
+    except Exception:
+        return 0.0
+
+
+def _queue_rate_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                     timeout: int, name: str) -> Dict[str, Any]:
+    """Lee el `rate` (bps subida/bajada) que RouterOS ya calcula solo para cada
+    Simple Queue — no hace falta medir con dos muestras, el router lo trae."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/queue/simple")
+        rows = list(res.get(name=name))
+        if not rows:
+            return {"ok": False, "reason": "la cola ya no existe en el router"}
+        rx_raw, _, tx_raw = (rows[0].get("rate") or "0/0").partition("/")
+        return {"ok": True, "rx_mbps": _bps_to_mbps(rx_raw), "tx_mbps": _bps_to_mbps(tx_raw)}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def get_queue_rate(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                         name: str, use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not name:
+        raise MikrotikRosError("El cliente no tiene cola asignada")
+    return await asyncio.to_thread(
+        _queue_rate_sync, host, int(port), user, password, use_ssl, int(timeout), name,
+    )
+
+
+def _pppoe_rate_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                     timeout: int, username: str) -> Dict[str, Any]:
+    """Si el cliente PPPoE está conectado, mide su interfaz dinámica en vivo
+    con `/interface monitor-traffic`. Sin sesión activa no hay nada que medir
+    (el cliente está desconectado, no es un error)."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        api = pool.get_api()
+        actives = list(api.get_resource("/ppp/active").get(name=username))
+        if not actives:
+            return {"ok": True, "online": False, "rx_mbps": 0.0, "tx_mbps": 0.0}
+        iface = (actives[0].get("interface") or "").strip() or f"<pppoe-{username}>"
+
+        bres = api.get_binary_resource("/interface")
+        rows = list(bres.call("monitor-traffic", {"once": "", "interface": iface}))
+        if not rows:
+            return {"ok": True, "online": True, "rx_mbps": 0.0, "tx_mbps": 0.0}
+        row = rows[0]
+        rx = row.get("rx-bits-per-second", 0)
+        tx = row.get("tx-bits-per-second", 0)
+        return {"ok": True, "online": True, "rx_mbps": _bps_to_mbps(rx), "tx_mbps": _bps_to_mbps(tx)}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def get_pppoe_rate(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                         username: str, use_ssl: bool = False, timeout: int = 8) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not username:
+        raise MikrotikRosError("El cliente no tiene usuario PPPoE")
+    return await asyncio.to_thread(
+        _pppoe_rate_sync, host, int(port), user, password, use_ssl, int(timeout), username,
+    )

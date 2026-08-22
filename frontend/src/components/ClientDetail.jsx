@@ -16,16 +16,15 @@ const TX = "hsl(160 84% 42%)";
 const TOOLTIP = { background: "hsl(240 10% 8%)", border: "1px solid hsl(240 10% 15%)", borderRadius: 6 };
 
 /**
- * Real-time traffic drawer for a client.
- *
- * Traffic values come from /api/onus (mocked deterministic per-client). We
- * poll every 2.5s and add a small ±15% jitter locally so the chart looks
- * live. When the OLT/Mikrotik integrations land, replace the polling source
- * without touching the UI.
+ * Panel de tráfico en vivo de un cliente, leído directo del Mikrotik: en modo
+ * Queue viene del `rate` que RouterOS ya calcula para su Simple Queue; en
+ * modo PPPoE se mide con `monitor-traffic` sobre la interfaz de su sesión
+ * activa (si no está conectado, se muestra "Desconectado", no ceros falsos).
  */
 export default function ClientDetail({ client, open, onOpenChange }) {
   const [series, setSeries] = useState([]);
   const [current, setCurrent] = useState(null);
+  const [error, setError] = useState("");
   const timerRef = useRef(null);
   const navigate = useNavigate();
 
@@ -35,28 +34,31 @@ export default function ClientDetail({ client, open, onOpenChange }) {
 
     const tick = async () => {
       try {
-        const { data } = await api.get("/onus");
-        const onu = data.find((o) => o.client_id === client.id);
-        if (!onu || cancelled) return;
-        // Add ±15% jitter for a lifelike waveform
-        const jitter = (v) => Math.max(0, +(v * (0.85 + Math.random() * 0.30)).toFixed(2));
+        const { data } = await api.get(`/clients/${client.id}/live-traffic`);
+        if (cancelled) return;
+        if (!data.ok) {
+          setError(data.reason || "No se pudo leer el tráfico");
+          setCurrent(null);
+          return;
+        }
+        setError("");
         const point = {
           t: new Date().toLocaleTimeString().slice(0, 8),
-          rx: jitter(onu.rx_mbps),
-          tx: jitter(onu.tx_mbps),
-          power: onu.power_dbm,
-          ip: onu.ip_address,
-          serial: onu.onu_serial,
-          server: onu.mikrotik_server,
+          rx: data.rx_mbps ?? 0,
+          tx: data.tx_mbps ?? 0,
+          online: data.online,
         };
         setCurrent(point);
         setSeries((s) => [...s.slice(-30), point]);
       } catch (e) {
+        if (!cancelled) setError("No se pudo leer el tráfico");
         console.error("traffic poll failed", e);
       }
     };
 
     setSeries([]);
+    setCurrent(null);
+    setError("");
     tick();
     timerRef.current = setInterval(tick, 2500);
     return () => {
@@ -67,12 +69,14 @@ export default function ClientDetail({ client, open, onOpenChange }) {
   }, [open, client?.id]);
 
   const powerTone = useMemo(() => {
-    const p = current?.power;
+    const p = client?.onu_power_dbm;
     if (p == null) return "text-muted-foreground";
     if (p > -8 || p < -27) return "text-red-400";
     if (p > -12 || p < -25) return "text-amber-400";
     return "text-emerald-400";
-  }, [current]);
+  }, [client]);
+
+  const isPppoeOffline = client?.connection_mode === "pppoe" && current?.online === false;
 
   if (!client) return null;
 
@@ -126,18 +130,27 @@ export default function ClientDetail({ client, open, onOpenChange }) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           <Kpi icon={Wifi} label="RX ahora" value={current ? `${current.rx} Mbps` : "…"} tone="info" />
           <Kpi icon={Wifi} label="TX ahora" value={current ? `${current.tx} Mbps` : "…"} tone="success" />
-          <Kpi icon={Gauge} label="Potencia ONU" value={current?.power != null ? `${current.power} dBm` : "…"} toneCls={powerTone} />
-          <Kpi icon={Router} label="Servidor" value={current?.server || client.mikrotik_server || "—"} />
+          <Kpi icon={Gauge} label="Potencia ONU" value={client.onu_power_dbm != null ? `${client.onu_power_dbm} dBm` : "—"} toneCls={powerTone} />
+          <Kpi icon={Router} label="Servidor" value={client.mikrotik_server || "—"} />
         </div>
 
         {/* Chart */}
         <div className="mt-4 rounded-md border border-border bg-card p-4">
           <div className="flex items-baseline justify-between mb-2">
             <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Tráfico en vivo</div>
-            <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              actualizando cada 2.5s
-            </div>
+            {isPppoeOffline ? (
+              <div className="text-[11px] text-red-400 font-mono flex items-center gap-1">
+                <WifiOff className="w-3 h-3" />
+                desconectado
+              </div>
+            ) : error ? (
+              <div className="text-[11px] text-amber-400 font-mono">{error}</div>
+            ) : (
+              <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                actualizando cada 2.5s
+              </div>
+            )}
           </div>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
@@ -156,8 +169,8 @@ export default function ClientDetail({ client, open, onOpenChange }) {
 
         {/* Facts */}
         <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          <Row label="IP" value={<span className="font-mono">{current?.ip || client.ip_address || "—"}</span>} />
-          <Row label="Serial ONU" value={<span className="font-mono">{current?.serial || "—"}</span>} />
+          <Row label="IP" value={<span className="font-mono">{client.ip_address || "—"}</span>} />
+          <Row label="Serial ONU" value={<span className="font-mono">{client.onu_serial || "—"}</span>} />
           <Row label="Teléfono" value={<span className="font-mono">{client.phone || "—"}</span>} />
           <Row label="Comunidad" value={client.community || "—"} />
           <Row label="Día de pago" value={`Día ${client.payment_day}`} />

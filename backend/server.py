@@ -2201,6 +2201,36 @@ async def sync_client_pppoe(cid: str, _: dict = Depends(require_permission("clie
     return res
 
 
+@api.get("/clients/{cid}/live-traffic")
+async def client_live_traffic(cid: str, _: dict = Depends(require_permission("clients", "read"))):
+    """Sube/baja real del cliente ahora mismo, leída directo del Mikrotik
+    (Simple Queue trae su propio `rate` calculado; PPPoE se mide con
+    `monitor-traffic` sobre la interfaz de su sesión activa, si está conectado)."""
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+    router = await _router_for_client(client)
+    if not router:
+        return {"ok": False, "reason": "no se pudo determinar el router del cliente"}
+    router_kwargs = dict(
+        host=router["host"], port=int(router.get("api_port") or 8728),
+        user=router.get("api_user", ""), password=device_secret(router, "api_password"),
+        use_ssl=bool(router.get("api_use_ssl")),
+    )
+    try:
+        if client.get("connection_mode") == "pppoe":
+            username = (client.get("pppoe_user") or "").strip()
+            if not username:
+                return {"ok": False, "reason": "el cliente no tiene usuario PPPoE"}
+            res = await ros_get_pppoe_rate(**router_kwargs, username=username)
+        else:
+            name = client.get("mikrotik_queue_name") or _queue_name_for(client)
+            res = await ros_get_queue_rate(**router_kwargs, name=name)
+        return res
+    except MikrotikRosError as e:
+        return {"ok": False, "reason": str(e)[:200]}
+
+
 @api.post("/clients/apply-changes")
 async def apply_all_client_changes(_: dict = Depends(require_roles("owner", "admin"))):
     """Botón "Aplicar Cambios": recorre todos los clientes y sincroniza su
@@ -4548,6 +4578,8 @@ from mikrotik_ros import (  # noqa: E402
     ensure_ppp_profile as ros_ensure_ppp_profile,
     set_ppp_secret as ros_set_ppp_secret,
     remove_ppp_secret as ros_remove_ppp_secret,
+    get_queue_rate as ros_get_queue_rate,
+    get_pppoe_rate as ros_get_pppoe_rate,
     MikrotikRosError,
 )
 
