@@ -1038,3 +1038,185 @@ async def queue_counters(host: str, *, port: int = DEFAULT_API_PORT, user: str, 
     return await asyncio.to_thread(
         _queue_counters_sync, host, int(port), user, password, use_ssl, int(timeout),
     )
+
+
+def _norm_mac(mac: str) -> str:
+    return str(mac or "").strip().upper().replace("-", ":")
+
+
+def _arp_lookup_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                     timeout: int, address: str) -> Dict[str, Any]:
+    """Busca en la tabla ARP del router qué MAC está usando una IP ahora mismo."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        rows = list(pool.get_api().get_resource("/ip/arp").get(address=address))
+        if not rows:
+            return {"ok": False, "reason": f"{address} no aparece en la tabla ARP del router — "
+                                           "revisa que la ONU esté encendida y conectada"}
+        # Si hubiera varias, la completa manda: una entrada incompleta es una
+        # consulta ARP que nunca tuvo respuesta.
+        row = next((r for r in rows if str(r.get("complete")).lower() == "true"), rows[0])
+        return {
+            "ok": True,
+            "address": address,
+            "mac": _norm_mac(row.get("mac-address")),
+            "interface": str(row.get("interface") or ""),
+            "already_static": str(row.get("dynamic")).lower() == "false",
+        }
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def arp_lookup(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                     address: str, use_ssl: bool = False, timeout: int = 10) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not address:
+        raise MikrotikRosError("No se indicó la IP a buscar")
+    return await asyncio.to_thread(
+        _arp_lookup_sync, host, int(port), user, password, use_ssl, int(timeout), address,
+    )
+
+
+def _arp_bind_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                   timeout: int, address: str, mac: str, interface: str) -> Dict[str, Any]:
+    """Amarra una IP a una MAC con una entrada ARP estática, para que esa IP
+    solo funcione desde esa ONU: el router mandará el tráfico de vuelta a la
+    MAC amarrada, así que otra ONU que se ponga esa misma IP se queda sin
+    servicio."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/ip/arp")
+        mac = _norm_mac(mac)
+        existing = list(res.get(address=address))
+
+        # La interfaz no se adivina: si no viene dada, se usa la que el router
+        # ya vio para esa IP.
+        iface = interface or next((str(r.get("interface")) for r in existing if r.get("interface")), "")
+        if not iface:
+            return {"ok": False, "reason": "no se pudo determinar la interfaz para el amarre"}
+
+        static = [r for r in existing if str(r.get("dynamic")).lower() == "false"]
+        if static:
+            rid = static[0].get("id") or static[0].get(".id")
+            res.set(id=rid, address=address, **{"mac-address": mac}, interface=iface)
+            return {"ok": True, "action": "updated", "address": address, "mac": mac, "interface": iface}
+
+        # Una entrada dinámica no se puede convertir: se borra y se pone la
+        # estática en su lugar (el router la vuelve a aprender si hiciera falta).
+        for r in existing:
+            rid = r.get("id") or r.get(".id")
+            if rid:
+                try:
+                    res.remove(id=rid)
+                except Exception:
+                    pass
+        res.add(address=address, **{"mac-address": mac}, interface=iface)
+        return {"ok": True, "action": "created", "address": address, "mac": mac, "interface": iface}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except routeros_api.exceptions.RouterOsApiCommunicationError as e:
+        raise MikrotikRosError(f"Autenticación falló — revisa usuario/contraseña API: {e}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def arp_bind(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                   address: str, mac: str, interface: str = "", use_ssl: bool = False,
+                   timeout: int = 10) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    if not address or not mac:
+        raise MikrotikRosError("Hacen falta la IP y la MAC para amarrar")
+    return await asyncio.to_thread(
+        _arp_bind_sync, host, int(port), user, password, use_ssl, int(timeout),
+        address, mac, interface,
+    )
+
+
+def _arp_unbind_sync(host: str, port: int, user: str, password: str, use_ssl: bool,
+                     timeout: int, address: str) -> Dict[str, Any]:
+    """Quita el amarre estático de una IP. Solo toca entradas estáticas: las
+    dinámicas son del funcionamiento normal del router."""
+    pool = None
+    try:
+        pool = routeros_api.RouterOsApiPool(
+            host=host, username=user, password=password, port=port,
+            use_ssl=use_ssl, plaintext_login=True,
+            ssl_verify=False, ssl_verify_hostname=False,
+        )
+        try:
+            pool.socket_timeout = timeout
+        except Exception:
+            pass
+        res = pool.get_api().get_resource("/ip/arp")
+        removed = 0
+        for r in res.get(address=address):
+            if str(r.get("dynamic")).lower() == "false":
+                rid = r.get("id") or r.get(".id")
+                if rid:
+                    res.remove(id=rid)
+                    removed += 1
+        return {"ok": True, "removed": removed}
+    except routeros_api.exceptions.RouterOsApiConnectionError as e:
+        detail = str(e).strip() or f"el puerto {port} no respondió con la API de RouterOS"
+        raise MikrotikRosError(f"No se pudo conectar a {host}:{port} — {detail}") from e
+    except MikrotikRosError:
+        raise
+    except Exception as e:
+        raise MikrotikRosError(f"{type(e).__name__}: {e}") from e
+    finally:
+        try:
+            if pool is not None:
+                pool.disconnect()
+        except Exception:
+            pass
+
+
+async def arp_unbind(host: str, *, port: int = DEFAULT_API_PORT, user: str, password: str,
+                     address: str, use_ssl: bool = False, timeout: int = 10) -> Dict[str, Any]:
+    if not host or not user or not password:
+        raise MikrotikRosError("Faltan host, usuario o contraseña API del router")
+    return await asyncio.to_thread(
+        _arp_unbind_sync, host, int(port), user, password, use_ssl, int(timeout), address,
+    )

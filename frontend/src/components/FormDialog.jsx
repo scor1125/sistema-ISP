@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,13 +6,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import { SearchableSelect } from "@/components/SearchableSelect";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { api, formatApiError } from "@/lib/api";
 import { toast } from "sonner";
-import { ChevronDown, X, Search, Wifi, AlertTriangle, RefreshCw } from "lucide-react";
+import { ChevronDown, X, Search, RefreshCw } from "lucide-react";
 
 /**
  * Reusable form dialog. `fields`: [{name,label,type,options?,placeholder?,required?,hint?,suggestions?}]
@@ -208,7 +206,7 @@ function FieldControl({ field, value, onChange, inputId, values }) {
 
   if (field.type === "mac-picker") {
     return (
-      <MacPickerField field={field} value={value} onChange={onChange} testId={testId} inputId={inputId} />
+      <MacPickerField field={field} value={value} onChange={onChange} testId={testId} inputId={inputId} values={values} />
     );
   }
 
@@ -359,44 +357,36 @@ function MultiSelectField({ field, value, onChange, testId, values }) {
   );
 }
 
-function MacPickerField({ field, value, onChange, testId, inputId }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [items, setItems] = useState([]);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState("unassigned"); // all | assigned | unassigned
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/onus");
-      setItems(data);
-    } catch (e) { toast.error(formatApiError(e)); }
-    setLoading(false);
-  };
-
-  useEffect(() => { if (pickerOpen) load(); }, [pickerOpen]);
-
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    let out = items;
-    if (filter === "assigned") out = out.filter((x) => x.status === "active");
-    else if (filter === "unassigned") out = out.filter((x) => x.status !== "active");
-    if (s) out = out.filter((x) =>
-      (x.mac || "").toLowerCase().includes(s) ||
-      (x.onu_serial || "").toLowerCase().includes(s) ||
-      (x.full_name || "").toLowerCase().includes(s) ||
-      (x.ip_address || "").toLowerCase().includes(s)
-    );
-    return out;
-  }, [items, q, filter]);
+function MacPickerField({ field, value, onChange, testId, inputId, values }) {
+  const [looking, setLooking] = useState(false);
+  const [found, setFound] = useState(null);
 
   const isValidMac = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(String(value || "").trim());
+  const ip = (values?.ip_address || "").trim();
+  const server = values?.mikrotik_server || "";
 
-  const pick = (mac) => {
-    onChange(field.name, String(mac).toLowerCase());
-    setPickerOpen(false);
-    toast.success(`MAC ${mac} agregada`);
+  /* Busca en la tabla ARP del router qué MAC está usando la IP del cliente
+     ahora mismo. Solo consulta: el amarre de esa IP a esa MAC lo escribe el
+     backend al confirmar desde "Aplicar Cambios", como todo lo que toca el
+     router. */
+  const lookup = async () => {
+    if (!ip) { toast.error("Primero asigna la IP del cliente"); return; }
+    if (!server) { toast.error("Primero elige el servidor Mikrotik"); return; }
+    setLooking(true);
+    setFound(null);
+    try {
+      const { data } = await api.post("/mikrotik/arp-lookup", {
+        ip_address: ip, mikrotik_server: server,
+      });
+      if (!data.ok) { toast.error(data.reason || "No se encontró la MAC"); return; }
+      onChange(field.name, String(data.mac).toLowerCase());
+      setFound(data);
+      toast.success(`MAC ${data.mac} encontrada en ${data.interface}`);
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setLooking(false);
+    }
   };
 
   return (
@@ -413,90 +403,30 @@ function MacPickerField({ field, value, onChange, testId, inputId }) {
         <Button
           type="button"
           variant="outline"
-          size="sm"
-          onClick={() => setPickerOpen(true)}
+          size="icon"
+          onClick={lookup}
+          disabled={looking}
+          title={ip
+            ? `Buscar en la tabla ARP del router qué MAC usa ${ip} y amarrarla a esa IP`
+            : "Asigna primero la IP del cliente"}
           data-testid={`${testId}-search-btn`}
-          className="shrink-0 gap-1"
+          className="shrink-0"
         >
-          <Search className="w-4 h-4" /> Buscar
+          {looking ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
         </Button>
       </div>
+
       {value && (
         <div className={`text-[10px] font-mono ${isValidMac ? "text-emerald-400" : "text-amber-400"}`}>
           {isValidMac ? "✓ Formato MAC válido" : "⚠ Formato esperado: aa:bb:cc:dd:ee:ff"}
         </div>
       )}
-
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Wifi className="w-4 h-4 text-primary" /> Buscar MAC de la ONU
-            </DialogTitle>
-            <DialogDescription>
-              Elige la MAC detectada por la OLT para amarrarla a la IP del cliente.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Input
-                autoFocus
-                data-testid={`${testId}-picker-search`}
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Buscar por MAC, serial, cliente o IP…"
-                className="h-9 text-sm"
-              />
-              <select
-                data-testid={`${testId}-picker-filter`}
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-2 text-xs"
-              >
-                <option value="unassigned">Sin asignar</option>
-                <option value="all">Todas</option>
-                <option value="assigned">Solo activas</option>
-              </select>
-            </div>
-            <ScrollArea className="h-80 rounded-md border border-border">
-              {loading && <div className="p-4 text-center text-xs text-muted-foreground">Buscando ONUs…</div>}
-              {!loading && filtered.length === 0 && (
-                <div className="p-6 text-center text-xs text-muted-foreground">
-                  <AlertTriangle className="w-6 h-6 mx-auto mb-2 text-amber-400" />
-                  No se encontraron MACs con ese criterio.
-                </div>
-              )}
-              <div className="divide-y divide-border">
-                {filtered.map((o, idx) => (
-                  <button
-                    type="button"
-                    key={o.client_id || idx}
-                    onClick={() => pick(o.mac)}
-                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-accent transition-colors"
-                    data-testid={`${testId}-picker-item-${o.mac}`}
-                  >
-                    <span className={`w-2 h-2 rounded-full ${o.status === "active" ? "bg-emerald-400" : "bg-slate-500"}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-mono text-xs text-primary">{o.mac}</div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        <span className="font-medium text-foreground">{o.full_name || "—"}</span>
-                        {o.onu_serial && <> · SN <code>{o.onu_serial}</code></>}
-                        {o.ip_address && <> · IP {o.ip_address}</>}
-                      </div>
-                    </div>
-                    <Badge variant="outline" className="text-[9px] uppercase font-mono">
-                      {o.status || "—"}
-                    </Badge>
-                  </button>
-                ))}
-              </div>
-            </ScrollArea>
-            <div className="text-[10px] text-muted-foreground font-mono">
-              {filtered.length} MACs mostradas
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {found && (
+        <div className="text-[10px] font-mono text-muted-foreground">
+          Vista en <span className="text-primary">{found.interface}</span> · al guardar, esta IP
+          solo dará servicio a esta ONU
+        </div>
+      )}
     </div>
   );
 }

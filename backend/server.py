@@ -2332,6 +2332,38 @@ async def sync_client_pppoe(cid: str, _: dict = Depends(require_permission("clie
     return res
 
 
+class ArpLookupIn(BaseModel):
+    ip_address: str
+    mikrotik_server: Optional[str] = ""
+
+
+@api.post("/mikrotik/arp-lookup")
+async def mikrotik_arp_lookup(payload: ArpLookupIn, _: dict = Depends(get_current_user)):
+    """Qué MAC está usando una IP ahora mismo, según la tabla ARP del router.
+
+    Solo consulta: el amarre de verdad (la entrada ARP estática) se escribe al
+    confirmar desde "Aplicar Cambios", como el resto de lo que toca el router.
+    """
+    ip = (payload.ip_address or "").strip()
+    if not ip:
+        return {"ok": False, "reason": "primero asigna la IP del cliente"}
+    router = None
+    if payload.mikrotik_server:
+        router = await db.devices.find_one(
+            {"kind": "mikrotik", "name": payload.mikrotik_server}, {"_id": 0})
+    if not router:
+        return {"ok": False, "reason": "primero elige el servidor Mikrotik del cliente"}
+    try:
+        return await ros_arp_lookup(
+            router["host"], port=int(router.get("api_port") or 8728),
+            user=router.get("api_user", ""),
+            password=device_secret(router, "api_password"),
+            use_ssl=bool(router.get("api_use_ssl")), address=ip,
+        )
+    except MikrotikRosError as e:
+        return {"ok": False, "reason": str(e)[:200]}
+
+
 @api.post("/clients/{cid}/ping")
 async def ping_client(cid: str, _: dict = Depends(get_current_user)):
     """Ping a la ONU del cliente, lanzado desde su propio router: el CRM no
@@ -4849,6 +4881,9 @@ from mikrotik_ros import (  # noqa: E402
     interface_traffic as ros_interface_traffic,
     ping as ros_ping,
     queue_counters as ros_queue_counters,
+    arp_lookup as ros_arp_lookup,
+    arp_bind as ros_arp_bind,
+    arp_unbind as ros_arp_unbind,
     MikrotikRosError,
 )
 
@@ -5142,6 +5177,45 @@ async def mikrotik_wan_traffic(_: dict = Depends(get_current_user)):
 # --------------------------------------------------------------------------
 # "Aplicar Cambios": confirmar (o descartar) lo capturado
 # --------------------------------------------------------------------------
+async def _apply_client_arp_bind(client: dict, unbind: bool = False) -> Optional[str]:
+    """Amarra (o suelta) la IP del cliente a la MAC de su ONU en el router.
+
+    El amarre es lo que hace que esa IP solo sirva desde esa ONU: si alguien
+    se pone la misma IP en otro equipo, el router sigue mandando el tráfico de
+    vuelta a la MAC amarrada y el intruso se queda sin servicio.
+
+    Nunca lanza: que el router esté caído no debe impedir guardar al cliente.
+    """
+    ip = (client.get("ip_address") or "").strip()
+    mac = (client.get("onu_mac") or "").strip()
+    if not ip or (not mac and not unbind):
+        return None
+    router = await _router_for_client(client)
+    if not router:
+        return None
+    args = dict(
+        port=int(router.get("api_port") or 8728),
+        user=router.get("api_user", ""),
+        password=device_secret(router, "api_password"),
+        use_ssl=bool(router.get("api_use_ssl")),
+    )
+    try:
+        if unbind:
+            await ros_arp_unbind(router["host"], address=ip, **args)
+            return None
+        await ros_arp_bind(router["host"], address=ip, mac=mac,
+                           interface=client.get("mikrotik_interface") or "", **args)
+        await db.clients.update_one({"id": client["id"]}, {"$set": {
+            "arp_bound_mac": mac, "arp_bound_at": now_iso(), "arp_bind_error": "",
+        }})
+        return None
+    except MikrotikRosError as e:
+        reason = str(e)[:200]
+        await db.clients.update_one({"id": client["id"]},
+                                    {"$set": {"arp_bind_error": reason}})
+        return f"no se pudo amarrar la MAC a la IP: {reason}"
+
+
 async def _effects_on_confirm(collection: str, doc: dict, op: str) -> Optional[str]:
     """Lo que recién al confirmar sale del CRM hacia afuera. Devuelve un texto
     de error si algo no se pudo aplicar (el registro se confirma igual: el dato
@@ -5152,17 +5226,21 @@ async def _effects_on_confirm(collection: str, doc: dict, op: str) -> Optional[s
                 await _remove_client_queue(doc)
             if doc.get("mikrotik_pppoe_secret_name"):
                 await _remove_client_pppoe(doc)
+            await _apply_client_arp_bind(doc, unbind=True)
             return None
+        arp_err = await _apply_client_arp_bind(doc)
         mode = doc.get("connection_mode", "queue")
         if mode == "pppoe":
             if not (doc.get("mikrotik_server") and doc.get("plan_id")):
-                return None
+                return arp_err
             res = await _sync_client_pppoe_and_persist(doc)
         else:
             if not (doc.get("ip_address") and doc.get("mikrotik_server") and doc.get("plan_id")):
-                return None
+                return arp_err
             res = await _sync_client_queue_and_persist(doc)
-        return None if res.get("ok") else (res.get("reason") or "no se pudo aplicar en el router")
+        if not res.get("ok"):
+            return res.get("reason") or "no se pudo aplicar en el router"
+        return arp_err
 
     if collection == "payments" and op == "create":
         await _apply_payment_effects(doc)
