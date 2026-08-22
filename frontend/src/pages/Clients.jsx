@@ -221,7 +221,8 @@ export default function Clients() {
       if (filters.from && (!c.created_at || c.created_at.slice(0, 10) < filters.from)) return false;
       if (filters.to && (!c.created_at || c.created_at.slice(0, 10) > filters.to)) return false;
       if (q) {
-        const hay = [c.full_name, c.phone, c.community, c.address, c.ip_address, c.tag, c.wifi_ssid, c.mikrotik_server]
+        const hay = [c.full_name, c.phone, c.community, c.address, c.ip_address, c.tag, c.wifi_ssid, c.mikrotik_server,
+          c.contract_number != null ? `#${c.contract_number}` : null]
           .filter(Boolean).join(" ").toLowerCase();
         if (!hay.includes(q)) return false;
       }
@@ -584,6 +585,16 @@ export default function Clients() {
               const nap = naps.find((n) => n.id === c.nap_box_id);
               const s = statusMap[c.status] || statusMap.new;
               const onu = onusById.get(c.id);
+              const promise = activePromiseByClient.get(c.id);
+              // Punto de color: amarillo si tiene una promesa de pago vigente
+              // (manda sobre el estado normal), si no, azul habilitado / rojo
+              // deshabilitado.
+              const dotCls = promise
+                ? "bg-amber-500"
+                : c.status === "suspended" ? "bg-red-500" : "bg-blue-500";
+              const dotTitle = promise
+                ? "En promesa de pago"
+                : c.status === "suspended" ? "Deshabilitado" : "Habilitado";
               return (
                 <TableRow
                   key={c.id}
@@ -593,11 +604,16 @@ export default function Clients() {
                 >
                   {showCol("client") && (
                     <TableCell>
-                      <div className="font-medium flex items-center gap-2">{c.full_name}<PendingBadge row={c} /></div>
+                      <div className="font-medium flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${dotCls}`} title={dotTitle} />
+                        {c.contract_number != null && (
+                          <span className="text-xs text-muted-foreground font-mono">#{c.contract_number}</span>
+                        )}
+                        {c.full_name}
+                        <PendingBadge row={c} />
+                      </div>
                       <div className="text-xs text-muted-foreground">{c.community || c.address || ""}</div>
-                      {(() => {
-                        const promise = activePromiseByClient.get(c.id);
-                        if (!promise) return null;
+                      {promise && (() => {
                         const days = promise.extension_days ?? Math.round(
                           (new Date(promise.promise_date) - new Date((promise.created_at || "").slice(0, 10))) / 86400000
                         );

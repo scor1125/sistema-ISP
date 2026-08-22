@@ -14,6 +14,7 @@ from typing import Optional, List, Any, Literal, Dict
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 from pydantic import BaseModel, Field, EmailStr, model_validator
 
 # ---------- DB ----------
@@ -190,6 +191,21 @@ async def generate_portal_pin(max_attempts: int = 50) -> str:
         if not collision:
             return pin
     raise HTTPException(500, "No se pudo generar un PIN único; contacta soporte.")
+
+
+async def next_contract_number() -> int:
+    """Próximo número de contrato: sube de 1 en 1 y nunca se reutiliza, ni
+    aunque se borre el cliente que lo tenía — es un contador aparte, no un
+    conteo de clientes vivos. `find_one_and_update` con upsert es atómico en
+    Mongo, así que dos altas al mismo tiempo nunca chocan en el mismo número.
+    """
+    doc = await db.counters.find_one_and_update(
+        {"_id": "client_contract_number"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return doc["seq"]
 
 async def _enforce_time_restrictions(user: dict):
     """Called by get_current_user. Rejects with 401/403 when the user is
@@ -2262,6 +2278,9 @@ async def create_client(payload: ClientIn, user: dict = Depends(require_permissi
     # modifiable via the UI.
     pin_plain = await generate_portal_pin()
     doc["portal_pin"] = pin_plain
+    # Número de contrato: se asigna ya, aunque el alta quede pendiente — si se
+    # descarta o se borra después, ese número no se vuelve a usar.
+    doc["contract_number"] = await next_contract_number()
     # El alta queda pendiente: no se toca el router hasta que el operador
     # confirme desde "Aplicar Cambios".
     return await stage_create("clients", doc, user)
@@ -3832,6 +3851,28 @@ async def list_cron_runs(_: dict = Depends(require_roles("owner","admin"))):
     return items
 
 # ---------- Startup (seed) ----------
+async def _backfill_contract_numbers():
+    """One-time migration: clientes creados antes de que existiera el número
+    de contrato lo reciben ahora, en orden de alta (el más antiguo, el #1).
+    El contador se deja apuntando al último asignado para que las altas
+    nuevas sigan justo después. Idempotente: si ya no hay nadie sin número,
+    no toca nada."""
+    without = await db.clients.find(
+        {"$or": [{"contract_number": {"$exists": False}}, {"contract_number": None}]},
+        {"_id": 0, "id": 1, "created_at": 1},
+    ).sort("created_at", 1).to_list(100000)
+    if not without:
+        return
+    counter = await db.counters.find_one({"_id": "client_contract_number"})
+    seq = (counter or {}).get("seq", 0)
+    for c in without:
+        seq += 1
+        await db.clients.update_one({"id": c["id"]}, {"$set": {"contract_number": seq}})
+    await db.counters.update_one(
+        {"_id": "client_contract_number"}, {"$set": {"seq": seq}}, upsert=True,
+    )
+
+
 async def _backfill_portal_pins():
     """One-time migration: assign 8-digit unique `portal_pin` to every client
     that doesn't have one yet (was on legacy 6-digit bcrypt scheme or never
@@ -3873,6 +3914,8 @@ async def seed():
 
     # Backfill any missing portal PINs (idempotent).
     await _backfill_portal_pins()
+    # Backfill missing contract numbers (idempotent).
+    await _backfill_contract_numbers()
 
     # Seed default WhatsApp funnels once
     existing_funnel_count = await db.whatsapp_funnels.count_documents({})
