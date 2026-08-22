@@ -357,7 +357,13 @@ export default function Clients() {
     },
     { name: "wifi_ssid", label: "Nombre del WiFi", placeholder: "Ej: NetOps_Familia" },
     { name: "wifi_password", label: "Contraseña del WiFi", placeholder: "Contraseña asignada" },
-    { name: "status", label: "Estado", type: "select", options: Object.entries(statusMap).map(([v, i]) => ({ value: v, label: i.label })) },
+    { name: "status", label: "Estado", type: "select",
+      options: [
+        { value: "active", label: "Habilitado" },
+        { value: "suspended", label: "Deshabilitado" },
+      ],
+      hint: "El corte automático por mora y la reactivación al pagar siguen funcionando solos; esto es para habilitar o deshabilitar el servicio a mano.",
+    },
     { name: "tag", label: "Etiqueta", placeholder: "Ej: VIP, Moroso, Preferente…" },
     { name: "installer_ids", label: "Técnicos que instalaron", type: "multiselect",
       placeholder: "Selecciona uno o más colaboradores…",
@@ -696,8 +702,12 @@ export default function Clients() {
               // guardado; el backend ya los trata como "queue" por defecto, esto
               // solo hace que el selector lo muestre en vez de verse vacío.
               connection_mode: editing.connection_mode || "queue",
+              // El selector ahora solo tiene Habilitado/Deshabilitado — un
+              // cliente "nuevo" u "offline" (estados de antes de este cambio)
+              // se ve como Habilitado hasta que se toque a mano.
+              status: editing.status === "suspended" ? "suspended" : "active",
             }
-          : { payment_day: 1, status: "new", installer_ids: [], connection_mode: "queue" }}
+          : { payment_day: 1, status: "active", installer_ids: [], connection_mode: "queue" }}
         onSubmit={save}
         size="full"
       />
