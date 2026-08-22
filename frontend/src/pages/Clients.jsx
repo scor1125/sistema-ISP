@@ -285,7 +285,7 @@ export default function Clients() {
         if (!mk) return "Elige primero el servidor Mikrotik.";
         return mk.ppp_profiles?.length
           ? "Déjalo vacío para que el CRM administre uno según la velocidad del plan, o elige uno existente del router."
-          : 'Sin perfiles sincronizados — presiona sincronizar en el campo "Interfaz" (trae perfiles PPP también).';
+          : 'Sin perfiles sincronizados — ve a Mikrotik → Interfaces y presiona "Sincronizar del router".';
       },
     },
     { name: "pppoe_user", label: "Usuario PPPoE",
@@ -323,25 +323,7 @@ export default function Clients() {
         }
         return mk.interfaces?.length
           ? `${mk.interfaces.length} interfaces reales de "${mk.name}"${mk.interfaces_synced_at ? " · sincronizado " + new Date(mk.interfaces_synced_at).toLocaleString() : ""}. Marca cuáles son LAN en el menú Mikrotik → Interfaces.`
-          : `Mostrando una lista genérica — presiona sincronizar para traer las interfaces reales de "${mk.name}".`;
-      },
-      syncTitle: "Traer las interfaces reales del router",
-      syncDisabled: (v) => !v.mikrotik_server,
-      onSync: async (v) => {
-        const mk = mikrotiks.find((m) => m.name === v.mikrotik_server);
-        if (!mk) { toast.error("Elige primero el servidor Mikrotik"); return; }
-        try {
-          const { data } = await api.post(`/devices/${mk.id}/sync-interfaces`);
-          setMikrotiks((prev) => prev.map((m) => m.id === mk.id
-            ? {
-                ...m, interfaces: data.interfaces, interfaces_synced_at: data.synced_at,
-                ppp_profiles: data.ppp_profiles, pppoe_servers: data.pppoe_servers, ip_pools: data.ip_pools,
-              }
-            : m));
-          toast.success(`${data.interfaces.length} interfaces y ${data.ppp_profiles?.length || 0} perfiles PPP sincronizados`);
-        } catch (e) {
-          toast.error(formatApiError(e));
-        }
+          : `Ve a Mikrotik → Interfaces y presiona "Sincronizar del router" para traer las interfaces reales de "${mk.name}".`;
       },
     },
     { name: "ip_address", label: "IP",

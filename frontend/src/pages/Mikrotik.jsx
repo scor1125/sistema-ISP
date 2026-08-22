@@ -361,8 +361,9 @@ function InterfaceRolesDialog({ device, open, onOpenChange, onDone }) {
       setDev((d) => ({
         ...d, interfaces: data.interfaces, interface_networks: data.interface_networks,
         interfaces_synced_at: data.synced_at,
+        ppp_profiles: data.ppp_profiles, pppoe_servers: data.pppoe_servers, ip_pools: data.ip_pools,
       }));
-      toast.success(`${data.interfaces.length} interfaces traídas del router`);
+      toast.success(`${data.interfaces.length} interfaces y ${data.ppp_profiles?.length || 0} perfiles PPP sincronizados`);
       onDone?.();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setSyncing(false); }
